@@ -33,6 +33,9 @@ from blueprints.strategy import strategy_bp  # Import the strategy blueprint
 from blueprints.master_contract_status import master_contract_status_bp  # Import the master contract status blueprint
 from blueprints.websocket_example import websocket_bp  # Import the websocket example blueprint
 from blueprints.pnltracker import pnltracker_bp  # Import the pnl tracker blueprint
+from blueprints.madhan import madhan_bp # Import the madhan blueprint
+from database.madhan_db import init_db as ensure_madhan_tables_exist
+
 
 from restx_api import api_v1_bp, api
 
@@ -154,6 +157,7 @@ def create_app():
     app.register_blueprint(master_contract_status_bp)
     app.register_blueprint(websocket_bp)  # Register WebSocket example blueprint
     app.register_blueprint(pnltracker_bp)  # Register PnL tracker blueprint
+    app.register_blueprint(madhan_bp)
     
 
     # Exempt webhook endpoints from CSRF protection after app initialization
@@ -164,6 +168,16 @@ def create_app():
         
         # Exempt broker callback endpoints from CSRF protection (OAuth callbacks from external providers)
         csrf.exempt(app.view_functions['brlogin.broker_callback'])
+        
+        # Exempt Nifty data fetching endpoints from CSRF protection (they use API key auth)
+        csrf.exempt(app.view_functions['madhan_bp.start_nifty_fetch'])
+        csrf.exempt(app.view_functions['madhan_bp.stop_nifty_fetch'])
+        csrf.exempt(app.view_functions['madhan_bp.nifty_status'])
+        csrf.exempt(app.view_functions['madhan_bp.nifty_data'])
+        csrf.exempt(app.view_functions['madhan_bp.nifty_option_data'])
+        csrf.exempt(app.view_functions['madhan_bp.nifty_previous_day_oi'])
+        csrf.exempt(app.view_functions['madhan_bp.nifty_coi_trend'])
+        csrf.exempt(app.view_functions['madhan_bp.nifty_chart_data'])
         
         # Initialize latency monitoring (after registering API blueprint)
         init_latency_monitoring(app)
@@ -223,7 +237,8 @@ def setup_environment(app):
         ensure_traffic_logs_exists()
         ensure_latency_tables_exists()
         ensure_strategy_tables_exists()
-
+        ensure_madhan_tables_exist()
+        
     # Conditionally setup ngrok in development environment
     if os.getenv('NGROK_ALLOW') == 'TRUE':
         from pyngrok import ngrok
@@ -243,7 +258,7 @@ if __name__ == '__main__':
     # Get environment variables
     host_ip = os.getenv('FLASK_HOST_IP', '127.0.0.1')  # Default to '127.0.0.1' if not set
     port = int(os.getenv('FLASK_PORT', 5000))  # Default to 5000 if not set
-    debug = os.getenv('FLASK_DEBUG', 'False').lower() in ('true', '1', 't')  # Default to False if not set
+    debug = os.getenv('FLASK_DEBUG', 'True').lower() in ('true', '1', 't')  # Default to False if not set
 
     # Log the OpenAlgo access URL with enhanced styling
     url = f"http://{host_ip}:{port}"
