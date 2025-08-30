@@ -1,0 +1,658 @@
+{% extends "base.html" %}
+{% block head %}
+
+{% endblock %}
+
+{% block content %}
+<div class="chart-container rounded-box border overflow-hidden bg-base-200 relative">
+    <div class="controls flex items-center flex-wrap gap-4 p-4">
+        <div class="flex items-center gap-2">
+            <label for="intervalSelector">Interval:</label>
+            <select id="intervalSelector" class="select select-bordered select-sm">
+                <option value="1m">1m</option>
+                <option value="3m">3m</option>
+                <option value="5m" selected>5m</option>
+                <option value="15m">15m</option>
+                <option value="30m">30m</option>
+            </select>
+        </div>
+
+        <div class="divider lg:divider-horizontal"></div>
+
+        <div class="flex items-center gap-2">
+            <button id="oiToggle" onclick="toggleOI()" class="btn btn-sm">OI</button>
+            <button id="coiToggle" onclick="toggleCOI()" class="btn btn-sm">COI</button>
+        </div>
+
+        <div class="divider lg:divider-horizontal"></div>
+
+        <div class="flex items-center gap-2">
+            <label for="oiX">OI X (%):</label>
+            <input id="oiX" type="number" min="0" max="100" value="100" oninput="onOIAnchorChange()" class="input input-bordered input-sm w-20" />
+            <label class="flex items-center gap-1"><input id="oiShowStrike" type="checkbox" checked onchange="onOIShowStrikeChange()" class="checkbox checkbox-sm" /> Labels</label>
+            <label class="flex items-center gap-1"><input id="oiShowValues" type="checkbox" checked onchange="onOIShowValuesChange()" class="checkbox checkbox-sm" /> Values</label>
+        </div>
+
+        <div class="divider lg:divider-horizontal"></div>
+
+        <div class="flex items-center gap-2">
+            <label for="coiX">COI X (%):</label>
+            <input id="coiX" type="number" min="0" max="100" value="80" oninput="onCOIAnchorChange()" class="input input-bordered input-sm w-20" />
+            <label class="flex items-center gap-1"><input id="coiShowStrike" type="checkbox" checked onchange="onCOIShowStrikeChange()" class="checkbox checkbox-sm" /> Labels</label>
+            <label class="flex items-center gap-1"><input id="coiShowValues" type="checkbox" checked onchange="onCOIShowValuesChange()" class="checkbox checkbox-sm" /> Values</label>
+        </div>
+    </div>
+
+        <div id="chart"></div>
+        <div id="tooltip" class="tooltip" style="display: none;"></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<style>
+.tooltip {
+    position: absolute;
+    background: rgba(0, 0, 0, 0.8);
+    color: white;
+    padding: 8px 12px;
+    border-radius: 4px;
+    font-size: 12px;
+    pointer-events: none;
+    z-index: 1000;
+    white-space: nowrap;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+[data-theme="light"] .tooltip {
+    background: rgba(255, 255, 255, 0.9);
+    color: #000;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+</style>
+<script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
+<script>
+document.addEventListener("DOMContentLoaded", function() {
+    class SeparateCOIRenderer {
+        constructor(data) { this._data = data; }
+        draw(target) {
+            if (!this._data.show) return;
+            target.useBitmapCoordinateSpace(scope => {
+                if (!this._data.items || this._data.items.length === 0) return;
+                const ctx = scope.context;
+                const series = this._data.series;
+                const chartWidth = scope.bitmapSize.width / scope.horizontalPixelRatio;
+                const anchorX = chartWidth * (this._data.anchorRatio ?? 0.5);
+                const view = this._data.view || 'left';
+                const dir = view === 'right' ? 1 : -1;
+                ctx.strokeStyle = '#666';
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.moveTo(anchorX * scope.horizontalPixelRatio, 0);
+                ctx.lineTo(anchorX * scope.horizontalPixelRatio, scope.bitmapSize.height);
+                ctx.stroke();
+                const maxLeftExtent = this._data.items.reduce((mx, it) => {
+                    const ceNeg = (it.ceOI ?? 0) < 0 ? (it.ceWidth ?? 0) : 0;
+                    const peNeg = (it.peOI ?? 0) < 0 ? (it.peWidth ?? 0) : 0;
+                    return Math.max(mx, ceNeg + peNeg);
+                }, 0);
+                const maxRightExtent = this._data.items.reduce((mx, it) => {
+                    const cePos = (it.ceOI ?? 0) >= 0 ? (it.ceWidth ?? 0) : 0;
+                    const pePos = (it.peOI ?? 0) >= 0 ? (it.peWidth ?? 0) : 0;
+                    return Math.max(mx, cePos + pePos);
+                }, 0);
+                const fixedLabelPad = 8 + (view === 'right' ? maxLeftExtent : maxRightExtent);
+                this._data.items.forEach(item => {
+                    const yStrike = series.priceToCoordinate(item.strike);
+                    if (yStrike === null) return;
+                    const delta = 15;
+                    const yUp = series.priceToCoordinate(item.strike + delta);
+                    const yDown = series.priceToCoordinate(item.strike - delta);
+                    if (yUp === null || yDown === null) return;
+                    const ceBarHeightCss = Math.min(15, Math.max(2, yStrike - yUp));
+                    const ceBarTopPx = yStrike - ceBarHeightCss;
+                    const peBarHeightCss = Math.min(15, Math.max(2, yDown - yStrike));
+                    const peBarTopPx = yStrike;
+                    if (item.ceWidth > 0) {
+                        const isPositive = (item.ceOI ?? 0) >= 0;
+                        const colorFill = isPositive ? '#f44336' : '#4caf50';
+                        const colorStroke = isPositive ? '#b71c1c' : '#1b5e20';
+                        const barDir = isPositive ? dir : -dir;
+                        const barX = barDir === 1 ? anchorX : anchorX - item.ceWidth;
+                        ctx.fillStyle = colorFill;
+                        ctx.strokeStyle = colorStroke;
+                        ctx.fillRect(barX * scope.horizontalPixelRatio, ceBarTopPx * scope.verticalPixelRatio, item.ceWidth * scope.horizontalPixelRatio, ceBarHeightCss * scope.verticalPixelRatio);
+                        ctx.strokeRect(barX * scope.horizontalPixelRatio, ceBarTopPx * scope.verticalPixelRatio, item.ceWidth * scope.horizontalPixelRatio, ceBarHeightCss * scope.verticalPixelRatio);
+                        if (this._data.showValueLabels && item.ceWidth > 15) {
+                            ctx.fillStyle = this._data.textColor || '#ffffff';
+                            ctx.font = '8px Arial';
+                            ctx.textAlign = 'center';
+                            const textX = (barX + item.ceWidth / 2) * scope.horizontalPixelRatio;
+                            const textY = (ceBarTopPx + ceBarHeightCss / 2) * scope.verticalPixelRatio;
+                            ctx.fillText((Math.abs(item.ceOI) / 1000).toFixed(0) + 'K', textX, textY);
+                        }
+                    }
+                    if (item.peWidth > 0) {
+                        const isPositive = (item.peOI ?? 0) >= 0;
+                        const colorFill = isPositive ? '#4caf50' : '#f44336';
+                        const colorStroke = isPositive ? '#1b5e20' : '#b71c1c';
+                        const barDir = isPositive ? dir : -dir;
+                        const barX = barDir === 1 ? anchorX : anchorX - item.peWidth;
+                        ctx.fillStyle = colorFill;
+                        ctx.strokeStyle = colorStroke;
+                        ctx.fillRect(barX * scope.horizontalPixelRatio, peBarTopPx * scope.verticalPixelRatio, item.peWidth * scope.horizontalPixelRatio, peBarHeightCss * scope.verticalPixelRatio);
+                        ctx.strokeRect(barX * scope.horizontalPixelRatio, peBarTopPx * scope.verticalPixelRatio, item.peWidth * scope.horizontalPixelRatio, peBarHeightCss * scope.verticalPixelRatio);
+                        if (this._data.showValueLabels && item.peWidth > 15) {
+                            ctx.fillStyle = this._data.textColor || '#ffffff';
+                            ctx.font = '8px Arial';
+                            ctx.textAlign = 'center';
+                            const textX = (barX + item.peWidth / 2) * scope.horizontalPixelRatio;
+                            const textY = (peBarTopPx + peBarHeightCss / 2) * scope.verticalPixelRatio;
+                            ctx.fillText((Math.abs(item.peOI) / 1000).toFixed(0) + 'K', textX, textY);
+                        }
+                    }
+                    if (this._data.show && this._data.showStrikeLabels) {
+                        ctx.fillStyle = this._data.textColor || '#ffffff';
+                        ctx.font = '11px Arial';
+                        if (view === 'right') {
+                            ctx.textAlign = 'right';
+                            ctx.fillText(item.strike.toString(), (anchorX - fixedLabelPad) * scope.horizontalPixelRatio, (yStrike + 3) * scope.verticalPixelRatio);
+                        } else {
+                            ctx.textAlign = 'left';
+                            ctx.fillText(item.strike.toString(), (anchorX + fixedLabelPad) * scope.horizontalPixelRatio, (yStrike + 3) * scope.verticalPixelRatio);
+                        }
+                    }
+                });
+            });
+        }
+    }
+    class SeparateCOIPaneView {
+        constructor(source) { this._source = source; this._maxWidth = 140; this._items = []; }
+        update() {
+            const data = this._source._coiData;
+            const maxCE = Math.max(...data.strikes.map(s => Math.abs(s.ceOI ?? 0)));
+            const maxPE = Math.max(...data.strikes.map(s => Math.abs(s.peOI ?? 0)));
+            const maxOI = Math.max(1, maxCE, maxPE);
+            this._items = data.strikes.map(s => ({ strike: s.price, ceOI: s.ceOI ?? 0, peOI: s.peOI ?? 0, ceWidth: Math.max(4, Math.abs(s.ceOI ?? 0) / maxOI * this._maxWidth), peWidth: Math.max(4, Math.abs(s.peOI ?? 0) / maxOI * this._maxWidth), }));
+        }
+        renderer() { return new SeparateCOIRenderer({ items: this._items, series: this._source._series, show: this._source._show, showStrikeLabels: this._source._showStrikeLabels, showValueLabels: this._source._showValueLabels, view: this._source._view, anchorRatio: this._source._anchorRatio, textColor: getChartOptions().layout.textColor }); }
+    }
+    class SeparateCOI {
+        constructor(chart, series, coiData) { this._chart = chart; this._series = series; this._coiData = coiData; this._show = false; this._showStrikeLabels = true; this._showValueLabels = true; this._view = 'left'; this._anchorRatio = 0.7; this._paneViews = [new SeparateCOIPaneView(this)]; }
+        updateAllViews() { this._paneViews.forEach(p => p.update()); }
+        updateData(newData) { this._coiData = newData; this.updateAllViews(); }
+        toggleCOI() { this._show = !this._show; this.updateAllViews(); return this._show; }
+        paneViews() { return this._paneViews; }
+        setAnchorRatio(r) { this._anchorRatio = Math.max(0, Math.min(1, Number(r) || 0.5)); this.updateAllViews(); }
+        setShowStrikeLabels(v) { this._showStrikeLabels = !!v; this.updateAllViews(); }
+        setShowValueLabels(v) { this._showValueLabels = !!v; this.updateAllViews(); }
+    }
+    class SeparateOIRenderer {
+        constructor(data) { this._data = data; }
+        draw(target) {
+            target.useBitmapCoordinateSpace(scope => {
+                if (!this._data.items || this._data.items.length === 0) return;
+                const ctx = scope.context;
+                const series = this._data.series;
+                const chartWidth = scope.bitmapSize.width / scope.horizontalPixelRatio;
+                const view = this._data.view || 'left';
+                const isRight = view === 'right';
+                const anchorX = chartWidth * (this._data.anchorRatio ?? (isRight ? 0.95 : 0.05));
+                ctx.strokeStyle = '#555';
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.moveTo(anchorX * scope.horizontalPixelRatio, 0);
+                ctx.lineTo(anchorX * scope.horizontalPixelRatio, scope.bitmapSize.height);
+                ctx.stroke();
+                const strikes = this._data.items;
+                const maxBarWidth = Math.max(0, ...strikes.map(s => Math.max(s.ceWidth || 0, s.peWidth || 0)));
+                const fixedLabelPad = Math.max(8, Math.min(40, maxBarWidth * 0.3));
+                const ys = strikes.map(s => series.priceToCoordinate(s.strike));
+                const delta = this._data.deltaPrice ?? 15;
+                strikes.forEach((item, idx) => {
+                    const yStrike = ys[idx];
+                    if (yStrike == null) return;
+                    const yUp = series.priceToCoordinate(item.strike + delta);
+                    const yDown = series.priceToCoordinate(item.strike - delta);
+                    if (yUp == null || yDown == null) return;
+                    const peHeightCss = Math.min(15, Math.max(2, yStrike - yUp));
+                    const peTopPx = yStrike - peHeightCss;
+                    const ceHeightCss = Math.min(15, Math.max(2, yDown - yStrike));
+                    const ceTopPxFinal = yStrike;
+                    if (this._data.showCE && item.ceWidth > 0) {
+                        ctx.fillStyle = item.ceIntensity > 0.7 ? '#b71c1c' : item.ceIntensity > 0.4 ? '#c62828' : '#f44336';
+                        const barX = isRight ? anchorX : anchorX - item.ceWidth;
+                        ctx.fillRect(barX * scope.horizontalPixelRatio, peTopPx * scope.verticalPixelRatio, item.ceWidth * scope.horizontalPixelRatio, peHeightCss * scope.verticalPixelRatio);
+                        ctx.strokeStyle = '#b71c1c';
+                        ctx.strokeRect(barX * scope.horizontalPixelRatio, peTopPx * scope.verticalPixelRatio, item.ceWidth * scope.horizontalPixelRatio, peHeightCss * scope.verticalPixelRatio);
+                        if (this._data.showValueLabels && item.ceWidth > 15) {
+                            ctx.fillStyle = this._data.textColor || '#ffffff';
+                            ctx.font = '8px Arial';
+                            ctx.textAlign = 'center';
+                            const textX = (barX + item.ceWidth / 2) * scope.horizontalPixelRatio;
+                            ctx.fillText((item.ceOI / 1000).toFixed(0) + 'K', textX, (peTopPx + peHeightCss / 2) * scope.verticalPixelRatio);
+                        }
+                    }
+                    if (this._data.showPE && item.peWidth > 0) {
+                        ctx.fillStyle = item.peIntensity > 0.7 ? '#1b5e20' : item.peIntensity > 0.4 ? '#388e3c' : '#4caf50';
+                        const barX = isRight ? anchorX : anchorX - item.peWidth;
+                        ctx.fillRect(barX * scope.horizontalPixelRatio, ceTopPxFinal * scope.verticalPixelRatio, item.peWidth * scope.horizontalPixelRatio, ceHeightCss * scope.verticalPixelRatio);
+                        ctx.strokeStyle = '#1b5e20';
+                        ctx.strokeRect(barX * scope.horizontalPixelRatio, ceTopPxFinal * scope.verticalPixelRatio, item.peWidth * scope.horizontalPixelRatio, ceHeightCss * scope.verticalPixelRatio);
+                        if (this._data.showValueLabels && item.peWidth > 15) {
+                            ctx.fillStyle = this._data.textColor || '#ffffff';
+                            ctx.font = '8px Arial';
+                            ctx.textAlign = 'center';
+                            const textX = (barX + item.peWidth / 2) * scope.horizontalPixelRatio;
+                            ctx.fillText((item.peOI / 1000).toFixed(0) + 'K', textX, (ceTopPxFinal + ceHeightCss / 2) * scope.verticalPixelRatio);
+                        }
+                    }
+                    if ((this._data.showCE || this._data.showPE) && this._data.showStrikeLabels) {
+                        ctx.fillStyle = this._data.textColor || '#ffffff';
+                        ctx.font = '11px Arial';
+                        if (isRight) {
+                            ctx.textAlign = 'right';
+                            ctx.fillText(item.strike.toString(), (anchorX - fixedLabelPad) * scope.horizontalPixelRatio, (yStrike + 3) * scope.verticalPixelRatio);
+                        } else {
+                            ctx.textAlign = 'left';
+                            ctx.fillText(item.strike.toString(), (anchorX + fixedLabelPad) * scope.horizontalPixelRatio, (yStrike + 3) * scope.verticalPixelRatio);
+                        }
+                    }
+                });
+            });
+        }
+    }
+    class SeparateOIPaneView {
+        constructor(source) { this._source = source; this._maxWidth = 160; this._items = []; }
+        update() {
+            const data = this._source._oiData;
+            if (!data || !data.strikes) { this._items = []; return; }
+            const maxCE = Math.max(1, ...data.strikes.map(s => Math.abs(s.ceOI ?? 0)));
+            const maxPE = Math.max(1, ...data.strikes.map(s => Math.abs(s.peOI ?? 0)));
+            const maxOI = Math.max(1, maxCE, maxPE);
+            this._items = data.strikes.map(s => ({ strike: s.price, ceOI: s.ceOI ?? 0, peOI: s.peOI ?? 0, ceWidth: Math.max(4, Math.abs(s.ceOI ?? 0) / maxOI * this._maxWidth), peWidth: Math.max(4, Math.abs(s.peOI ?? 0) / maxOI * this._maxWidth), ceIntensity: Math.abs(s.ceOI ?? 0) / maxOI, peIntensity: Math.abs(s.peOI ?? 0) / maxOI, }));
+        }
+        renderer() { return new SeparateOIRenderer({ items: this._items, series: this._source._series, showCE: this._source._showCE, showPE: this._source._showPE, showStrikeLabels: this._source._showStrikeLabels, showValueLabels: this._source._showValueLabels, view: this._source._view, anchorRatio: this._source._anchorRatio, offsetPx: 20, textColor: getChartOptions().layout.textColor }); }
+    }
+    class SeparateOI {
+        constructor(chart, series, oiData) { this._chart = chart; this._series = series; this._oiData = oiData; this._minPrice = Math.min(...oiData.strikes.map(s => s.price)); this._maxPrice = Math.max(...oiData.strikes.map(s => s.price)); this._showCE = false; this._showPE = false; this._view = 'left'; this._anchorRatio = 0.95; this._showStrikeLabels = true; this._showValueLabels = true; this._paneViews = [new SeparateOIPaneView(this)]; }
+        updateAllViews() { this._paneViews.forEach(pw => pw.update()); }
+        updateData(newOiData) { this._oiData = newOiData; this._minPrice = Math.min(...newOiData.strikes.map(s => s.price)); this._maxPrice = Math.max(...newOiData.strikes.map(s => s.price)); this.updateAllViews(); }
+        toggleOI() { const newState = !(this._showCE && this._showPE); this._showCE = newState; this._showPE = newState; this.updateAllViews(); return newState; }
+        paneViews() { return this._paneViews; }
+        setAnchorRatio(r) { this._anchorRatio = Math.max(0, Math.min(1, Number(r) || 0.95)); this.updateAllViews(); }
+        setShowStrikeLabels(v) { this._showStrikeLabels = !!v; this.updateAllViews(); }
+        setShowValueLabels(v) { this._showValueLabels = !!v; this.updateAllViews(); }
+    }
+
+    function getTheme() {
+        const currentTheme = localStorage.getItem('theme') || document.documentElement.getAttribute('data-theme');
+        return ['dark', 'synthwave', 'halloween', 'forest', 'black', 'luxury', 'dracula', 'night', 'coffee', 'dim', 'sunset'].includes(currentTheme) ? 'dark' : 'light';
+    }
+
+    function getChartOptions() {
+        const theme = getTheme();
+        const isDarkMode = theme === 'dark';
+        return {
+            layout: {
+                background: { type: 'solid', color: 'transparent' },
+                textColor: isDarkMode ? '#a6adbb' : '#333',
+            },
+            grid: {
+                vertLines: { color: isDarkMode ? 'rgba(166, 173, 187, 0.1)' : 'rgba(0, 0, 0, 0.1)' },
+                horzLines: { color: isDarkMode ? 'rgba(166, 173, 187, 0.1)' : 'rgba(0, 0, 0, 0.1)' },
+            },
+            crosshair: {
+                mode: LightweightCharts.CrosshairMode.Normal,
+                vertLine: { color: isDarkMode ? 'rgba(166, 173, 187, 0.5)' : 'rgba(0, 0, 0, 0.3)', style: 2 },
+                horzLine: { color: isDarkMode ? 'rgba(166, 173, 187, 0.5)' : 'rgba(0, 0, 0, 0.3)', style: 2 },
+            },
+            rightPriceScale: {
+                borderColor: isDarkMode ? 'rgba(166, 173, 187, 0.2)' : 'rgba(0, 0, 0, 0.2)',
+            },
+            timeScale: {
+                borderColor: isDarkMode ? 'rgba(166, 173, 187, 0.2)' : 'rgba(0, 0, 0, 0.2)',
+            },
+        };
+    }
+
+    const chartEl = document.getElementById('chart');
+    const chart = LightweightCharts.createChart(chartEl, {
+        width: chartEl.clientWidth,
+        height: 800,
+        rightOffset: 200,
+        ...getChartOptions()
+    });
+    const candlestickSeries = chart.addSeries(LightweightCharts.CandlestickSeries, { upColor: '#26a69a', downColor: '#ef5350', borderVisible: false, wickUpColor: '#26a69a', wickDownColor: '#ef5350', });
+
+    // Add new series for EMA
+    const ema34Series = chart.addSeries(LightweightCharts.LineSeries, { color: 'blue', lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
+    const ema55Series = chart.addSeries(LightweightCharts.LineSeries, { color: 'red', lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
+
+    // Add RSI series in a new pane
+    const rsiSeries = chart.addSeries(LightweightCharts.LineSeries, {
+        color: 'purple',
+        lineWidth: 2,
+        priceLineVisible: false,
+        lastValueVisible: false,
+        crosshairMarkerVisible: false,
+    }, 1); // pane index 1
+
+    // Floating Tooltip
+    const tooltip = document.getElementById('tooltip');
+    
+    chart.subscribeCrosshairMove(function(param) {
+        if (
+            !param.time ||
+            !param.point ||
+            param.point.x < 0 ||
+            param.point.y < 0 ||
+            param.point.x > chartEl.clientWidth ||
+            param.point.y > chartEl.clientHeight
+        ) {
+            tooltip.style.display = 'none';
+            return;
+        }
+
+        const candlestickData = param.seriesData.get(candlestickSeries);
+        const ema34Data = param.seriesData.get(ema34Series);
+        const ema55Data = param.seriesData.get(ema55Series);
+        const rsiData = param.seriesData.get(rsiSeries);
+
+        if (!candlestickData) {
+            tooltip.style.display = 'none';
+            return;
+        }
+
+        const date = new Date(param.time * 1000);
+        const timeStr = date.toLocaleDateString() + ' ' + date.toLocaleTimeString('en-US', {
+            hour12: false,
+            hour: '2-digit',
+            minute: '2-digit'
+        });
+
+        tooltip.innerHTML = `
+            <div><strong>${timeStr}</strong></div>
+            <div>O: ${candlestickData.open?.toFixed(2) || 'N/A'}</div>
+            <div>H: ${candlestickData.high?.toFixed(2) || 'N/A'}</div>
+            <div>L: ${candlestickData.low?.toFixed(2) || 'N/A'}</div>
+            <div>C: ${candlestickData.close?.toFixed(2) || 'N/A'}</div>
+            ${ema34Data && ema34Data.value ? `<div>EMA(34): ${ema34Data.value.toFixed(2)}</div>` : ''}
+            ${ema55Data && ema55Data.value ? `<div>EMA(55): ${ema55Data.value.toFixed(2)}</div>` : ''}
+            ${rsiData && rsiData.value ? `<div>RSI(14): ${rsiData.value.toFixed(2)}</div>` : ''}
+        `;
+
+        tooltip.style.display = 'block';
+        tooltip.style.left = (param.point.x + 10) + 'px';
+        tooltip.style.top = (param.point.y - 10) + 'px';
+
+        // Adjust tooltip position if it goes out of bounds
+        const tooltipRect = tooltip.getBoundingClientRect();
+        const containerRect = chartEl.getBoundingClientRect();
+        
+        if (tooltipRect.right > containerRect.right) {
+            tooltip.style.left = (param.point.x - tooltipRect.width - 10) + 'px';
+        }
+        if (tooltipRect.bottom > containerRect.bottom) {
+            tooltip.style.top = (param.point.y - tooltipRect.height - 10) + 'px';
+        }
+    });
+
+    // Handle theme changes for tooltip
+    const observer = new MutationObserver(function(mutations) {
+        mutations.forEach(function(mutation) {
+            if (mutation.type === 'attributes' && mutation.attributeName === 'data-theme') {
+                const theme = document.documentElement.getAttribute('data-theme') || 'dark';
+                if (theme === 'dark') {
+                    tooltip.style.background = 'rgba(0, 0, 0, 0.8)';
+                    tooltip.style.color = 'white';
+                    tooltip.style.boxShadow = '0 2px 8px rgba(0, 0, 0, 0.3)';
+                } else {
+                    tooltip.style.background = 'rgba(255, 255, 255, 0.9)';
+                    tooltip.style.color = '#000';
+                    tooltip.style.boxShadow = '0 2px 8px rgba(0, 0, 0, 0.15)';
+                }
+            }
+        });
+    });
+    observer.observe(document.documentElement, { attributes: true });
+    
+    let oiProfiles = [];
+    let coiProfile = null;
+    let priceData = [];
+    let activeIntervalUpdater = null;
+    let isInitialLoad = true;
+
+    function calculateEMA(data, period) {
+        const emaData = [];
+        if (data.length < period) return emaData;
+        let k = 2 / (period + 1);
+        let sum = 0;
+        for (let i = 0; i < period; i++) {
+            sum += data[i].close;
+        }
+        let prevEma = sum / period;
+        for (let i = 0; i < period - 1; i++) {
+            emaData.push({ time: data[i].time });
+        }
+        emaData.push({ time: data[period - 1].time, value: prevEma });
+
+        for (let i = period; i < data.length; i++) {
+            const newEma = (data[i].close - prevEma) * k + prevEma;
+            emaData.push({ time: data[i].time, value: newEma });
+            prevEma = newEma;
+        }
+        return emaData;
+    }
+
+    function calculateRSI(data, period = 14) {
+        if (data.length <= period) return [];
+
+        const rsiData = [];
+        const changes = data.map((d, i) => i > 0 ? d.close - data[i - 1].close : 0);
+
+        // Initial average gain and loss
+        let gainSum = 0;
+        let lossSum = 0;
+        for (let i = 1; i <= period; i++) {
+            if (changes[i] > 0) {
+                gainSum += changes[i];
+            } else {
+                lossSum -= changes[i];
+            }
+        }
+
+        let avgGain = gainSum / period;
+        let avgLoss = lossSum / period;
+
+        // Add empty data for the initial period
+        for (let i = 0; i < period; i++) {
+            rsiData.push({ time: data[i].time });
+        }
+
+        // First RSI value
+        let rs = avgLoss === 0 ? Infinity : avgGain / avgLoss;
+        let rsi = 100 - (100 / (1 + rs));
+        rsiData.push({ time: data[period].time, value: rsi });
+
+
+        // Subsequent RSI values
+        for (let i = period + 1; i < data.length; i++) {
+            const change = changes[i];
+            const gain = change > 0 ? change : 0;
+            const loss = change < 0 ? -change : 0;
+
+            avgGain = (avgGain * (period - 1) + gain) / period;
+            avgLoss = (avgLoss * (period - 1) + loss) / period;
+
+            rs = avgLoss === 0 ? Infinity : avgGain / avgLoss;
+            rsi = 100 - (100 / (1 + rs));
+            rsiData.push({ time: data[i].time, value: rsi });
+        }
+
+        return rsiData;
+    }
+
+    function updateOiAndCoi(profileData) {
+        if (priceData.length === 0) return;
+        const oiData = profileData.oi;
+        const coiData = profileData.coi;
+        const oiBtn = document.getElementById('oiToggle');
+        const coiBtn = document.getElementById('coiToggle');
+        if (oiProfiles.length === 0) {
+            const oiProfile = new SeparateOI(chart, candlestickSeries, oiData);
+            candlestickSeries.attachPrimitive(oiProfile);
+            oiProfiles.push(oiProfile);
+            oiProfile.setAnchorRatio(document.getElementById('oiX').value / 100);
+            oiProfile.setShowStrikeLabels(document.getElementById('oiShowStrike').checked);
+            oiProfile.setShowValueLabels(document.getElementById('oiShowValues').checked);
+            if (oiProfile.toggleOI()) oiBtn.classList.add('active');
+        } else {
+            oiProfiles[0].updateData(oiData);
+        }
+        if (!coiProfile) {
+            coiProfile = new SeparateCOI(chart, candlestickSeries, coiData);
+            candlestickSeries.attachPrimitive(coiProfile);
+            coiProfile.setAnchorRatio(document.getElementById('coiX').value / 100);
+            coiProfile.setShowStrikeLabels(document.getElementById('coiShowStrike').checked);
+            coiProfile.setShowValueLabels(document.getElementById('coiShowValues').checked);
+            if (coiProfile.toggleCOI()) coiBtn.classList.add('active');
+        } else {
+            coiProfile.updateData(coiData);
+        }
+        repaintChart();
+    }
+
+    function fetchAndUpdateProfileData() {
+        fetch('/madhan/api/nifty/oi_profile_data').then(res => res.json()).then(updateOiAndCoi).catch(err => console.error("OI/COI API Error:", err));
+    }
+
+    function startAutoUpdater() {
+        if(activeIntervalUpdater) clearInterval(activeIntervalUpdater);
+        const now = new Date();
+        const secondsUntilNextMinute = (60 - now.getSeconds()) * 1000;
+        setTimeout(() => {
+            fetchAndUpdateProfileData();
+            activeIntervalUpdater = setInterval(fetchAndUpdateProfileData, 60000);
+        }, secondsUntilNextMinute);
+    }
+
+    function repaintChart() {
+        if (!priceData || priceData.length === 0) return;
+        const lastCandle = priceData[priceData.length - 1];
+        candlestickSeries.update({ ...lastCandle });
+    }
+
+    window.onOIAnchorChange = () => { if(oiProfiles[0]) { oiProfiles[0].setAnchorRatio(document.getElementById('oiX').value / 100); repaintChart(); } };
+    window.onOIShowStrikeChange = () => { if(oiProfiles[0]) { oiProfiles[0].setShowStrikeLabels(document.getElementById('oiShowStrike').checked); repaintChart(); } };
+    window.onOIShowValuesChange = () => { if(oiProfiles[0]) { oiProfiles[0].setShowValueLabels(document.getElementById('oiShowValues').checked); repaintChart(); } };
+    window.onCOIAnchorChange = () => { if(coiProfile) { coiProfile.setAnchorRatio(document.getElementById('coiX').value / 100); repaintChart(); } };
+    window.onCOIShowStrikeChange = () => { if(coiProfile) { coiProfile.setShowStrikeLabels(document.getElementById('coiShowStrike').checked); repaintChart(); } };
+    window.onCOIShowValuesChange = () => { if(coiProfile) { coiProfile.setShowValueLabels(document.getElementById('coiShowValues').checked); repaintChart(); } };
+
+    window.toggleCOI = () => {
+        if (!coiProfile || !priceData.length) return;
+        const btn = document.getElementById('coiToggle');
+        btn.classList.toggle('active', coiProfile.toggleCOI());
+        repaintChart();
+    };
+
+    window.toggleOI = () => {
+        if (!oiProfiles[0] || !priceData.length) return;
+        const btn = document.getElementById('oiToggle');
+        btn.classList.toggle('active', oiProfiles[0].toggleOI());
+        repaintChart();
+    };
+
+    // Reload only candle data on interval change
+	function loadChartForInterval() {
+		const interval = document.getElementById('intervalSelector').value;
+
+		// Stop any previous auto-updater if running
+		if (activeIntervalUpdater) {
+			clearInterval(activeIntervalUpdater);
+			activeIntervalUpdater = null;
+		}
+
+		// Fetch new candle data for selected interval
+		fetch(`/madhan/nifty_live_data?interval=${interval}`)
+			.then(response => response.ok ? response.json() : Promise.reject('OHLC fetch failed'))
+			.then(ohlcResponse => {
+				if (!ohlcResponse.data) throw new Error('Invalid OHLC data format');
+				priceData = ohlcResponse.data;
+
+				// Update existing candlestick series instead of recreating chart
+				candlestickSeries.setData(priceData);
+                // Calculate and set EMA and RSI data
+                const ema34Data = calculateEMA(priceData, 34);
+                const ema55Data = calculateEMA(priceData, 55);
+                const rsiData = calculateRSI(priceData, 14);
+
+                ema34Series.setData(ema34Data);
+                ema55Series.setData(ema55Data);
+                rsiSeries.setData(rsiData);
+ 
+                // Set right offset first
+                chart.timeScale().applyOptions({
+                    tickMarkFormatter: (t) => {
+                        if (t && typeof t === 'object' && 'year' in t) {
+                            const d = new Date(Date.UTC(t.year, (t.month || 1) - 1, t.day || 1));
+                            return d.toLocaleDateString('en-IN', {
+                                timeZone: 'Asia/Kolkata',
+                                day: '2-digit',
+                                month: 'short',
+                            });
+                        }
+                        const utcDate = new Date((Number(t) || 0) * 1000);
+                        return utcDate.toLocaleTimeString('en-IN', {
+                            timeZone: 'Asia/Kolkata',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                            hour12: false,
+                        });
+                    },
+                    rightOffset: 30
+                });
+ 
+				// Set visible range to last 50 candles
+				if (isInitialLoad) {
+                    const lastIndex = priceData.length - 1;
+				    const firstIndex = Math.max(0, lastIndex - 300); // Show last 300 candles
+				    chart.timeScale().setVisibleLogicalRange({ from: firstIndex, to: lastIndex });
+                    isInitialLoad = false;
+                }
+
+				// Your other functions
+				fetchAndUpdateProfileData();
+				startAutoUpdater(interval);
+			})
+			.catch(error => {
+				console.error('Error loading chart:', error);
+				chartEl.innerHTML = `<div style="color: red; text-align: center; padding-top: 50px;">Failed to load chart data.</div>`;
+			});
+	}
+
+    document.getElementById('intervalSelector').addEventListener('change', loadChartForInterval);
+
+    // Initial Load
+    loadChartForInterval();
+
+     // Resize chart on window resize
+     new ResizeObserver(entries => {
+         if (entries.length === 0 || entries[0].target !== chartEl) {
+             return;
+         }
+         chart.applyOptions({ width: chartEl.clientWidth, height: chartEl.clientHeight });
+     }).observe(chartEl);
+
+    // Add a MutationObserver to watch for theme changes
+    const chartThemeObserver = new MutationObserver((mutationsList) => {
+        for (const mutation of mutationsList) {
+            if (mutation.type === 'attributes' && mutation.attributeName === 'data-theme') {
+                chart.applyOptions(getChartOptions());
+            }
+        }
+    });
+
+    chartThemeObserver.observe(document.documentElement, { attributes: true });
+ });
+ </script>
+ {% endblock %}

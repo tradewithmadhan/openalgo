@@ -1,0 +1,458 @@
+"""
+Blueprint for MadhaN's custom pages.
+"""
+
+import re
+from flask import Blueprint, render_template, jsonify, request, session
+from utils.session import check_session_validity
+from utils.logging import get_logger
+from datetime import datetime, timedelta, time
+from collections import defaultdict
+from services.history_service import get_history
+from services.madhan.nifty_fetch_service import nifty_fetcher
+from database.madhan_db import get_nifty_data, get_option_data, get_nifty_data_count, get_previous_day_oi, get_nth_candle_oi_for_all_symbols, get_current_day_historical_data, get_current_day_instrument_data, SessionLocal, NiftyData
+from database.auth_db import get_api_key_for_tradingview
+
+
+# Initialize logger
+logger = get_logger(__name__)
+
+# Create blueprint
+madhan_bp = Blueprint('madhan_bp', __name__, url_prefix='/madhan')
+
+@madhan_bp.route('/madhan01')
+@check_session_validity
+def madhan01_page():
+    """Render the new MadhaN01 page"""
+    return render_template('madhan/madhan01.html')
+
+@madhan_bp.route('/madhan02')
+@check_session_validity
+def madhan02_page():
+    """Render the MadhaN02 page with only Nifty 1-Min Data Fetcher"""
+    # Get the API key from the fetcher if available
+    api_key = getattr(nifty_fetcher, 'api_key', '')
+    return render_template('madhan/madhan02.html', api_key=api_key)
+
+@madhan_bp.route('/madhan03')
+@check_session_validity
+def madhan03_page():
+    """Render the new MadhaN03 page"""
+    return render_template('madhan/index.html')
+
+@madhan_bp.route('/api/test-data')
+@check_session_validity
+def get_test_data():
+    """Returns some sample JSON data for testing."""
+    logger.info("Fetching test data for MadhaN's page.")
+    data = {
+        "status": "success",
+        "message": "Hello from the MadhaN blueprint API!",
+        "timestamp": datetime.utcnow().isoformat(),
+        "data": [
+            {"id": 1, "item": "Test Item 1"},
+            {"id": 2, "item": "Test Item 2"},
+            {"id": 3, "item": "Test Item 3"}
+        ]
+    }
+    return jsonify(data)
+
+@madhan_bp.route('/api/history', methods=['POST'])
+@check_session_validity
+def get_historical_data():
+    """API endpoint to fetch historical data."""
+    username = session.get('user')
+    if not username:
+        return jsonify({'status': 'error', 'message': 'User not logged in'}), 401
+
+    api_key = get_api_key_for_tradingview(username)
+    if not api_key:
+        return jsonify({'status': 'error', 'message': 'API key not found for user'}), 401
+
+    data = request.json
+    symbol = data.get('symbol')
+    exchange = data.get('exchange')
+    interval = data.get('interval')
+    start_date = data.get('start_date')
+    end_date = data.get('end_date')
+
+    if not all([symbol, exchange, interval, start_date, end_date]):
+        return jsonify({'status': 'error', 'message': 'Missing required parameters'}), 400
+
+    logger.info(f"Fetching history for {symbol} on {exchange} from {start_date} to {end_date}")
+
+    success, result, status_code = get_history(
+        symbol=symbol, exchange=exchange, interval=interval,
+        start_date=start_date, end_date=end_date, api_key=api_key
+    )
+
+    return jsonify(result), status_code
+
+@madhan_bp.route('/api/nifty/start', methods=['POST'])
+@check_session_validity
+def start_nifty_fetch():
+    """Starts the background Nifty data fetching service."""
+    username = session.get('user')
+    api_key = get_api_key_for_tradingview(username)
+    if not api_key:
+        return jsonify({'status': 'error', 'message': 'API key not found'}), 401
+    
+    if nifty_fetcher.is_running:
+        return jsonify({'status': 'info', 'message': 'Fetcher is already running.'})
+
+    nifty_fetcher.start(api_key)
+    return jsonify({'status': 'success', 'message': 'Nifty data fetching process started.'})
+
+@madhan_bp.route('/api/nifty/stop', methods=['POST'])
+@check_session_validity
+def stop_nifty_fetch():
+    """Stops the background Nifty data fetching service."""
+    nifty_fetcher.stop()
+    return jsonify({'status': 'success', 'message': 'Nifty data fetching process stopped.'})
+
+@madhan_bp.route('/api/nifty/status')
+@check_session_validity
+def nifty_status():
+    """Gets the current status of the fetcher."""
+    # Calculate CE and PE counts
+    ce_count = sum(1 for s in nifty_fetcher.option_symbols if s.endswith('CE'))
+    pe_count = sum(1 for s in nifty_fetcher.option_symbols if s.endswith('PE'))
+
+    return jsonify({
+        'status': 'success',
+        'is_running': nifty_fetcher.is_running,
+        'message': nifty_fetcher.status,
+        'last_update': nifty_fetcher.last_update.isoformat() if nifty_fetcher.last_update else None,
+        'nifty_record_count': get_nifty_data_count(),
+        'open_atm_strike': nifty_fetcher.open_atm_strike,
+        'current_atm_strike': nifty_fetcher.current_atm_strike,
+        'expiry_date': nifty_fetcher.expiry_date,
+        'ce_count': ce_count,
+        'pe_count': pe_count
+    })
+
+@madhan_bp.route('/api/nifty/data')
+@check_session_validity
+def nifty_data():
+    """Gets the latest stored Nifty data."""
+    data = get_nifty_data()
+    return jsonify({'status': 'success', 'data': data})
+
+@madhan_bp.route('/api/nifty/option-data')
+@check_session_validity
+def nifty_option_data():
+    """Gets the latest stored Nifty options data."""
+    data = get_option_data()
+    return jsonify({'status': 'success', 'data': data})
+
+@madhan_bp.route('/api/nifty/previous-day-oi')
+@check_session_validity
+def nifty_previous_day_oi():
+    """
+    Gets the previous day's closing OI data and calculates the change in OI
+    by comparing with the current day's latest OI.
+    """
+    prev_day_data = get_previous_day_oi()
+    
+    # 1. Get current OI for session change calculation
+    current_option_data = get_option_data() # Fetches latest OI for options
+    latest_nifty_data = get_nifty_data(limit=1) # Fetches latest OI for Nifty
+    current_oi_map = {item['symbol']: item.get('oi', 0) for item in current_option_data}
+    if latest_nifty_data:
+        current_oi_map['NIFTY'] = latest_nifty_data[0].get('oi', 0)
+
+    # 2. Get OI at 3rd and 6th candle marks
+    oi_at_3min_map = get_nth_candle_oi_for_all_symbols(3) # 3rd candle (e.g., 9:17 AM)
+    oi_at_6min_map = get_nth_candle_oi_for_all_symbols(6) # 6th candle (e.g., 9:20 AM)
+    
+    combined_data = []
+    for prev_item in prev_day_data:
+        symbol = prev_item['symbol']
+        prev_oi = prev_item.get('oi', 0)
+
+        # Session Change
+        current_oi = current_oi_map.get(symbol, 0)
+        change_in_oi = current_oi - prev_oi
+
+        # 3-Min Change
+        oi_3min = oi_at_3min_map.get(symbol, 0)
+        # The original logic was flawed. This new logic correctly calculates the change
+        # only if a candle for the symbol exists for the current day.
+        change_in_oi_3min = (oi_3min - prev_oi) if symbol in oi_at_3min_map else 0
+
+        # 6-Min Change
+        oi_6min = oi_at_6min_map.get(symbol, 0)
+        # This correctly handles cases where OI drops to 0.
+        change_in_oi_6min = (oi_6min - prev_oi) if symbol in oi_at_6min_map else 0
+
+        combined_item = {
+            **prev_item,
+            'current_oi': current_oi,
+            'change_in_oi': change_in_oi,
+            'change_in_oi_3min': change_in_oi_3min,
+            'change_in_oi_6min': change_in_oi_6min,
+        }
+        combined_data.append(combined_item)
+
+    return jsonify({'status': 'success', 'data': combined_data})
+
+@madhan_bp.route('/api/nifty/coi-trend')
+@check_session_validity
+def nifty_coi_trend():
+    """Calculates the Change in OI (COI) trend for the current day."""
+    open_atm = nifty_fetcher.open_atm_strike
+    if not open_atm or open_atm == 0:
+        return jsonify({'status': 'success', 'data': {'timestamps': [], 'coi_percent': [], 'oi_trend_percent': []}, 'message': 'ATM strike not calculated yet.'})
+
+    # Get the total number of symbols we expect data for on each candle to ensure data integrity
+    expected_symbol_count = len(nifty_fetcher.option_symbols) + 1 # +1 for NIFTY index
+
+    prev_day_data = get_previous_day_oi()
+    prev_oi_map = {item['symbol']: item.get('oi', 0) for item in prev_day_data}
+
+    historical_data = get_current_day_historical_data()
+    if not historical_data:
+        return jsonify({'status': 'success', 'data': {'timestamps': [], 'coi_percent': [], 'oi_trend_percent': []}, 'message': 'No historical data for today.'})
+
+    # Group data by timestamp
+    data_by_ts = defaultdict(list)
+    for row in historical_data:
+        data_by_ts[row['timestamp']].append(row)
+
+    sorted_timestamps = sorted(data_by_ts.keys())
+
+    timestamps_res = []
+    coi_percent_res = []
+    oi_trend_percent_res = []
+
+    for ts in sorted_timestamps:
+        # To prevent spikes from partial data, ensure the candle for this timestamp is complete
+        if len(data_by_ts[ts]) < expected_symbol_count:
+            logger.debug(f"Skipping incomplete candle at timestamp {ts}: got {len(data_by_ts[ts])} symbols, expected {expected_symbol_count}")
+            continue
+
+        total_ce_coi = 0
+        total_pe_coi = 0
+        total_ce_oi = 0
+        total_pe_oi = 0
+
+        for item in data_by_ts[ts]:
+            symbol = item['symbol']
+            current_oi = item.get('oi', 0)
+            prev_oi = prev_oi_map.get(symbol, 0)
+            
+            if prev_oi > 0 and current_oi > 0:
+                change_in_oi = current_oi - prev_oi
+                if symbol.endswith('CE'):
+                    total_ce_coi += change_in_oi
+                elif symbol.endswith('PE'):
+                    total_pe_coi += change_in_oi
+            
+            # OI Trend calculation
+            if current_oi > 0:
+                if symbol.endswith('CE'):
+                    total_ce_oi += current_oi
+                elif symbol.endswith('PE'):
+                    total_pe_oi += current_oi
+        
+        # Calculate COI %
+        coi_ce_abs = abs(total_ce_coi)
+        coi_pe_abs = abs(total_pe_coi)
+        coi_percent = 0
+        if coi_ce_abs > 0 and coi_pe_abs > 0:
+            high_coi, low_coi = (coi_ce_abs, coi_pe_abs) if coi_ce_abs > coi_pe_abs else (coi_pe_abs, coi_ce_abs)
+            coi_percent = ((high_coi - low_coi) / low_coi) * 100
+            if coi_ce_abs > coi_pe_abs:
+                coi_percent *= -1
+        elif coi_ce_abs > 0:
+            coi_percent = -100
+        elif coi_pe_abs > 0:
+            coi_percent = 100
+        
+        # Calculate OI Trend %
+        oi_trend_percent = 0
+        if total_ce_oi > 0 and total_pe_oi > 0:
+            high_oi, low_oi = (total_ce_oi, total_pe_oi) if total_ce_oi > total_pe_oi else (total_pe_oi, total_ce_oi)
+            oi_trend_percent = ((high_oi - low_oi) / low_oi) * 100
+            if total_ce_oi > total_pe_oi:
+                oi_trend_percent *= -1
+        elif total_ce_oi > 0:
+            oi_trend_percent = -100
+        elif total_pe_oi > 0:
+            oi_trend_percent = 100
+        
+        timestamps_res.append(ts * 1000) # JS expects milliseconds
+        coi_percent_res.append(coi_percent)
+        oi_trend_percent_res.append(oi_trend_percent)
+
+    return jsonify({'status': 'success', 'data': {'timestamps': timestamps_res, 'coi_percent': coi_percent_res, 'oi_trend_percent': oi_trend_percent_res}})
+
+@madhan_bp.route('/api/nifty/instrument-data')
+@check_session_validity
+def nifty_instrument_data():
+    """Gets historical data for a specific instrument for the current day."""
+    symbol = request.args.get('symbol')
+    if not symbol:
+        return jsonify({'status': 'error', 'message': 'Symbol parameter is required'}), 400
+
+    logger.info(f"Fetching current day historical data for symbol: {symbol}")
+    instrument_data = get_current_day_instrument_data(symbol)
+    if not instrument_data:
+        logger.warning(f"No data found for symbol {symbol} for today.")
+        return jsonify({'status': 'success', 'data': [], 'message': f'No data found for symbol {symbol} for today.'})
+
+    return jsonify({'status': 'success', 'data': instrument_data})
+
+
+@madhan_bp.route('/nifty_chart_data')
+@check_session_validity
+def nifty_chart_data():
+    """Provides Nifty price data for the lightweight chart."""
+    try:
+        # Use the existing service function to get Nifty data
+        # This function is assumed to return a list of dictionaries
+        # with 'timestamp' and 'close' keys, ordered by time.
+        data = get_nifty_data()
+        return jsonify(data), 200
+    except Exception as e:
+        logger.error(f"Error fetching nifty chart data: {e}", exc_info=True)
+        return jsonify({'status': 'error', 'message': 'Internal server error fetching chart data'}), 500
+
+
+
+@madhan_bp.route('/nifty_live_data')
+@check_session_validity
+def nifty_live_data_api():
+    """
+    Provides Nifty OHLC data for the lightweight chart.
+    This endpoint uses the background fetcher to get the latest data.
+    """
+    """API endpoint to fetch historical data."""
+    username = session.get('user')
+    logger.info(f"starting nifty live fetch for user u: {username}")
+    if not username:
+        return jsonify({'status': 'error', 'message': 'User not logged in'}), 401
+
+    api_key = get_api_key_for_tradingview(username)
+    logger.info(f"starting nifty live fetch for user apikey: {api_key}")
+    if not api_key:
+        return jsonify({'status': 'error', 'message': 'API key not found for user'}), 401
+    try:        
+        # Get interval from query parameters (default to '1m' if not provided)
+        interval = request.args.get('interval', '1m')
+        
+        # Get days_back from query parameters (default to 1 if not provided)
+        days_back = int(request.args.get('days_back', 1))
+        
+        # Set the API key on the fetcher instance
+        nifty_fetcher.api_key = api_key
+        
+        # Use the NiftyDataFetcher to get the data
+        success, result, status_code = nifty_fetcher.get_nifty_live_data(
+            interval=interval,
+            days_back=days_back
+        )
+        
+        return jsonify(result), status_code
+        
+    except Exception as e:
+        logger.error(f"Error in nifty_live_data_api: {e}", exc_info=True)
+        return jsonify({
+            'status': 'error', 
+            'message': 'Internal server error'
+        }), 500
+
+
+@madhan_bp.route('/api/nifty/oi_profile_data')
+@check_session_validity
+def oi_profile_data():
+    # Previous day's OI
+    prev_day_data = get_previous_day_oi()  # Returns list of {symbol, oi}
+
+    # Current day's latest OI
+    current_data = get_option_data()  # Returns list of {symbol, oi}
+
+    # 1. Build current OI map
+    current_oi_map = {item['symbol']: item.get('oi', 0) for item in current_data}
+
+    # 2. Build change OI map (current - previous)
+    change_oi_map = {}
+    for prev_item in prev_day_data:
+        symbol = prev_item['symbol']
+        prev_oi = prev_item.get('oi', 0)
+        current_oi = current_oi_map.get(symbol, 0)
+        change_oi_map[symbol] = current_oi - prev_oi
+
+    # 3. Build final OI & COI data by strike
+    oi_data, coi_data = build_oi_and_coi_data(prev_day_data, current_oi_map, change_oi_map)
+
+    return jsonify({"oi": oi_data, "coi": coi_data})
+
+import re
+def extract_strike(symbol: str) -> int | None:
+    """
+    Robustly extract NIFTY strike from symbols like:
+    NIFTY28MAR2420800CE, NIFTY29AUG2524000CE (where '25' can stick to strike).
+
+    Logic:
+    - Take the numeric chunk right before CE/PE.
+    - From its end, try 5 and 6-digit windows and pick the one that:
+        * is a multiple of 50 (NIFTY step)
+        * is within a realistic range (10,000–100,000)
+    - Fallback: last 5 digits.
+    """
+    m = re.search(r'(\d+)(CE|PE)$', symbol)
+    if not m:
+        return None
+
+    tail = m.group(1)  # numeric tail before CE/PE, can be like "2524000"
+    # Try 6 then 5 digits (some vendors may encode 6-digit strikes in rare cases)
+    candidates = []
+    if len(tail) >= 6:
+        candidates.append(int(tail[-6:]))
+    if len(tail) >= 5:
+        candidates.append(int(tail[-5:]))
+
+    for cand in candidates:
+        if 10000 <= cand <= 100000 and cand % 50 == 0:
+            return cand
+
+    # Fallback: last 5 digits (still better than full tail)
+    return int(tail[-5:]) if len(tail) >= 5 else None
+
+
+def build_oi_and_coi_data(prev_day_data, current_oi_map, change_oi_map):
+    strikes_map = {}
+
+    for item in prev_day_data:
+        symbol = item['symbol']
+        strike_price = extract_strike(symbol)
+        if strike_price is None:
+            continue
+
+        is_ce = symbol.endswith("CE")
+        is_pe = symbol.endswith("PE")
+
+        if strike_price not in strikes_map:
+            strikes_map[strike_price] = {"ceOI": 0, "peOI": 0, "ceCOI": 0, "peCOI": 0}
+
+        current_oi = current_oi_map.get(symbol, 0)
+        change_oi = change_oi_map.get(symbol, 0)
+
+        if is_ce:
+            strikes_map[strike_price]["ceOI"] = current_oi
+            strikes_map[strike_price]["ceCOI"] = change_oi
+        elif is_pe:
+            strikes_map[strike_price]["peOI"] = current_oi
+            strikes_map[strike_price]["peCOI"] = change_oi
+
+    # Convert map to list format
+    oi_data = {"strikes": []}
+    coi_data = {"strikes": []}
+
+    for strike in sorted(strikes_map.keys()):
+        vals = strikes_map[strike]
+        oi_data["strikes"].append({"price": strike, "ceOI": vals["ceOI"], "peOI": vals["peOI"]})
+        coi_data["strikes"].append({"price": strike, "ceOI": vals["ceCOI"], "peOI": vals["peCOI"]})
+
+    return oi_data, coi_data
