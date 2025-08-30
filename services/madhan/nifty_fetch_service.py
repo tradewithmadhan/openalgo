@@ -259,8 +259,25 @@ class NiftyDataFetcher:
             # Determine the previous trading day
             today = datetime.now().date()
             prev_day = today - timedelta(days=1)
-            # Skip weekends
-            while prev_day.weekday() >= 5: # Monday is 0 and Sunday is 6
+            market_holidays = {
+                datetime(2025, 2, 26).date(): "Mahashivratri",
+                datetime(2025, 3, 14).date(): "Holi",
+                datetime(2025, 3, 31).date(): "Id-Ul-Fitr (Ramadan Eid)",
+                datetime(2025, 4, 10).date(): "Shri Mahavir Jayanti",
+                datetime(2025, 4, 14).date(): "Dr. Baba Saheb Ambedkar Jayanti",
+                datetime(2025, 4, 18).date(): "Good Friday",
+                datetime(2025, 5, 1).date(): "Maharashtra Day",
+                datetime(2025, 8, 15).date(): "Independence Day / Parsi New Year",
+                datetime(2025, 8, 27).date(): "Shri Ganesh Chaturthi",
+                datetime(2025, 10, 2).date(): "Mahatma Gandhi Jayanti/Dussehra",
+                datetime(2025, 10, 21).date(): "Diwali Laxmi Pujan",
+                datetime(2025, 10, 22).date(): "Balipratipada",
+                datetime(2025, 11, 5).date(): "Prakash Gurpurb Sri Guru Nanak Dev",
+                datetime(2025, 12, 25).date(): "Christmas"
+            }
+            
+            # Skip weekends and market holidays
+            while prev_day.weekday() >= 5 or prev_day in market_holidays.keys():  # Monday is 0 and Sunday is 6
                 prev_day -= timedelta(days=1)
             
             logger.info(f"Identifying previous trading day as: {prev_day.strftime('%Y-%m-%d')}")
