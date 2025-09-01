@@ -50,3 +50,6 @@ venv.bak/
 
 # Tailwind CSS output
 # **/output.css
+
+
+/collections/openalgo

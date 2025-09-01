@@ -15,6 +15,36 @@ from database.madhan_db import store_nifty_data, store_option_data, store_previo
 
 logger = get_logger(__name__)
 
+def get_trading_days():
+    try:
+        today = datetime.now().date()
+        prev_day = today - timedelta(days=1)
+        market_holidays = {
+            datetime(2025, 2, 26).date(): "Mahashivratri",
+            datetime(2025, 3, 14).date(): "Holi",
+            datetime(2025, 3, 31).date(): "Id-Ul-Fitr (Ramadan Eid)",
+            datetime(2025, 4, 10).date(): "Shri Mahavir Jayanti",
+            datetime(2025, 4, 14).date(): "Dr. Baba Saheb Ambedkar Jayanti",
+            datetime(2025, 4, 18).date(): "Good Friday",
+            datetime(2025, 5, 1).date(): "Maharashtra Day",
+            datetime(2025, 8, 15).date(): "Independence Day / Parsi New Year",
+            datetime(2025, 8, 27).date(): "Shri Ganesh Chaturthi",
+            datetime(2025, 10, 2).date(): "Mahatma Gandhi Jayanti/Dussehra",
+            datetime(2025, 10, 21).date(): "Diwali Laxmi Pujan",
+            datetime(2025, 10, 22).date(): "Balipratipada",
+            datetime(2025, 11, 5).date(): "Prakash Gurpurb Sri Guru Nanak Dev",
+            datetime(2025, 12, 25).date(): "Christmas"
+        }
+
+        # Skip weekends and market holidays
+        while prev_day.weekday() >= 5 or prev_day in market_holidays.keys():  # Monday is 0 and Sunday is 6
+            prev_day -= timedelta(days=1)
+        return today, prev_day
+    except Exception as e:
+        logger.exception(f"Error calculating trading days: {e}")
+        return None, None
+
+
 class NiftyDataFetcher:
     """
     A singleton class to manage the background fetching of Nifty data.
@@ -248,7 +278,7 @@ class NiftyDataFetcher:
             except Exception as e:
                 logger.error(f"Exception fetching data for option {symbol}: {e}")
 
-    def _calculate_and_store_previous_day_oi(self):
+    def _calculate_and_store_previous_day_oi(self, today, prev_day):
         """
         Calculates and stores the last candle's OI and close for the previous trading day
         for Nifty and all tracked option symbols.
@@ -256,30 +286,8 @@ class NiftyDataFetcher:
         logger.info("Calculating and storing previous day's OI and close data...")
         session = SessionLocal()
         try:
-            # Determine the previous trading day
-            today = datetime.now().date()
-            prev_day = today - timedelta(days=1)
-            market_holidays = {
-                datetime(2025, 2, 26).date(): "Mahashivratri",
-                datetime(2025, 3, 14).date(): "Holi",
-                datetime(2025, 3, 31).date(): "Id-Ul-Fitr (Ramadan Eid)",
-                datetime(2025, 4, 10).date(): "Shri Mahavir Jayanti",
-                datetime(2025, 4, 14).date(): "Dr. Baba Saheb Ambedkar Jayanti",
-                datetime(2025, 4, 18).date(): "Good Friday",
-                datetime(2025, 5, 1).date(): "Maharashtra Day",
-                datetime(2025, 8, 15).date(): "Independence Day / Parsi New Year",
-                datetime(2025, 8, 27).date(): "Shri Ganesh Chaturthi",
-                datetime(2025, 10, 2).date(): "Mahatma Gandhi Jayanti/Dussehra",
-                datetime(2025, 10, 21).date(): "Diwali Laxmi Pujan",
-                datetime(2025, 10, 22).date(): "Balipratipada",
-                datetime(2025, 11, 5).date(): "Prakash Gurpurb Sri Guru Nanak Dev",
-                datetime(2025, 12, 25).date(): "Christmas"
-            }
-            
-            # Skip weekends and market holidays
-            while prev_day.weekday() >= 5 or prev_day in market_holidays.keys():  # Monday is 0 and Sunday is 6
-                prev_day -= timedelta(days=1)
-            
+
+
             logger.info(f"Identifying previous trading day as: {prev_day.strftime('%Y-%m-%d')}")
 
             start_of_prev_day_ts = int(datetime.combine(prev_day, datetime.min.time()).timestamp())
@@ -403,10 +411,9 @@ class NiftyDataFetcher:
                     logger.info(self.status)
                     self._fetch_and_store_options_data(start_date_str, end_date_str)
 
-                    # New call to store previous day's OI
-                    self.status = "Calculating previous day's OI..."
-                    logger.info(self.status)
-                    self._calculate_and_store_previous_day_oi()
+                    # Calculate previous day's OI
+                    today, prev_day = get_trading_days()
+                    prev_day_oi = self._calculate_and_store_previous_day_oi(today, prev_day)
             else:
                 self.status = f"Error during initial fetch: {result.get('message', 'Unknown error')}"
                 logger.error(self.status)
