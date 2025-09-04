@@ -114,7 +114,7 @@ document.addEventListener("DOMContentLoaded", function() {
                     if (item.ceWidth > 0) {
                         const isPositive = (item.ceOI ?? 0) >= 0;
                         const colorFill = isPositive ? '#f44336' : '#4caf50';
-                        const colorStroke = isPositive ? '#b71c1c' : '#1b5e20';
+                const colorStroke = isPositive ? '#f44336' : '#4caf50';
                         const barDir = isPositive ? dir : -dir;
                         const barX = barDir === 1 ? anchorX : anchorX - item.ceWidth;
                         ctx.fillStyle = colorFill;
@@ -133,7 +133,7 @@ document.addEventListener("DOMContentLoaded", function() {
                     if (item.peWidth > 0) {
                         const isPositive = (item.peOI ?? 0) >= 0;
                         const colorFill = isPositive ? '#4caf50' : '#f44336';
-                        const colorStroke = isPositive ? '#1b5e20' : '#b71c1c';
+                const colorStroke = isPositive ? '#4caf50' : '#f44336';
                         const barDir = isPositive ? dir : -dir;
                         const barX = barDir === 1 ? anchorX : anchorX - item.peWidth;
                         ctx.fillStyle = colorFill;
@@ -218,10 +218,10 @@ document.addEventListener("DOMContentLoaded", function() {
                     const ceHeightCss = Math.min(15, Math.max(2, yDown - yStrike));
                     const ceTopPxFinal = yStrike;
                     if (this._data.showCE && item.ceWidth > 0) {
-                        ctx.fillStyle = item.ceIntensity > 0.7 ? '#b71c1c' : item.ceIntensity > 0.4 ? '#c62828' : '#f44336';
+                        ctx.fillStyle = '#f44336';
                         const barX = isRight ? anchorX : anchorX - item.ceWidth;
                         ctx.fillRect(barX * scope.horizontalPixelRatio, peTopPx * scope.verticalPixelRatio, item.ceWidth * scope.horizontalPixelRatio, peHeightCss * scope.verticalPixelRatio);
-                        ctx.strokeStyle = '#b71c1c';
+                        ctx.strokeStyle = '#f44336';
                         ctx.strokeRect(barX * scope.horizontalPixelRatio, peTopPx * scope.verticalPixelRatio, item.ceWidth * scope.horizontalPixelRatio, peHeightCss * scope.verticalPixelRatio);
                         if (this._data.showValueLabels && item.ceWidth > 15) {
                             ctx.fillStyle = this._data.textColor || '#ffffff';
@@ -232,10 +232,10 @@ document.addEventListener("DOMContentLoaded", function() {
                         }
                     }
                     if (this._data.showPE && item.peWidth > 0) {
-                        ctx.fillStyle = item.peIntensity > 0.7 ? '#1b5e20' : item.peIntensity > 0.4 ? '#388e3c' : '#4caf50';
+                        ctx.fillStyle = '#4caf50';
                         const barX = isRight ? anchorX : anchorX - item.peWidth;
                         ctx.fillRect(barX * scope.horizontalPixelRatio, ceTopPxFinal * scope.verticalPixelRatio, item.peWidth * scope.horizontalPixelRatio, ceHeightCss * scope.verticalPixelRatio);
-                        ctx.strokeStyle = '#1b5e20';
+                        ctx.strokeStyle = '#4caf50';
                         ctx.strokeRect(barX * scope.horizontalPixelRatio, ceTopPxFinal * scope.verticalPixelRatio, item.peWidth * scope.horizontalPixelRatio, ceHeightCss * scope.verticalPixelRatio);
                         if (this._data.showValueLabels && item.peWidth > 15) {
                             ctx.fillStyle = this._data.textColor || '#ffffff';
@@ -319,6 +319,10 @@ document.addEventListener("DOMContentLoaded", function() {
         width: chartEl.clientWidth,
         height: 800,
         rightOffset: 200,
+        timeScale: {
+            barSpacing: 0,
+            ...getChartOptions().timeScale
+        },
         ...getChartOptions()
     });
     const candlestickSeries = chart.addSeries(LightweightCharts.CandlestickSeries, { upColor: '#26a69a', downColor: '#ef5350', borderVisible: false, wickUpColor: '#26a69a', wickDownColor: '#ef5350', });
@@ -331,10 +335,41 @@ document.addEventListener("DOMContentLoaded", function() {
     const rsiSeries = chart.addSeries(LightweightCharts.LineSeries, {
         color: 'purple',
         lineWidth: 2,
+        priceLineVisible: true,
+        lastValueVisible: true,
+        crosshairMarkerVisible: true,
+    }, 1); // pane index 1
+
+    // Add COI Trend series in a new pane
+    const coiPercentSeries = chart.addSeries(LightweightCharts.LineSeries, {
+        color: '#2196F3',
+        lineWidth: 2,
+        priceLineVisible: true,
+        lastValueVisible: true,
+        crosshairMarkerVisible: true,
+        title: 'COI %'
+    }, 2); // pane index 2
+
+    const oiTrendPercentSeries = chart.addSeries(LightweightCharts.LineSeries, {
+        color: '#FF5722',
+        lineWidth: 2,
+        lineStyle: LightweightCharts.LineStyle.Dashed,
+        priceLineVisible: true,
+        lastValueVisible: true,
+        crosshairMarkerVisible: true,
+        title: 'OI Trend %'
+    }, 2); // same pane as COI percent
+
+    // Add zero line to COI trend pane
+    const zeroLineSeries = chart.addSeries(LightweightCharts.LineSeries, {
+        color: 'rgba(128, 128, 128, 0.5)',
+        lineWidth: 1,
+        lineStyle: LightweightCharts.LineStyle.Dotted,
         priceLineVisible: false,
         lastValueVisible: false,
         crosshairMarkerVisible: false,
-    }, 1); // pane index 1
+        title: 'Zero Line'
+    }, 2); // same pane as COI percent
 
     // Floating Tooltip
     const tooltip = document.getElementById('tooltip');
@@ -356,6 +391,8 @@ document.addEventListener("DOMContentLoaded", function() {
         const ema34Data = param.seriesData.get(ema34Series);
         const ema55Data = param.seriesData.get(ema55Series);
         const rsiData = param.seriesData.get(rsiSeries);
+        const coiPercentData = param.seriesData.get(coiPercentSeries);
+        const oiTrendPercentData = param.seriesData.get(oiTrendPercentSeries);
 
         if (!candlestickData) {
             tooltip.style.display = 'none';
@@ -363,7 +400,13 @@ document.addEventListener("DOMContentLoaded", function() {
         }
 
         const date = new Date(param.time * 1000);
-        const timeStr = date.toLocaleDateString() + ' ' + date.toLocaleTimeString('en-US', {
+        const timeStr = date.toLocaleDateString('en-IN', {
+            timeZone: 'Asia/Kolkata',
+            day: '2-digit',
+            month: 'short',
+            year: 'numeric'
+        }) + ' ' + date.toLocaleTimeString('en-IN', {
+            timeZone: 'Asia/Kolkata',
             hour12: false,
             hour: '2-digit',
             minute: '2-digit'
@@ -378,9 +421,11 @@ document.addEventListener("DOMContentLoaded", function() {
             ${ema34Data && ema34Data.value ? `<div>EMA(34): ${ema34Data.value.toFixed(2)}</div>` : ''}
             ${ema55Data && ema55Data.value ? `<div>EMA(55): ${ema55Data.value.toFixed(2)}</div>` : ''}
             ${rsiData && rsiData.value ? `<div>RSI(14): ${rsiData.value.toFixed(2)}</div>` : ''}
+            ${coiPercentData && coiPercentData.value ? `<div>COI%: ${coiPercentData.value.toFixed(2)}</div>` : ''}
+            ${oiTrendPercentData && oiTrendPercentData.value ? `<div>OI Trend%: ${oiTrendPercentData.value.toFixed(2)}</div>` : ''}
         `;
 
-        //tooltip.style.display = 'block';  // if required flating toot enable it 
+        //tooltip.style.display = 'block';  // floating tooltip disabled 
         tooltip.style.left = (param.point.x + 10) + 'px';
         tooltip.style.top = (param.point.y - 10) + 'px';
 
@@ -525,6 +570,75 @@ document.addEventListener("DOMContentLoaded", function() {
         return fetch(`/madhan/api/nifty/oi_profile_data?_=${new Date().getTime()}`).then(res => res.json()).then(updateOiAndCoi).catch(err => console.error("OI/COI API Error:", err));
     }
 
+    function fetchAndUpdateCoiTrendData() {
+        return fetch(`/madhan/api/nifty/coi-trend?_=${new Date().getTime()}`)
+            .then(res => res.json())
+            .then(response => {
+                if (response.status === 'success' && response.data) {
+                    const { timestamps, coi_percent, oi_trend_percent } = response.data;
+                    
+                    // Convert timestamps to chart format and prepare data
+                    const coiPercentData = [];
+                    const oiTrendPercentData = [];
+                    
+                    for (let i = 0; i < timestamps.length; i++) {
+                        // Convert timestamp to LightweightCharts format
+                        let time = timestamps[i];
+                        if (typeof time === 'string') {
+                            // If timestamp is a string, convert to Unix timestamp
+                            time = Math.floor(new Date(time).getTime() / 1000);
+                        } else if (time > 1e10) {
+                            // If timestamp is in milliseconds, convert to seconds
+                            time = Math.floor(time / 1000);
+                        }
+                        
+                        if (coi_percent[i] !== null && coi_percent[i] !== undefined) {
+                            coiPercentData.push({
+                                time: time,
+                                value: coi_percent[i]
+                            });
+                        }
+                        
+                        if (oi_trend_percent[i] !== null && oi_trend_percent[i] !== undefined) {
+                            oiTrendPercentData.push({
+                                time: time,
+                                value: oi_trend_percent[i]
+                            });
+                        }
+                    }
+                    
+                    // Update series colors based on latest values
+                    if (coiPercentData.length > 0) {
+                        const latestCoiValue = coiPercentData[coiPercentData.length - 1].value;
+                        coiPercentSeries.applyOptions({
+                            color: latestCoiValue > 0 ? '#2196F3' : '#F44336'
+                        });
+                    }
+                    
+                    if (oiTrendPercentData.length > 0) {
+                        const latestOiTrendValue = oiTrendPercentData[oiTrendPercentData.length - 1].value;
+                        oiTrendPercentSeries.applyOptions({
+                            color: latestOiTrendValue > 0 ? '#2196F3' : '#F44336'
+                        });
+                    }
+                    
+                    // Update series with new data
+                    coiPercentSeries.setData(coiPercentData);
+                    oiTrendPercentSeries.setData(oiTrendPercentData);
+                    
+                    // Add zero line data for the same time range
+                    if (coiPercentData.length > 0) {
+                        const zeroLineData = coiPercentData.map(item => ({
+                            time: item.time,
+                            value: 0
+                        }));
+                        zeroLineSeries.setData(zeroLineData);
+                    }
+                }
+            })
+            .catch(err => console.error("COI Trend API Error:", err));
+    }
+
     function refreshChartData() {
         const interval = document.getElementById('intervalSelector').value;
         return fetch(`/madhan/nifty_live_data?interval=${interval}&_=${new Date().getTime()}`)
@@ -541,6 +655,9 @@ document.addEventListener("DOMContentLoaded", function() {
                 ema34Series.setData(ema34Data);
                 ema55Series.setData(ema55Data);
                 rsiSeries.setData(rsiData);
+                
+                // Fetch and update COI trend data
+                fetchAndUpdateCoiTrendData();
                 
                 // chart.timeScale().scrollToRealTime();
             })
@@ -560,6 +677,7 @@ document.addEventListener("DOMContentLoaded", function() {
                 .catch(err => console.error("Chart refresh failed, continuing...", err))
                 .finally(() => {
                     fetchAndUpdateProfileData();
+                    fetchAndUpdateCoiTrendData();
                 });
         }
 
@@ -619,19 +737,20 @@ document.addEventListener("DOMContentLoaded", function() {
                  ema34Series.setData(ema34Data);
                  ema55Series.setData(ema55Data);
                  rsiSeries.setData(rsiData);
+                 
+                 // Fetch and update COI trend data
+                 fetchAndUpdateCoiTrendData();
   
                  chart.timeScale().applyOptions({
+                     barSpacing: 0,
                      tickMarkFormatter: (t) => {
+                         let date;
                          if (t && typeof t === 'object' && 'year' in t) {
-                             const d = new Date(Date.UTC(t.year, (t.month || 1) - 1, t.day || 1));
-                             return d.toLocaleDateString('en-IN', {
-                                 timeZone: 'Asia/Kolkata',
-                                 day: '2-digit',
-                                 month: 'short',
-                             });
+                             date = new Date(Date.UTC(t.year, (t.month || 1) - 1, t.day || 1));
+                         } else {
+                             date = new Date((Number(t) || 0) * 1000);
                          }
-                         const utcDate = new Date((Number(t) || 0) * 1000);
-                         return utcDate.toLocaleTimeString('en-IN', {
+                         return date.toLocaleTimeString('en-IN', {
                              timeZone: 'Asia/Kolkata',
                              hour: '2-digit',
                              minute: '2-digit',
