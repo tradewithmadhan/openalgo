@@ -1,3 +1,7 @@
+# Eventlet monkey patching MUST be done before any other imports
+import eventlet
+eventlet.monkey_patch()
+
 import asyncio
 import threading
 import sys
@@ -8,6 +12,41 @@ import atexit
 
 from .server import main as websocket_main
 from utils.logging import get_logger, highlight_url
+
+# Enhanced Docker and container detection
+def is_running_in_container():
+    """Enhanced Docker container detection with multiple verification methods"""
+    try:
+        # Primary check - Docker environment file
+        if os.path.exists('/.dockerenv'):
+            return True
+        
+        # Secondary check - cgroup analysis
+        try:
+            with open('/proc/1/cgroup', 'r') as f:
+                content = f.read()
+                if any(keyword in content for keyword in ['docker', 'containerd', 'kubepods']):
+                    return True
+        except (FileNotFoundError, PermissionError):
+            pass
+            
+        # Tertiary check - environment variables
+        container_vars = ['DOCKER_CONTAINER', 'KUBERNETES_SERVICE_HOST', 'container', 'IN_DOCKER']
+        if any(os.getenv(var) for var in container_vars):
+            return True
+        
+        # Quaternary check - filesystem patterns
+        try:
+            with open('/proc/mounts', 'r') as f:
+                mounts = f.read()
+                if 'overlay' in mounts or 'aufs' in mounts:
+                    return True
+        except (FileNotFoundError, PermissionError):
+            pass
+            
+        return False
+    except Exception:
+        return False
 
 # Set the correct event loop policy for Windows to avoid ZeroMQ warnings
 if platform.system() == 'Windows':
@@ -177,15 +216,28 @@ def start_websocket_proxy(app):
     """
     global _websocket_server_started
     
-    # Check if this process should start the WebSocket server
+    # Check if we're in a Docker container
+    is_container = is_running_in_container()
+    
+    if is_container:
+        # In Docker, WebSocket runs as separate process via start.sh
+        logger = get_logger(__name__)
+        logger.info("🐳 Docker environment: WebSocket server runs as separate process")
+        logger.info("💡 WebSocket service started via start.sh script")
+        return
+    
+    # In local development, start WebSocket server integrated with Flask
     if should_start_websocket():
         # Our flag will prevent multiple starts if called multiple times
         if not _websocket_server_started:
             _websocket_server_started = True
-            logger.info("Starting WebSocket server in Flask application process")
+            logger = get_logger(__name__)
+            logger.info("💻 Local environment: Starting integrated WebSocket server")
             start_websocket_server()
             logger.info("WebSocket server integration with Flask complete")
         else:
+            logger = get_logger(__name__)
             logger.info("WebSocket server already running, skipping initialization")
     else:
+        logger = get_logger(__name__)
         logger.info("Skipping WebSocket server in parent/monitor process")

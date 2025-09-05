@@ -32,7 +32,7 @@ def madhan02_page():
     """Render the MadhaN02 page with only Nifty 1-Min Data Fetcher"""
     # Get the API key from the fetcher if available
     api_key = getattr(nifty_fetcher, 'api_key', '')
-    return render_template('madhan/madhan02.html', api_key=api_key)
+    return render_template('madhan/index.html', api_key=api_key)
 
 @madhan_bp.route('/madhan03')
 @check_session_validity

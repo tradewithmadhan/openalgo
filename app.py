@@ -1,3 +1,18 @@
+# Eventlet monkey patching MUST be done before any other imports
+import eventlet
+eventlet.monkey_patch()
+
+import os
+import platform
+from utils.logging import get_logger, log_startup_banner
+from websocket_proxy.app_integration import start_websocket_server, is_running_in_container
+
+# Only import fcntl on Linux
+if platform.system() != "Windows":
+    import fcntl
+else:
+    fcntl = None
+
 # Load and check environment variables before anything else
 from utils.env_check import load_and_check_env_variables  # Import the environment check function
 load_and_check_env_variables()
@@ -245,23 +260,57 @@ def setup_environment(app):
         public_url = ngrok.connect(name='flask').public_url  # Assuming Flask runs on the default port 5000
         logger.info(f"ngrok URL: {public_url}")
 
-app = create_app()
 
-# Explicitly call the setup environment function
+def try_start_websocket_once():
+    """
+    Safely start WebSocket server only once across multiple Gunicorn workers.
+    Uses a file lock in /tmp to coordinate processes (Linux only).
+    """
+    if fcntl is None:
+        # On Windows, just start directly (only one process anyway)
+        logger.info("Windows environment detected, starting WebSocket directly")
+        start_websocket_server()
+        return
+
+    lockfile = "/tmp/openalgo_ws.lock"
+    try:
+        fd = os.open(lockfile, os.O_CREAT | os.O_RDWR)
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)  # Non-blocking exclusive lock
+    except BlockingIOError:
+        logger.info("WebSocket server already started by another worker, skipping...")
+        return
+
+    logger.info("Starting WebSocket server (first worker won the lock)")
+    try:
+        start_websocket_server()
+    except Exception as e:
+        logger.error(f"Failed to start WebSocket server: {e}")
+
+
+
+# --- Main entrypoint ---
+app = create_app()
 setup_environment(app)
 
-# Integrate the WebSocket proxy server with the Flask app
-start_websocket_proxy(app)
+# Decide how to start WebSocket
+if is_running_in_container():
+    # Safe lock-based startup (Docker + Gunicorn multiprocess)
+    try_start_websocket_once()
+else:
+    # Local environment: thread-based startup is fine
+    from websocket_proxy.app_integration import start_websocket_proxy
+    start_websocket_proxy(app)
 
-# Start Flask development server with SocketIO support if directly executed
-if __name__ == '__main__':
-    # Get environment variables
-    host_ip = os.getenv('FLASK_HOST_IP', '127.0.0.1')  # Default to '127.0.0.1' if not set
-    port = int(os.getenv('FLASK_PORT', 5000))  # Default to 5000 if not set
-    debug = os.getenv('FLASK_DEBUG', 'True').lower() in ('true', '1', 't')  # Default to False if not set
-
+# Development mode only # Start Flask development server with SocketIO support if directly executed
+if __name__ == "__main__":
+     # Get environment variables
+    host_ip = os.getenv("FLASK_HOST_IP", "127.0.0.1") # Default to '127.0.0.1' if not set
+    port = int(os.getenv("FLASK_PORT", 5000))  # Default to 5000 if not set
+    debug = os.getenv("FLASK_DEBUG", "False").lower() in ("true", "1", "t") # Default to False if not set
+    
     # Log the OpenAlgo access URL with enhanced styling
     url = f"http://{host_ip}:{port}"
     log_startup_banner(logger, "OpenAlgo is running!", url)
 
+    from extensions import socketio
     socketio.run(app, host=host_ip, port=port, debug=debug)
