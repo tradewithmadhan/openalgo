@@ -22,6 +22,16 @@
         <div class="flex items-center gap-2">
             <button id="oiToggle" onclick="toggleOI()" class="btn btn-sm">OI</button>
             <button id="coiToggle" onclick="toggleCOI()" class="btn btn-sm">COI</button>
+            <button id="coiTrendToggle" onclick="toggleCOITrend()" class="btn btn-sm">COI Trend</button>
+            <button id="rsiToggle" onclick="toggleRSI()" class="btn btn-sm active">RSI</button>
+            <button id="emaToggle" onclick="toggleEMA()" class="btn btn-sm">EMA</button>
+        </div>
+
+        <div class="divider lg:divider-horizontal"></div>
+
+        <div class="flex items-center gap-2">
+            <button id="dayOpenToggle" onclick="toggleDayOpen()" class="btn btn-sm active">Day Open</button>
+            <button id="prevOHLCToggle" onclick="togglePrevOHLC()" class="btn btn-sm active">Prev OHLC</button>
         </div>
 
         <div class="divider lg:divider-horizontal"></div>
@@ -283,6 +293,13 @@ document.addEventListener("DOMContentLoaded", function() {
         setShowValueLabels(v) { this._showValueLabels = !!v; this.updateAllViews(); }
     }
 
+    // Global variables
+    let oiProfiles = [];
+    let coiProfile = null;
+    let priceData = [];
+    let activeIntervalUpdater = null;
+    let isInitialLoad = true;
+
     function getTheme() {
         const currentTheme = localStorage.getItem('theme') || document.documentElement.getAttribute('data-theme');
         return ['dark', 'synthwave', 'halloween', 'forest', 'black', 'luxury', 'dracula', 'night', 'coffee', 'dim', 'sunset'].includes(currentTheme) ? 'dark' : 'light';
@@ -321,6 +338,8 @@ document.addEventListener("DOMContentLoaded", function() {
         rightOffset: 200,
         timeScale: {
             barSpacing: 0,
+            timeVisible: true,
+            secondsVisible: false,
             ...getChartOptions().timeScale
         },
         ...getChartOptions()
@@ -331,45 +350,123 @@ document.addEventListener("DOMContentLoaded", function() {
     const ema34Series = chart.addSeries(LightweightCharts.LineSeries, { color: 'blue', lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
     const ema55Series = chart.addSeries(LightweightCharts.LineSeries, { color: 'red', lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
 
-    // Add RSI series in a new pane
-    const rsiSeries = chart.addSeries(LightweightCharts.LineSeries, {
-        color: 'purple',
-        lineWidth: 2,
-        priceLineVisible: true,
-        lastValueVisible: true,
-        crosshairMarkerVisible: true,
-    }, 1); // pane index 1
+    // Function to create RSI pane and series
+    function createRsiPane() {
+        // Check if chart is properly initialized
+        if (!chart || typeof chart.addPane !== 'function') {
+            console.error('Chart is not properly initialized');
+            return;
+        }
+        
+        // Check if RSI pane already exists
+        if (rsiPaneIndex && typeof rsiPaneIndex === 'object') {
+            console.log('RSI pane already exists, skipping creation');
+            return;
+        }
+        
+        // Create a new pane for RSI
+        try {
+            rsiPaneIndex = chart.addPane();
+            // Get the actual pane index from the chart
+            const panes = chart.panes();
+            rsiPaneNumericIndex = panes.length - 1; // Last pane index
+            console.log('RSI pane created successfully:', rsiPaneIndex, 'Type:', typeof rsiPaneIndex, 'Index:', rsiPaneNumericIndex);
+        } catch (error) {
+            console.error('Error creating RSI pane:', error);
+            return;
+        }
+        
+        // Validate pane object before adding series
+        if (!rsiPaneIndex || typeof rsiPaneIndex !== 'object') {
+            console.error('Invalid RSI pane object:', rsiPaneIndex, 'Type:', typeof rsiPaneIndex);
+            return;
+        }
+        
+        // Add RSI series in the new pane using pane.addSeries()
+        rsiSeries = rsiPaneIndex.addSeries(LightweightCharts.LineSeries, {
+            color: 'purple',
+            lineWidth: 2,
+            priceLineVisible: true,
+            lastValueVisible: true,
+            crosshairMarkerVisible: true,
+        });
 
-    // Add COI Trend series in a new pane
-    const coiPercentSeries = chart.addSeries(LightweightCharts.LineSeries, {
-        color: '#2196F3',
-        lineWidth: 2,
-        priceLineVisible: true,
-        lastValueVisible: true,
-        crosshairMarkerVisible: true,
-        title: 'COI %'
-    }, 2); // pane index 2
+        // Refresh RSI data if available
+        if (typeof loadChartForInterval === 'function') {
+            loadChartForInterval();
+        }
+    }
 
-    const oiTrendPercentSeries = chart.addSeries(LightweightCharts.LineSeries, {
-        color: '#FF5722',
-        lineWidth: 2,
-        lineStyle: LightweightCharts.LineStyle.Dashed,
-        priceLineVisible: true,
-        lastValueVisible: true,
-        crosshairMarkerVisible: true,
-        title: 'OI Trend %'
-    }, 2); // same pane as COI percent
+    // RSI series variable (will be created by createRsiPane function)
+    let rsiSeries;
+    let rsiPaneIndex;
+    let rsiPaneNumericIndex;
 
-    // Add zero line to COI trend pane
-    const zeroLineSeries = chart.addSeries(LightweightCharts.LineSeries, {
-        color: 'rgba(128, 128, 128, 0.5)',
+    // Initialize RSI pane
+    createRsiPane();
+
+
+
+    // COI Trend series variables (will be created by createCoiTrendPane function)
+    let coiPercentSeries;
+    let oiTrendPercentSeries;
+    let zeroLineSeries;
+    let coiTrendPaneIndex;
+    let coiTrendPaneNumericIndex;
+
+    // Initialize COI Trend pane
+    createCoiTrendPane();
+
+    // Add horizontal lines for day open, previous day high and close
+    const dayOpenLineSeries = chart.addSeries(LightweightCharts.LineSeries, {
+        color: '#00FF00',
         lineWidth: 1,
-        lineStyle: LightweightCharts.LineStyle.Dotted,
-        priceLineVisible: false,
-        lastValueVisible: false,
+        lineStyle: LightweightCharts.LineStyle.Solid,
+        priceLineVisible: true,
+        lastValueVisible: true,
         crosshairMarkerVisible: false,
-        title: 'Zero Line'
-    }, 2); // same pane as COI percent
+        title: 'Day Open'
+    }, 0); // main price pane
+
+    const prevDayOpenLineSeries = chart.addSeries(LightweightCharts.LineSeries, {
+        color: '#FFA500',
+        lineWidth: 1,
+        lineStyle: LightweightCharts.LineStyle.Solid,
+        priceLineVisible: true,
+        lastValueVisible: true,
+        crosshairMarkerVisible: false,
+        title: 'Prev Day Open'
+    }, 0); // main price pane
+
+    const prevDayHighLineSeries = chart.addSeries(LightweightCharts.LineSeries, {
+        color: '#0000FF',
+        lineWidth: 1,
+        lineStyle: LightweightCharts.LineStyle.Solid,
+        priceLineVisible: true,
+        lastValueVisible: true,
+        crosshairMarkerVisible: false,
+        title: 'Prev Day High'
+    }, 0); // main price pane
+
+    const prevDayCloseLineSeries = chart.addSeries(LightweightCharts.LineSeries, {
+        color: '#FF0000',
+        lineWidth: 1,
+        lineStyle: LightweightCharts.LineStyle.Solid,
+        priceLineVisible: true,
+        lastValueVisible: true,
+        crosshairMarkerVisible: false,
+        title: 'Prev Day Close'
+    }, 0); // main price pane
+
+    const prevDayLowLineSeries = chart.addSeries(LightweightCharts.LineSeries, {
+        color: '#FF69B4',
+        lineWidth: 1,
+        lineStyle: LightweightCharts.LineStyle.Solid,
+        priceLineVisible: true,
+        lastValueVisible: true,
+        crosshairMarkerVisible: false,
+        title: 'Prev Day Low'
+    }, 0); // main price pane
 
     // Floating Tooltip
     const tooltip = document.getElementById('tooltip');
@@ -459,12 +556,6 @@ document.addEventListener("DOMContentLoaded", function() {
         });
     });
     observer.observe(document.documentElement, { attributes: true });
-    
-    let oiProfiles = [];
-    let coiProfile = null;
-    let priceData = [];
-    let activeIntervalUpdater = null;
-    let isInitialLoad = true;
 
     function calculateEMA(data, period) {
         const emaData = [];
@@ -593,34 +684,27 @@ document.addEventListener("DOMContentLoaded", function() {
                         }
                         
                         if (coi_percent[i] !== null && coi_percent[i] !== undefined) {
+                            const coiValue = coi_percent[i];
+                            const coiColor = coiValue > 0 ? '#4CAF50' : coiValue < 0 ? '#F44336' : '#9E9E9E';
                             coiPercentData.push({
                                 time: time,
-                                value: coi_percent[i]
+                                value: coiValue,
+                                color: coiColor
                             });
                         }
                         
                         if (oi_trend_percent[i] !== null && oi_trend_percent[i] !== undefined) {
+                            const oiTrendValue = oi_trend_percent[i];
+                            const oiTrendColor = oiTrendValue > 0 ? '#4CAF50' : oiTrendValue < 0 ? '#F44336' : '#9E9E9E';
                             oiTrendPercentData.push({
                                 time: time,
-                                value: oi_trend_percent[i]
+                                value: oiTrendValue,
+                                color: oiTrendColor
                             });
                         }
                     }
                     
-                    // Update series colors based on latest values
-                    if (coiPercentData.length > 0) {
-                        const latestCoiValue = coiPercentData[coiPercentData.length - 1].value;
-                        coiPercentSeries.applyOptions({
-                            color: latestCoiValue > 0 ? '#2196F3' : '#F44336'
-                        });
-                    }
-                    
-                    if (oiTrendPercentData.length > 0) {
-                        const latestOiTrendValue = oiTrendPercentData[oiTrendPercentData.length - 1].value;
-                        oiTrendPercentSeries.applyOptions({
-                            color: latestOiTrendValue > 0 ? '#2196F3' : '#F44336'
-                        });
-                    }
+                    // Individual data points now have their own colors based on their values
                     
                     // Update series with new data
                     coiPercentSeries.setData(coiPercentData);
@@ -700,6 +784,63 @@ document.addEventListener("DOMContentLoaded", function() {
     window.onCOIShowStrikeChange = () => { if(coiProfile) { coiProfile.setShowStrikeLabels(document.getElementById('coiShowStrike').checked); repaintChart(); } };
     window.onCOIShowValuesChange = () => { if(coiProfile) { coiProfile.setShowValueLabels(document.getElementById('coiShowValues').checked); repaintChart(); } };
 
+    // Function to add horizontal lines for day open, previous day high, low and close
+    function addHorizontalLines(data) {
+        if (!data || data.length === 0) return;
+        
+        // Group data by day to find day boundaries
+        const dayGroups = {};
+        data.forEach(candle => {
+            const date = new Date(candle.time * 1000);
+            const dayKey = date.toDateString();
+            if (!dayGroups[dayKey]) {
+                dayGroups[dayKey] = [];
+            }
+            dayGroups[dayKey].push(candle);
+        });
+        
+        // Sort days by date to ensure proper order
+        const days = Object.keys(dayGroups).sort((a, b) => new Date(a) - new Date(b));
+        if (days.length === 0) return;
+        
+        // Sort candles within each day by time
+        Object.keys(dayGroups).forEach(day => {
+            dayGroups[day].sort((a, b) => a.time - b.time);
+        });
+        
+        // Get current day (last day) data - first candle of the last trading day
+        const currentDayData = dayGroups[days[days.length - 1]];
+        const dayOpen = currentDayData[0].open;
+        
+        // Get previous day data if available
+        let prevDayOpen = dayOpen * 1.005; // fallback
+        let prevDayHigh = dayOpen * 1.01; // fallback
+        let prevDayLow = dayOpen * 0.99; // fallback
+        let prevDayClose = dayOpen * 0.999; // fallback
+        
+        if (days.length > 1) {
+            const prevDayData = dayGroups[days[days.length - 2]];
+            prevDayOpen = prevDayData[0].open;
+            prevDayHigh = Math.max(...prevDayData.map(c => c.high));
+            prevDayLow = Math.min(...prevDayData.map(c => c.low));
+            prevDayClose = prevDayData[prevDayData.length - 1].close;
+        }
+        
+        // Create horizontal line data (same value for all time points)
+        const timeRange = data.map(item => ({ time: item.time, value: dayOpen }));
+        const prevOpenRange = data.map(item => ({ time: item.time, value: prevDayOpen }));
+        const prevHighRange = data.map(item => ({ time: item.time, value: prevDayHigh }));
+        const prevLowRange = data.map(item => ({ time: item.time, value: prevDayLow }));
+        const prevCloseRange = data.map(item => ({ time: item.time, value: prevDayClose }));
+        
+        // Set data for horizontal lines
+        dayOpenLineSeries.setData(timeRange);
+        prevDayOpenLineSeries.setData(prevOpenRange);
+        prevDayHighLineSeries.setData(prevHighRange);
+        prevDayLowLineSeries.setData(prevLowRange);
+        prevDayCloseLineSeries.setData(prevCloseRange);
+    }
+
     window.toggleCOI = () => {
         if (!coiProfile || !priceData.length) return;
         const btn = document.getElementById('coiToggle');
@@ -712,6 +853,184 @@ document.addEventListener("DOMContentLoaded", function() {
         const btn = document.getElementById('oiToggle');
         btn.classList.toggle('active', oiProfiles[0].toggleOI());
         repaintChart();
+    };
+
+    // Toggle COI Trend pane visibility
+    let coiTrendVisible = true;
+    window.toggleCOITrend = () => {
+        const btn = document.getElementById('coiTrendToggle');
+        coiTrendVisible = !coiTrendVisible;
+        
+        if (coiTrendVisible) {
+            // Recreate COI Trend pane and series
+            createCoiTrendPane();
+            btn.classList.add('active');
+        } else {
+            // Remove the entire COI Trend pane
+            if (coiTrendPaneIndex && typeof coiTrendPaneIndex === 'object') {
+                chart.removePane(coiTrendPaneNumericIndex);
+                coiTrendPaneIndex = undefined;
+                coiTrendPaneNumericIndex = undefined;
+            }
+            btn.classList.remove('active');
+        }
+    };
+
+    // Function to create COI Trend pane and series
+    function createCoiTrendPane() {
+        // Check if chart is properly initialized
+        if (!chart || typeof chart.addPane !== 'function') {
+            console.error('Chart is not properly initialized for COI Trend');
+            return;
+        }
+        
+        // Check if COI Trend pane already exists
+        if (coiTrendPaneIndex && typeof coiTrendPaneIndex === 'object') {
+            console.log('COI Trend pane already exists, skipping creation');
+            return;
+        }
+        
+        // Create a new pane for COI Trend
+        try {
+            coiTrendPaneIndex = chart.addPane();
+            // Get the actual pane index from the chart
+            const panes = chart.panes();
+            coiTrendPaneNumericIndex = panes.length - 1; // Last pane index
+            console.log('COI Trend pane created successfully:', coiTrendPaneIndex, 'Type:', typeof coiTrendPaneIndex, 'Index:', coiTrendPaneNumericIndex);
+        } catch (error) {
+            console.error('Error creating COI Trend pane:', error);
+            return;
+        }
+        
+        // Validate pane object before adding series
+        if (!coiTrendPaneIndex || typeof coiTrendPaneIndex !== 'object') {
+            console.error('Invalid COI Trend pane object:', coiTrendPaneIndex, 'Type:', typeof coiTrendPaneIndex);
+            return;
+        }
+        
+        // Add COI Trend series in the new pane using pane.addSeries()
+        coiPercentSeries = coiTrendPaneIndex.addSeries(LightweightCharts.LineSeries, {
+            color: '#2196F3',
+            lineWidth: 2,
+            priceLineVisible: true,
+            lastValueVisible: true,
+            crosshairMarkerVisible: true,
+            title: 'COI %'
+        });
+
+        oiTrendPercentSeries = coiTrendPaneIndex.addSeries(LightweightCharts.LineSeries, {
+            color: '#FF5722',
+            lineWidth: 2,
+            lineStyle: LightweightCharts.LineStyle.Dashed,
+            priceLineVisible: true,
+            lastValueVisible: true,
+            crosshairMarkerVisible: true,
+            title: 'OI Trend %'
+        });
+
+        // Add zero line to COI trend pane using pane.addSeries()
+        zeroLineSeries = coiTrendPaneIndex.addSeries(LightweightCharts.LineSeries, {
+            color: 'rgba(128, 128, 128, 0.5)',
+            lineWidth: 1,
+            lineStyle: LightweightCharts.LineStyle.Dotted,
+            priceLineVisible: false,
+            lastValueVisible: false,
+            crosshairMarkerVisible: false,
+            title: 'Zero Line'
+        });
+
+        // Set zero line data
+        const zeroData = [{ time: 0, value: 0 }, { time: Date.now() / 1000, value: 0 }];
+        zeroLineSeries.setData(zeroData);
+
+        // Refresh COI trend data if available
+        fetchAndUpdateCoiTrendData();
+    }
+
+    // Toggle EMA series visibility
+    let emaVisible = true;
+    window.toggleEMA = function() {
+        const btn = document.getElementById('emaToggle');
+        emaVisible = !emaVisible;
+        
+        if (emaVisible) {
+            ema34Series.applyOptions({ visible: true });
+            ema55Series.applyOptions({ visible: true });
+            btn.classList.add('active');
+        } else {
+            ema34Series.applyOptions({ visible: false });
+            ema55Series.applyOptions({ visible: false });
+            btn.classList.remove('active');
+        }
+    };
+
+    // Toggle RSI pane visibility
+    let rsiVisible = true;
+    window.toggleRSI = function() {
+        const btn = document.getElementById('rsiToggle');
+        rsiVisible = !rsiVisible;
+        
+        if (rsiVisible) {
+            // Recreate RSI pane and series
+            createRsiPane();
+            btn.classList.add('active');
+        } else {
+            // Remove the entire RSI pane
+            if (rsiPaneIndex && typeof rsiPaneIndex === 'object') {
+                chart.removePane(rsiPaneNumericIndex);
+                rsiPaneIndex = undefined;
+                rsiPaneNumericIndex = undefined;
+            }
+            btn.classList.remove('active');
+        }
+    };
+
+    // Individual data points now have their own colors - no need for series-wide color updates
+
+    // Toggle functions for horizontal reference lines
+    let dayOpenVisible = true;
+    let prevDayOpenVisible = true;
+    let prevDayHighVisible = true;
+    let prevDayLowVisible = true;
+    let prevDayCloseVisible = true;
+
+    window.toggleDayOpen = function() {
+        const btn = document.getElementById('dayOpenToggle');
+        dayOpenVisible = !dayOpenVisible;
+        
+        if (dayOpenVisible) {
+            dayOpenLineSeries.applyOptions({ visible: true });
+            btn.classList.add('active');
+        } else {
+            dayOpenLineSeries.applyOptions({ visible: false });
+            btn.classList.remove('active');
+        }
+    };
+
+    window.togglePrevOHLC = function() {
+        const btn = document.getElementById('prevOHLCToggle');
+        
+        // Toggle all previous day OHLC visibility states
+        prevDayOpenVisible = !prevDayOpenVisible;
+        prevDayHighVisible = !prevDayHighVisible;
+        prevDayLowVisible = !prevDayLowVisible;
+        prevDayCloseVisible = !prevDayCloseVisible;
+        
+        if (prevDayOpenVisible) {
+            // Show all previous day OHLC lines
+            prevDayOpenLineSeries.applyOptions({ visible: true });
+            prevDayHighLineSeries.applyOptions({ visible: true });
+            prevDayLowLineSeries.applyOptions({ visible: true });
+            prevDayCloseLineSeries.applyOptions({ visible: true });
+            btn.classList.add('active');
+        } else {
+            // Hide all previous day OHLC lines
+            prevDayOpenLineSeries.applyOptions({ visible: false });
+            prevDayHighLineSeries.applyOptions({ visible: false });
+            prevDayLowLineSeries.applyOptions({ visible: false });
+            prevDayCloseLineSeries.applyOptions({ visible: false });
+            btn.classList.remove('active');
+        }
     };
 
     // Reload only candle data on interval change
@@ -737,6 +1056,9 @@ document.addEventListener("DOMContentLoaded", function() {
                  ema34Series.setData(ema34Data);
                  ema55Series.setData(ema55Data);
                  rsiSeries.setData(rsiData);
+                 
+                 // Add horizontal lines for day open, previous day high and close
+                 addHorizontalLines(priceData);
                  
                  // Fetch and update COI trend data
                  fetchAndUpdateCoiTrendData();
