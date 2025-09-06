@@ -1,18 +1,3 @@
-# Eventlet monkey patching MUST be done before any other imports
-import eventlet
-eventlet.monkey_patch()
-
-import os
-import platform
-from utils.logging import get_logger, log_startup_banner
-from websocket_proxy.app_integration import start_websocket_server, is_running_in_container
-
-# Only import fcntl on Linux
-if platform.system() != "Windows":
-    import fcntl
-else:
-    fcntl = None
-
 # Load and check environment variables before anything else
 from utils.env_check import load_and_check_env_variables  # Import the environment check function
 load_and_check_env_variables()
@@ -30,6 +15,8 @@ from utils.logging import get_logger, log_startup_banner  # Import centralized l
 from utils.socketio_error_handler import init_socketio_error_handling  # Import Socket.IO error handler
 # Import WebSocket proxy server - using relative import to avoid @ symbol issues
 from websocket_proxy.app_integration import start_websocket_proxy
+
+
 
 from blueprints.auth import auth_bp
 from blueprints.dashboard import dashboard_bp
@@ -50,7 +37,6 @@ from blueprints.master_contract_status import master_contract_status_bp  # Impor
 from blueprints.websocket_example import websocket_bp  # Import the websocket example blueprint
 from blueprints.pnltracker import pnltracker_bp  # Import the pnl tracker blueprint
 from blueprints.madhan import madhan_bp # Import the madhan blueprint
-from database.madhan_db import init_db as ensure_madhan_tables_exist
 
 
 from restx_api import api_v1_bp, api
@@ -65,6 +51,8 @@ from database.chartink_db import init_db as ensure_chartink_tables_exists
 from database.traffic_db import init_logs_db as ensure_traffic_logs_exists
 from database.latency_db import init_latency_db as ensure_latency_tables_exists
 from database.strategy_db import init_db as ensure_strategy_tables_exists
+from database.madhan_db import init_db as ensure_madhan_tables_exist
+
 
 from utils.plugin_loader import load_broker_auth_functions
 
@@ -176,7 +164,7 @@ def create_app():
     app.register_blueprint(master_contract_status_bp)
     app.register_blueprint(websocket_bp)  # Register WebSocket example blueprint
     app.register_blueprint(pnltracker_bp)  # Register PnL tracker blueprint
-    app.register_blueprint(madhan_bp)
+    app.register_blueprint(madhan_bp)  # Register Madhan blueprint
     
 
     # Exempt webhook endpoints from CSRF protection after app initialization
@@ -257,64 +245,30 @@ def setup_environment(app):
         ensure_latency_tables_exists()
         ensure_strategy_tables_exists()
         ensure_madhan_tables_exist()
-        
+
     # Conditionally setup ngrok in development environment
     if os.getenv('NGROK_ALLOW') == 'TRUE':
         from pyngrok import ngrok
         public_url = ngrok.connect(name='flask').public_url  # Assuming Flask runs on the default port 5000
         logger.info(f"ngrok URL: {public_url}")
 
-
-def try_start_websocket_once():
-    """
-    Safely start WebSocket server only once across multiple Gunicorn workers.
-    Uses a file lock in /tmp to coordinate processes (Linux only).
-    """
-    if fcntl is None:
-        # On Windows, just start directly (only one process anyway)
-        logger.info("Windows environment detected, starting WebSocket directly")
-        start_websocket_server()
-        return
-
-    lockfile = "/tmp/openalgo_ws.lock"
-    try:
-        fd = os.open(lockfile, os.O_CREAT | os.O_RDWR)
-        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)  # Non-blocking exclusive lock
-    except BlockingIOError:
-        logger.info("WebSocket server already started by another worker, skipping...")
-        return
-
-    logger.info("Starting WebSocket server (first worker won the lock)")
-    try:
-        start_websocket_server()
-    except Exception as e:
-        logger.error(f"Failed to start WebSocket server: {e}")
-
-
-
-# --- Main entrypoint ---
 app = create_app()
+
+# Explicitly call the setup environment function
 setup_environment(app)
 
-# Decide how to start WebSocket
-if is_running_in_container():
-    # Safe lock-based startup (Docker + Gunicorn multiprocess)
-    try_start_websocket_once()
-else:
-    # Local environment: thread-based startup is fine
-    from websocket_proxy.app_integration import start_websocket_proxy
-    start_websocket_proxy(app)
+# Integrate the WebSocket proxy server with the Flask app
+start_websocket_proxy(app)
 
-# Development mode only # Start Flask development server with SocketIO support if directly executed
-if __name__ == "__main__":
-     # Get environment variables
-    host_ip = os.getenv("FLASK_HOST_IP", "127.0.0.1") # Default to '127.0.0.1' if not set
-    port = int(os.getenv("FLASK_PORT", 5000))  # Default to 5000 if not set
-    debug = os.getenv("FLASK_DEBUG", "False").lower() in ("true", "1", "t") # Default to False if not set
-    
+# Start Flask development server with SocketIO support if directly executed
+if __name__ == '__main__':
+    # Get environment variables
+    host_ip = os.getenv('FLASK_HOST_IP', '127.0.0.1')  # Default to '127.0.0.1' if not set
+    port = int(os.getenv('FLASK_PORT', 5000))  # Default to 5000 if not set
+    debug = os.getenv('FLASK_DEBUG', 'False').lower() in ('true', '1', 't')  # Default to False if not set
+
     # Log the OpenAlgo access URL with enhanced styling
     url = f"http://{host_ip}:{port}"
     log_startup_banner(logger, "OpenAlgo is running!", url)
 
-    from extensions import socketio
     socketio.run(app, host=host_ip, port=port, debug=debug)
