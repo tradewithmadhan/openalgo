@@ -36,6 +36,7 @@ from blueprints.strategy import strategy_bp  # Import the strategy blueprint
 from blueprints.master_contract_status import master_contract_status_bp  # Import the master contract status blueprint
 from blueprints.websocket_example import websocket_bp  # Import the websocket example blueprint
 from blueprints.pnltracker import pnltracker_bp  # Import the pnl tracker blueprint
+from blueprints.python_strategy import python_strategy_bp  # Import the python strategy blueprint
 from blueprints.madhan import madhan_bp # Import the madhan blueprint
 
 
@@ -164,6 +165,7 @@ def create_app():
     app.register_blueprint(master_contract_status_bp)
     app.register_blueprint(websocket_bp)  # Register WebSocket example blueprint
     app.register_blueprint(pnltracker_bp)  # Register PnL tracker blueprint
+    app.register_blueprint(python_strategy_bp)  # Register Python strategy blueprint
     app.register_blueprint(madhan_bp)  # Register Madhan blueprint
     
 
