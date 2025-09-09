@@ -198,7 +198,6 @@ def save_tracked_symbols(symbols: list[str]):
     """Clears and saves the list of tracked symbols to the database."""
     if not symbols:
         return
-
     session = SessionLocal()
     try:
         # Clear the existing table first
@@ -217,6 +216,14 @@ def save_tracked_symbols(symbols: list[str]):
         logger.error(f"Database error during tracked symbols save: {e}")
     finally:
         session.close()
+
+def clear_madhan_db():
+    """Drops all tables in the Madhan database."""
+    try:
+        Base.metadata.drop_all(bind=engine)
+        logger.info("Madhan DB cleared successfully (all tables dropped).")
+    except Exception as e:
+        logger.error(f"Error clearing Madhan DB: {e}")
 
 def save_fetcher_state(key: str, value: any):
     """Saves a key-value state for the fetcher. The value will be converted to a string."""

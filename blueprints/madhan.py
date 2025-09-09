@@ -162,8 +162,8 @@ def nifty_previous_day_oi():
         current_oi_map['NIFTY'] = latest_nifty_data[0].get('oi', 0)
 
     # 2. Get OI at 3rd and 6th candle marks
-    oi_at_3min_map = get_nth_candle_oi_for_all_symbols(3) # 3rd candle (e.g., 9:17 AM)
-    oi_at_6min_map = get_nth_candle_oi_for_all_symbols(6) # 6th candle (e.g., 9:20 AM)
+    oi_at_3min_map = get_nth_candle_oi_for_all_symbols(1) # 3rd candle (e.g., 9:17 AM)
+    oi_at_6min_map = get_nth_candle_oi_for_all_symbols(4) # 6th candle (e.g., 9:20 AM)
     
     combined_data = []
     for prev_item in prev_day_data:

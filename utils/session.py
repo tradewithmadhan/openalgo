@@ -4,6 +4,7 @@ from functools import wraps
 from flask import session, redirect, url_for
 from utils.logging import get_logger
 import os
+from database.madhan_db import clear_madhan_db
 
 logger = get_logger(__name__)
 
@@ -104,6 +105,7 @@ def check_session_validity(f):
             # Revoke tokens before clearing session
             revoke_user_tokens()
             session.clear()
+            clear_madhan_db()
             logger.info("Invalid session detected - redirecting to login")
             return redirect(url_for('auth.login'))
         logger.debug("Session validated successfully")
@@ -119,5 +121,6 @@ def invalidate_session_if_invalid(f):
             # Revoke tokens before clearing session
             revoke_user_tokens()
             session.clear()
+            clear_madhan_db()
         return f(*args, **kwargs)
     return decorated_function

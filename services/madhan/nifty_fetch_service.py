@@ -230,10 +230,18 @@ class NiftyDataFetcher:
                 logger.error(f"Could not fetch expiry dates: {expiry_data.get('message')}")
                 return
             
+            current_date_dt = datetime.now().date()
             self.expiry_date = expiry_data['data'][0]
+            expiry_date_dt = datetime.strptime(self.expiry_date, "%d-%b-%y").date()
+            
+            # If current date matches expiry date, use next expiry if available
+            if current_date_dt == expiry_date_dt and len(expiry_data['data']) > 1:
+                self.expiry_date = expiry_data['data'][1]
+                logger.info(f"Current date matches expiry, using next expiry: {self.expiry_date}")
+            
             save_fetcher_state('expiry_date', self.expiry_date)
             expiry_for_symbol = datetime.strptime(self.expiry_date, "%d-%b-%y").strftime("%d%b%y").upper()
-            logger.info(f"Using first expiry date: {self.expiry_date} ({expiry_for_symbol})")
+            logger.info(f"Selected expiry date: {self.expiry_date} ({expiry_for_symbol})")
 
             # 4. Generate list of option symbols
             symbols_to_track = []
