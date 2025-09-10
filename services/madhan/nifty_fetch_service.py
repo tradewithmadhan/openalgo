@@ -4,6 +4,7 @@ A background service to fetch and store Nifty 1-minute data.
 import os
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from sqlalchemy import func, select
 import pandas as pd
 from datetime import datetime, timedelta
@@ -266,25 +267,62 @@ class NiftyDataFetcher:
         except Exception as e:
             logger.exception(f"Error in _get_atm_strike_and_symbols: {e}")
 
+    def _fetch_single_option_data(self, symbol, start_date_str, end_date_str):
+        """Fetches data for a single option symbol."""
+        try:
+            success, result, _ = get_history(symbol=symbol, exchange="NFO", interval="1m", start_date=start_date_str, end_date=end_date_str, api_key=self.api_key)
+            if success and result.get('status') == 'success':
+                df_option = pd.DataFrame(result['data'])
+                if not df_option.empty:
+                    # Ensure 'oi' column exists and is of integer type, fill NaNs with 0
+                    if 'oi' not in df_option.columns:
+                        df_option['oi'] = 0
+                    df_option['oi'] = pd.to_numeric(df_option['oi'], errors='coerce').fillna(0).astype(int)
+                    df_option['symbol'] = symbol
+                    store_option_data(df_option)
+                    return True, symbol
+            return False, symbol
+        except Exception as e:
+            logger.error(f"Exception fetching data for option {symbol}: {e}")
+            return False, symbol
+
     def _fetch_and_store_options_data(self, start_date_str, end_date_str):
-        """Fetches and stores historical data for the tracked option symbols."""
+        """Fetches and stores historical data for the tracked option symbols in parallel."""
         if not self.option_symbols:
             return
-        for symbol in self.option_symbols:
-            try:
-                success, result, _ = get_history(symbol=symbol, exchange="NFO", interval="1m", start_date=start_date_str, end_date=end_date_str, api_key=self.api_key)
-                if success and result.get('status') == 'success':
-                    df_option = pd.DataFrame(result['data'])
-                    if not df_option.empty:
-                        # Ensure 'oi' column exists and is of integer type, fill NaNs with 0
-                        if 'oi' not in df_option.columns:
-                            df_option['oi'] = 0
-                        df_option['oi'] = pd.to_numeric(df_option['oi'], errors='coerce').fillna(0).astype(int)
-                        df_option['symbol'] = symbol
-                        store_option_data(df_option)
-                time.sleep(self.request_delay)
-            except Exception as e:
-                logger.error(f"Exception fetching data for option {symbol}: {e}")
+        
+        # Calculate parallel workers based on rate limit / 2
+        rate_limit_str = os.getenv('API_RATE_LIMIT', '5 per second')
+        try:
+            rate = int(rate_limit_str.split(' ')[0])
+            max_workers = max(1, rate // 2)  # Use half the rate limit for parallel requests
+        except (ValueError, IndexError, ZeroDivisionError):
+            max_workers = 2  # Default fallback
+        
+        logger.info(f"Fetching option data with {max_workers} parallel workers")
+        
+        successful_fetches = 0
+        failed_fetches = 0
+        
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all tasks
+            future_to_symbol = {
+                executor.submit(self._fetch_single_option_data, symbol, start_date_str, end_date_str): symbol 
+                for symbol in self.option_symbols
+            }
+            
+            # Process completed tasks
+            for future in as_completed(future_to_symbol):
+                success, symbol = future.result()
+                if success:
+                    successful_fetches += 1
+                else:
+                    failed_fetches += 1
+                
+                # Add delay to respect rate limiting
+                time.sleep(self.request_delay * 2)  # Double the delay since we're using parallel requests
+        
+        logger.info(f"Option data fetch completed: {successful_fetches} successful, {failed_fetches} failed")
 
     def _calculate_and_store_previous_day_oi(self, today, prev_day):
         """
