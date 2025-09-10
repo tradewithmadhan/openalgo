@@ -218,12 +218,26 @@ def save_tracked_symbols(symbols: list[str]):
         session.close()
 
 def clear_madhan_db():
-    """Drops all tables in the Madhan database."""
+    """Clears all data from tables in the Madhan database while preserving table schemas."""
+    session = SessionLocal()
     try:
-        Base.metadata.drop_all(bind=engine)
-        logger.info("Madhan DB cleared successfully (all tables dropped).")
+        # Clear data from all tables while preserving schemas
+        session.query(NiftyData).delete()
+        session.query(OptionData).delete()
+        session.query(PreviousDayOI).delete()
+        session.query(TrackedSymbol).delete()
+        session.query(FetcherState).delete()
+        
+        session.commit()
+        logger.info("Madhan DB data cleared successfully (table schemas preserved).")
+    except SQLAlchemyError as e:
+        session.rollback()
+        logger.error(f"Database error clearing Madhan DB data: {e}")
     except Exception as e:
-        logger.error(f"Error clearing Madhan DB: {e}")
+        session.rollback()
+        logger.error(f"Error clearing Madhan DB data: {e}")
+    finally:
+        session.close()
 
 def save_fetcher_state(key: str, value: any):
     """Saves a key-value state for the fetcher. The value will be converted to a string."""

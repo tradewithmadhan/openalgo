@@ -219,31 +219,7 @@
             </div>
         </div>
 
-        <!-- TradingView Chart Section -->
-        <div class="card bg-base-100 shadow-xl mt-1">
-            <div class="card-body p-2"> 
-                <div class="card-title justify-between items-center gap-4">
-                    <h2 class="text-xl font-bold">TV Chart</h2>
-                    <div class="flex items-center gap-2 flex-grow justify-center">
-                        <select id="strike-price-dropdown" class="select select-sm select-bordered w-40">
-                            <option disabled selected>Select Strike</option>
-                        </select>
-                        <button id="fetch-strike-data-btn" class="btn btn-sm btn-primary">Fetch Options</button>
-                    </div>
-                    <div class="flex items-center gap-2">
-                        <label class="label cursor-pointer gap-2">
-                            <span class="label-text font-semibold">Spot</span>
-                            <input type="checkbox" id="toggle-spot-chart-visibility" class="toggle toggle-sm toggle-info" checked />
-                        </label>
-                        <label class="label cursor-pointer gap-2">
-                            <span class="label-text font-semibold">Show Chart</span>
-                            <input type="checkbox" id="toggle-tv-chart-visibility" class="toggle toggle-sm toggle-accent" checked />
-                        </label>
-                    </div>
-                </div>
-                <div id="tv-chart-wrapper" style="height: 600px;"></div>
-            </div>
-        </div>
+
 
         <!-- Data Tables Grid -->
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-1">
@@ -317,8 +293,7 @@
 {% block scripts %}
 {{ super() }}
 
-<!-- TradingView Lightweight Charts (loaded statically to prevent conflicts) -->
-<script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+
 
 <!-- Chart.js for COI Trend Chart -->
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
@@ -341,11 +316,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const toggleOiChainVisibility = document.getElementById('toggle-oi-chain-visibility');
     const toggleCoiChartVisibility = document.getElementById('toggle-coi-chart-visibility');
     const coiTrendChartWrapper = document.getElementById('coi-trend-chart-wrapper');
-    const fetchStrikeDataBtn = document.getElementById('fetch-strike-data-btn');
-    const strikePriceDropdown = document.getElementById('strike-price-dropdown');
-    const toggleTvChartVisibility = document.getElementById('toggle-tv-chart-visibility');
-    const toggleSpotChartVisibility = document.getElementById('toggle-spot-chart-visibility');
-    const tvChartWrapper = document.getElementById('tv-chart-wrapper');
+
     const toggleLiveDataVisibility = document.getElementById('toggle-live-data-visibility');
     const liveDataWrapper = document.getElementById('live-data-wrapper');
     const togglePrevDayVisibility = document.getElementById('toggle-prev-day-visibility');
@@ -356,10 +327,7 @@ document.addEventListener('DOMContentLoaded', function() {
     let currentAtmValue = 0;
     let lastOiData = []; // Cache the last data to re-render on toggle
     let coiTrendChart = null;
-    let tvChart = null;
-    let niftySeries = null;
-    let ceSeries = null;
-    let peSeries = null;
+
 
     const nifty_count_el = document.getElementById('nifty-count');
     const expiry_date_el = document.getElementById('expiry-date');
@@ -622,8 +590,7 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         });
 
-        // New: Populate the strike dropdown
-        populateStrikeDropdown(Array.from(strikesData.keys()), openAtmValue);
+
 
         let sortedStrikes = Array.from(strikesData.values()).sort((a, b) => b.strike - a.strike); // Sort descending
 
@@ -771,32 +738,7 @@ document.addEventListener('DOMContentLoaded', function() {
         oiChainContainer.innerHTML = headerHtml + rowsHtml;
     }
 
-    function populateStrikeDropdown(strikes, openAtm) {
-        if (!strikes || strikes.length === 0 || !openAtm) {
-            return;
-        }
 
-        // Check if the dropdown is already populated with the correct ATM to avoid re-rendering
-        const currentSelectedATM = strikePriceDropdown.querySelector('option[selected]');
-        if (currentSelectedATM && parseInt(currentSelectedATM.value, 10) === openAtm) {
-            return;
-        }
-
-        strikePriceDropdown.innerHTML = ''; // Clear existing options
-
-        // Sort strikes numerically
-        const sortedStrikes = [...strikes].sort((a, b) => b - a);
-
-        sortedStrikes.forEach(strike => {
-            const option = document.createElement('option');
-            option.value = strike;
-            option.textContent = strike;
-            if (strike === openAtm) {
-                option.selected = true;
-            }
-            strikePriceDropdown.appendChild(option);
-        });
-    }
 
     async function updateCoiTrendChart() {
         try {
@@ -969,179 +911,14 @@ document.addEventListener('DOMContentLoaded', function() {
 
     }
 
-    // TradingView Lightweight Chart Integration
-    function loadTradingViewChart() {
-        const chartContainer = document.getElementById('tv-chart-wrapper');
-        if (!chartContainer) {
-            console.error('TradingView chart container not found.');
-            return;
-        }
-        if (typeof LightweightCharts === 'undefined' || typeof LightweightCharts.createChart !== 'function') {
-            console.error('LightweightCharts library not loaded correctly.');
-            return;
-        }
 
-        const chartProperties = {
-            width: chartContainer.offsetWidth,
-            height: 600,
-            layout: {
-                background: { type: 'solid', color: 'transparent' },
-                textColor: getComputedStyle(document.body).getPropertyValue('--bc') || 'rgba(255, 255, 255, 0.9)',
-            },
-            grid: {
-                vertLines: { color: 'rgba(197, 203, 206, 0.2)' },
-                horzLines: { color: 'rgba(197, 203, 206, 0.2)' },
-            },
-            timeScale: {
-                timeVisible: true,
-                secondsVisible: false,
-            },
-            rightPriceScale: {
-                visible: true,
-                borderColor: 'rgba(197, 203, 206, 0.4)',
-            },
-            leftPriceScale: {
-                visible: true,
-                borderColor: 'rgba(197, 203, 206, 0.4)',
-            },
-        };
-
-        tvChart = LightweightCharts.createChart(chartContainer, chartProperties);
-
-        // Nifty Spot chart on the left scale
-        niftySeries = tvChart.addCandlestickSeries({
-          upColor: 'rgba(34, 197, 94, 0.8)',
-          downColor: 'rgba(239, 68, 68, 0.8)',
-          borderDownColor: 'rgba(239, 68, 68, 1)',
-          borderUpColor: 'rgba(34, 197, 94, 1)',
-          wickDownColor: 'rgba(239, 68, 68, 1)',
-          wickUpColor: 'rgba(34, 197, 94, 1)',
-          priceScaleId: 'left',
-          title: 'NIFTY',
-        });
-
-        fetchChartData("{{ url_for('madhan_bp.nifty_chart_data') }}").then(chartData => {
-            if (chartData && chartData.length > 0) {
-                niftySeries.setData(chartData);
-            }
-            tvChart.timeScale().fitContent();
-        });
-
-        // Update the chart with new data periodically
-        setInterval(() => {
-            fetchChartData("{{ url_for('madhan_bp.nifty_chart_data') }}").then(newChartData => {
-                if (newChartData && newChartData.length > 0) {
-                    const lastCandle = newChartData[newChartData.length - 1];
-                    if (lastCandle) {
-                        niftySeries.update(lastCandle);
-                    }
-                }
-            });
-        }, 15000); // Update every 15 seconds
-    }
-
-    // Fetch chart data from Flask endpoint
-    async function fetchChartData(url) {
-        try {
-            const response = await fetchWithCSRF(url, {
-                method: 'GET',
-                cache: 'no-store'
-            });
-
-            if (!response.ok) {
-                throw new Error(`HTTP error! Status: ${response.status}`);
-            }
-
-            const result = await response.json();
-            const data = Array.isArray(result) ? result : result.data;
-
-            if (!Array.isArray(data)) {
-                console.error('Received data is not in expected array format:', data);
-                return [];
-            }
-
-            // Map the data to the format required by Lightweight Charts
-            // Also, adjust timestamp for IST display (+5.5 hours)
-            const chartData = data.map(item => ({
-                time: item.timestamp + 19800, // +5.5 hours for IST
-                open: item.open,
-                high: item.high,
-                low: item.low,
-                close: item.close,
-                value: item.close // for line series
-            }));
-
-            return chartData;
-        } catch (error) {
-            console.error(`Failed to fetch chart data from ${url}:`, error);
-            return []; // Return an empty array to avoid breaking the chart
-        }
-    }
-
-    // New function to add strike data
-    async function addStrikeToChart(strike) {
-        if (!strike || !expiry_date_el.textContent || expiry_date_el.textContent === '-') {
-            showToast('Strike or Expiry not available.', 'error');
-            return;
-        }
-
-        const expiryDateStr = expiry_date_el.textContent; // e.g., "2024-07-25"
-        const date = new Date(expiryDateStr);
-        const day = String(date.getDate()).padStart(2, '0');
-        const month = date.toLocaleString('en-US', { month: 'short' }).toUpperCase();
-        const year = String(date.getFullYear()).slice(-2);
-        const formattedExpiry = `${day}${month}${year}`; // e.g., 25JUL24
-
-        const ceSymbol = `NIFTY${formattedExpiry}${strike}CE`;
-        const peSymbol = `NIFTY${formattedExpiry}${strike}PE`;
-
-        // Remove existing CE/PE series if they exist
-        if (ceSeries) tvChart.removeSeries(ceSeries);
-        if (peSeries) tvChart.removeSeries(peSeries);
-
-        // Create new series on the right scale
-        ceSeries = tvChart.addCandlestickSeries({
-            upColor: 'rgba(251, 146, 60, 0.8)', // Lighter orange for up
-            downColor: 'rgba(234, 88, 12, 0.8)', // Darker orange for down
-            borderDownColor: 'rgba(234, 88, 12, 1)',
-            borderUpColor: 'rgba(251, 146, 60, 1)',
-            wickDownColor: 'rgba(234, 88, 12, 1)',
-            wickUpColor: 'rgba(251, 146, 60, 1)',
-            priceScaleId: 'right',
-            title: `${strike} CE`,
-        });
-        peSeries = tvChart.addCandlestickSeries({
-            upColor: 'rgba(192, 132, 252, 0.8)', // Lighter purple for up
-            downColor: 'rgba(147, 51, 234, 0.8)', // Darker purple for down
-            borderDownColor: 'rgba(147, 51, 234, 1)',
-            borderUpColor: 'rgba(192, 132, 252, 1)',
-            wickDownColor: 'rgba(147, 51, 234, 1)',
-            wickUpColor: 'rgba(192, 132, 252, 1)',
-            priceScaleId: 'right',
-            title: `${strike} PE`,
-        });
-
-        // Fetch and set data for CE
-        // The fetchChartData function already returns data in {time, open, high, low, close} format,
-        // which is perfect for candlestick series.
-        const ceUrl = `{{ url_for('madhan_bp.nifty_instrument_data') }}?symbol=${ceSymbol}`;
-        fetchChartData(ceUrl).then(chartData => {
-            ceSeries.setData(chartData);
-        });
-
-        // Fetch and set data for PE
-        const peUrl = `{{ url_for('madhan_bp.nifty_instrument_data') }}?symbol=${peSymbol}`;
-        fetchChartData(peUrl).then(chartData => {
-            peSeries.setData(chartData);
-        });
-    }
 
     // Initial checks and start intervals
     checkStatus();
     fetchPrevDayOiData();
     updateCombinedTable();
     updateCoiTrendChart();
-    loadTradingViewChart(); // Load the main chart
+
 
     // Add event listeners for OI Chain toggles
     [toggleSession, toggle3Min, toggle6Min, toggleOiView].forEach(toggle => {
@@ -1157,17 +934,7 @@ document.addEventListener('DOMContentLoaded', function() {
         coiTrendChartWrapper.classList.toggle('hidden', !this.checked);
     });
 
-    toggleTvChartVisibility.addEventListener('change', function() {
-        tvChartWrapper.classList.toggle('hidden', !this.checked);
-    });
 
-    toggleSpotChartVisibility.addEventListener('change', function() {
-        if (niftySeries) {
-            niftySeries.applyOptions({
-                visible: this.checked
-            });
-        }
-    });
 
     toggleLiveDataVisibility.addEventListener('change', function() {
         liveDataWrapper.classList.toggle('hidden', !this.checked);
@@ -1177,14 +944,7 @@ document.addEventListener('DOMContentLoaded', function() {
         prevDayWrapper.classList.toggle('hidden', !this.checked);
     });
 
-    fetchStrikeDataBtn.addEventListener('click', () => {
-        const strike = strikePriceDropdown.value;
-        if (strike && !strikePriceDropdown.options[strikePriceDropdown.selectedIndex].disabled) {
-            addStrikeToChart(strike);
-        } else {
-            showToast('Please select a strike price.', 'info');
-        }
-    });
+
 
     setInterval(checkStatus, 5000); // Check status every 5 seconds
     setInterval(updateCombinedTable, 10000); // Refresh combined data every 10 seconds
