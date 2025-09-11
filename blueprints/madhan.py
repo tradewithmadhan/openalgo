@@ -204,8 +204,21 @@ def nifty_coi_trend():
     if not open_atm or open_atm == 0:
         return jsonify({'status': 'success', 'data': {'timestamps': [], 'coi_percent': [], 'oi_trend_percent': []}, 'message': 'ATM strike not calculated yet.'})
 
+    # Get strike selection parameters
+    strike_selection_mode = request.args.get('strike_selection_mode', 'option2')  # option1: all strikes, option2: selective
+    upside_strikes = int(request.args.get('upside_strikes', '10'))  # default 10 strikes above ATM
+    downside_strikes = int(request.args.get('downside_strikes', '10'))  # default 10 strikes below ATM
+    
     # Get the total number of symbols we expect data for on each candle to ensure data integrity
-    expected_symbol_count = len(nifty_fetcher.option_symbols) + 1 # +1 for NIFTY index
+    if strike_selection_mode == 'option1':
+        expected_symbol_count = len(nifty_fetcher.option_symbols) + 1 # +1 for NIFTY index
+    else:
+        # For option2, calculate expected symbols based on selective strikes
+        # PE: all strikes below ATM + ATM + 2 above ATM
+        # CE: all strikes above ATM + ATM + 2 below ATM
+        pe_strikes_count = downside_strikes + 1 + 2  # below + ATM + 2 above
+        ce_strikes_count = upside_strikes + 1 + 2   # above + ATM + 2 below
+        expected_symbol_count = pe_strikes_count + ce_strikes_count + 1  # +1 for NIFTY index
 
     prev_day_data = get_previous_day_oi()
     prev_oi_map = {item['symbol']: item.get('oi', 0) for item in prev_day_data}
@@ -240,6 +253,26 @@ def nifty_coi_trend():
             symbol = item['symbol']
             current_oi = item.get('oi', 0)
             prev_oi = prev_oi_map.get(symbol, 0)
+            
+            # Skip NIFTY index symbol
+            if symbol == 'NIFTY':
+                continue
+                
+            # Apply strike filtering for option2
+            if strike_selection_mode == 'option2':
+                strike_price = extract_strike(symbol)
+                if strike_price is None:
+                    continue
+                    
+                # PE writers view: strikes below ATM + ATM + 2 above ATM
+                if symbol.endswith('PE'):
+                    if strike_price > open_atm + (2 * 50):  # Skip PE strikes more than 2 above ATM
+                        continue
+                        
+                # CE writers view: strikes above ATM + ATM + 2 below ATM  
+                elif symbol.endswith('CE'):
+                    if strike_price < open_atm - (2 * 50):  # Skip CE strikes more than 2 below ATM
+                        continue
             
             if prev_oi > 0 and current_oi > 0:
                 change_in_oi = current_oi - prev_oi
@@ -311,8 +344,21 @@ def nifty_ce_pe_changes():
     if not open_atm or open_atm == 0:
         return jsonify({'status': 'success', 'data': {'timestamps': [], 'ce_changes': [], 'pe_changes': []}, 'message': 'ATM strike not calculated yet.'})
 
+    # Get strike selection parameters
+    strike_selection_mode = request.args.get('strike_selection_mode', 'option1')  # option1: all strikes, option2: selective
+    upside_strikes = int(request.args.get('upside_strikes', '10'))  # default 10 strikes above ATM
+    downside_strikes = int(request.args.get('downside_strikes', '10'))  # default 10 strikes below ATM
+    
     # Get the total number of symbols we expect data for on each candle to ensure data integrity
-    expected_symbol_count = len(nifty_fetcher.option_symbols) + 1 # +1 for NIFTY index
+    if strike_selection_mode == 'option2':
+        expected_symbol_count = len(nifty_fetcher.option_symbols) + 1 # +1 for NIFTY index
+    else:
+        # For option2, calculate expected symbols based on selective strikes
+        # PE: all strikes below ATM + ATM + 2 above ATM
+        # CE: all strikes above ATM + ATM + 2 below ATM
+        pe_strikes_count = downside_strikes + 1 + 2  # below + ATM + 2 above
+        ce_strikes_count = upside_strikes + 1 + 2   # above + ATM + 2 below
+        expected_symbol_count = pe_strikes_count + ce_strikes_count + 1  # +1 for NIFTY index
 
     prev_day_data = get_previous_day_oi()
     prev_oi_map = {item['symbol']: item.get('oi', 0) for item in prev_day_data}
@@ -349,6 +395,26 @@ def nifty_ce_pe_changes():
             symbol = item['symbol']
             current_oi = item.get('oi', 0)
             current_candle_oi_map[symbol] = current_oi
+            
+            # Skip NIFTY index symbol
+            if symbol == 'NIFTY':
+                continue
+                
+            # Apply strike filtering for option2
+            if strike_selection_mode == 'option2':
+                strike_price = extract_strike(symbol)
+                if strike_price is None:
+                    continue
+                    
+                # PE writers view: strikes below ATM + ATM + 2 above ATM
+                if symbol.endswith('PE'):
+                    if strike_price > open_atm + (2 * 50):  # Skip PE strikes more than 2 above ATM
+                        continue
+                        
+                # CE writers view: strikes above ATM + ATM + 2 below ATM  
+                elif symbol.endswith('CE'):
+                    if strike_price < open_atm - (2 * 50):  # Skip CE strikes more than 2 below ATM
+                        continue
             
             # Get previous OI (from previous candle or previous day for first candle)
             prev_oi = prev_candle_oi_map.get(symbol, 0)

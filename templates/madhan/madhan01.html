@@ -208,10 +208,16 @@
             <div class="card-body p-2">
                 <div class="card-title justify-between items-center">
                     <h2 class="text-xl font-bold">OI vs COI Trend</h2>
-                    <label class="label cursor-pointer gap-2">
-                        <span class="label-text font-semibold">Show Trend</span>
-                        <input type="checkbox" id="toggle-coi-chart-visibility" class="toggle toggle-sm toggle-accent" checked />
-                    </label>
+                    <div class="flex items-center gap-4">
+                        <label class="label cursor-pointer gap-2">
+                            <span class="label-text font-semibold text-xs">Writers View</span>
+                            <input type="checkbox" id="coi-strike-mode-toggle" class="toggle toggle-xs toggle-primary" />
+                        </label>
+                        <label class="label cursor-pointer gap-2">
+                            <span class="label-text font-semibold">Show Trend</span>
+                            <input type="checkbox" id="toggle-coi-chart-visibility" class="toggle toggle-sm toggle-accent" checked />
+                        </label>
+                    </div>
                 </div>
                 <div id="coi-trend-chart-wrapper" style="height: 1000px;">
                     <canvas id="coiTrendChart"></canvas>
@@ -224,10 +230,16 @@
             <div class="card-body p-2">
                 <div class="card-title justify-between items-center">
                     <h2 class="text-xl font-bold">CE/PE Changes per Candle</h2>
-                    <label class="label cursor-pointer gap-2">
-                        <span class="label-text font-semibold">Show Chart</span>
-                        <input type="checkbox" id="toggle-cepe-chart-visibility" class="toggle toggle-sm toggle-accent" checked />
-                    </label>
+                    <div class="flex items-center gap-4">
+                        <label class="label cursor-pointer gap-2">
+                            <span class="label-text font-semibold text-xs">Writers View</span>
+                            <input type="checkbox" id="cepe-strike-mode-toggle" class="toggle toggle-xs toggle-primary" />
+                        </label>
+                        <label class="label cursor-pointer gap-2">
+                            <span class="label-text font-semibold">Show Chart</span>
+                            <input type="checkbox" id="toggle-cepe-chart-visibility" class="toggle toggle-sm toggle-accent" checked />
+                        </label>
+                    </div>
                 </div>
                 <div id="cepe-chart-wrapper" style="height: 600px;">
                     <canvas id="cePeChart"></canvas>
@@ -759,7 +771,10 @@ document.addEventListener('DOMContentLoaded', function() {
 
     async function updateCoiTrendChart() {
         try {
-            const response = await fetchWithCSRF("{{ url_for('madhan_bp.nifty_coi_trend') }}", { cache: 'no-store' });
+            const strikeModeToggle = document.getElementById('coi-strike-mode-toggle').checked;
+            const strikeMode = strikeModeToggle ? 'option2' : 'option1';
+            const url = `{{ url_for('madhan_bp.nifty_coi_trend') }}?strike_selection_mode=${strikeMode}`;
+            const response = await fetchWithCSRF(url, { cache: 'no-store' });
             const result = await response.json();
 
             if (result.status === 'success') {
@@ -930,7 +945,10 @@ document.addEventListener('DOMContentLoaded', function() {
 
     async function updateCePeChart() {
         try {
-            const response = await fetchWithCSRF("{{ url_for('madhan_bp.nifty_ce_pe_changes') }}", { cache: 'no-store' });
+            const strikeModeToggle = document.getElementById('cepe-strike-mode-toggle').checked;
+            const strikeMode = strikeModeToggle ? 'option2' : 'option1';
+            const url = `{{ url_for('madhan_bp.nifty_ce_pe_changes') }}?strike_selection_mode=${strikeMode}`;
+            const response = await fetchWithCSRF(url, { cache: 'no-store' });
             const result = await response.json();
 
             if (result.status === 'success') {
@@ -1089,7 +1107,14 @@ document.addEventListener('DOMContentLoaded', function() {
         prevDayWrapper.classList.toggle('hidden', !this.checked);
     });
 
-
+    // Add event listeners for strike selection mode toggles
+    document.getElementById('coi-strike-mode-toggle').addEventListener('change', function() {
+        updateCoiTrendChart();
+    });
+    
+    document.getElementById('cepe-strike-mode-toggle').addEventListener('change', function() {
+        updateCePeChart();
+    });
 
     setInterval(checkStatus, 5000); // Check status every 5 seconds
     setInterval(updateCombinedTable, 10000); // Refresh combined data every 10 seconds
