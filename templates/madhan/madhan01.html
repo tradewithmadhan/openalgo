@@ -219,7 +219,21 @@
             </div>
         </div>
 
-
+        <!-- CE/PE Changes Bar Chart Card -->
+        <div class="card bg-base-100 shadow-xl mt-1">
+            <div class="card-body p-2">
+                <div class="card-title justify-between items-center">
+                    <h2 class="text-xl font-bold">CE/PE Changes per Candle</h2>
+                    <label class="label cursor-pointer gap-2">
+                        <span class="label-text font-semibold">Show Chart</span>
+                        <input type="checkbox" id="toggle-cepe-chart-visibility" class="toggle toggle-sm toggle-accent" checked />
+                    </label>
+                </div>
+                <div id="cepe-chart-wrapper" style="height: 600px;">
+                    <canvas id="cePeChart"></canvas>
+                </div>
+            </div>
+        </div>
 
         <!-- Data Tables Grid -->
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-1">
@@ -316,6 +330,8 @@ document.addEventListener('DOMContentLoaded', function() {
     const toggleOiChainVisibility = document.getElementById('toggle-oi-chain-visibility');
     const toggleCoiChartVisibility = document.getElementById('toggle-coi-chart-visibility');
     const coiTrendChartWrapper = document.getElementById('coi-trend-chart-wrapper');
+    const toggleCePeChartVisibility = document.getElementById('toggle-cepe-chart-visibility');
+    const cePeChartWrapper = document.getElementById('cepe-chart-wrapper');
 
     const toggleLiveDataVisibility = document.getElementById('toggle-live-data-visibility');
     const liveDataWrapper = document.getElementById('live-data-wrapper');
@@ -327,6 +343,7 @@ document.addEventListener('DOMContentLoaded', function() {
     let currentAtmValue = 0;
     let lastOiData = []; // Cache the last data to re-render on toggle
     let coiTrendChart = null;
+    let cePeChart = null;
 
 
     const nifty_count_el = document.getElementById('nifty-count');
@@ -911,13 +928,137 @@ document.addEventListener('DOMContentLoaded', function() {
 
     }
 
+    async function updateCePeChart() {
+        try {
+            const response = await fetchWithCSRF("{{ url_for('madhan_bp.nifty_ce_pe_changes') }}", { cache: 'no-store' });
+            const result = await response.json();
 
+            if (result.status === 'success') {
+                renderCePeChart(result.data);
+            } else {
+                console.log('CE/PE changes data not ready:', result.message);
+                renderCePeChart(null);
+            }
+        } catch (error) {
+            console.error('Error fetching CE/PE changes data:', error);
+            renderCePeChart(null);
+        }
+    }
+
+    function renderCePeChart(data) {
+        const canvas = document.getElementById('cePeChart');
+        const ctx = canvas.getContext('2d');
+
+        // If there's an existing chart, destroy it to prevent conflicts and memory leaks.
+        if (cePeChart) {
+            cePeChart.destroy();
+            cePeChart = null;
+        }
+
+        if (!data || !data.timestamps || data.timestamps.length === 0) {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.fillStyle = '#666';
+            ctx.font = '16px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText('No CE/PE changes data available', canvas.width / 2, canvas.height / 2);
+            return;
+        }
+
+        const labels = data.timestamps.map(timestamp => {
+            const date = new Date(timestamp);
+            return date.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' });
+        });
+
+        const ceData = data.ce_changes || [];
+        const peData = data.pe_changes || [];
+
+        const chartData = {
+            labels: labels,
+            datasets: [
+                {
+                    label: 'CE Change',
+                    data: ceData,
+                    backgroundColor: 'rgba(239, 68, 68, 0.8)',
+                    borderColor: 'rgba(239, 68, 68, 1)',
+                    borderWidth: 2,
+                    barThickness: 'flex',
+                    maxBarThickness: 60
+                },
+                {
+                    label: 'PE Change',
+                    data: peData,
+                    backgroundColor: 'rgba(34, 197, 94, 0.8)',
+                    borderColor: 'rgba(34, 197, 94, 1)',
+                    borderWidth: 2,
+                    barThickness: 'flex',
+                    maxBarThickness: 60
+                }
+            ]
+        };
+
+        cePeChart = new Chart(ctx, {
+            type: 'bar',
+            data: chartData,
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: {
+                    intersect: false,
+                    mode: 'index'
+                },
+                scales: {
+                    x: {
+                        title: {
+                            display: true,
+                            text: 'Time'
+                        },
+                        grid: {
+                            display: true,
+                            color: 'rgba(255, 255, 255, 0.1)'
+                        }
+                    },
+                    y: {
+                        title: {
+                            display: true,
+                            text: 'Change Value'
+                        },
+                        grid: {
+                            display: true,
+                            color: 'rgba(255, 255, 255, 0.1)'
+                        },
+                        beginAtZero: true
+                    }
+                },
+                plugins: {
+                    legend: {
+                        display: true,
+                        position: 'top'
+                    },
+                    tooltip: {
+                        callbacks: {
+                            title: function(context) {
+                                const index = context[0].dataIndex;
+                                const timestamp = data.timestamps[index];
+                                const date = new Date(timestamp);
+                                return date.toLocaleString();
+                            },
+                            label: function(context) {
+                                const value = context.parsed.y;
+                                return `${context.dataset.label}: ${value.toLocaleString()}`;
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
 
     // Initial checks and start intervals
     checkStatus();
     fetchPrevDayOiData();
     updateCombinedTable();
     updateCoiTrendChart();
+    updateCePeChart();
 
 
     // Add event listeners for OI Chain toggles
@@ -932,6 +1073,10 @@ document.addEventListener('DOMContentLoaded', function() {
 
     toggleCoiChartVisibility.addEventListener('change', function() {
         coiTrendChartWrapper.classList.toggle('hidden', !this.checked);
+    });
+
+    toggleCePeChartVisibility.addEventListener('change', function() {
+        cePeChartWrapper.classList.toggle('hidden', !this.checked);
     });
 
 
@@ -950,6 +1095,7 @@ document.addEventListener('DOMContentLoaded', function() {
     setInterval(updateCombinedTable, 10000); // Refresh combined data every 10 seconds
     setInterval(fetchPrevDayOiData, 30000); // Refresh prev day analysis every 30 seconds
     setInterval(updateCoiTrendChart, 60000); // Refresh COI chart every 60 seconds
+    setInterval(updateCePeChart, 60000); // Refresh CE/PE chart every 60 seconds
 });
 </script>
 {% endblock %}

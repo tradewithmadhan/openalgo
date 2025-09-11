@@ -303,6 +303,72 @@ def nifty_instrument_data():
 
     return jsonify({'status': 'success', 'data': instrument_data})
 
+@madhan_bp.route('/api/nifty/ce-pe-changes')
+@check_session_validity
+def nifty_ce_pe_changes():
+    """Gets individual CE and PE change data for each candle for bar chart visualization."""
+    open_atm = nifty_fetcher.open_atm_strike
+    if not open_atm or open_atm == 0:
+        return jsonify({'status': 'success', 'data': {'timestamps': [], 'ce_changes': [], 'pe_changes': []}, 'message': 'ATM strike not calculated yet.'})
+
+    # Get the total number of symbols we expect data for on each candle to ensure data integrity
+    expected_symbol_count = len(nifty_fetcher.option_symbols) + 1 # +1 for NIFTY index
+
+    prev_day_data = get_previous_day_oi()
+    prev_oi_map = {item['symbol']: item.get('oi', 0) for item in prev_day_data}
+
+    historical_data = get_current_day_historical_data()
+    if not historical_data:
+        return jsonify({'status': 'success', 'data': {'timestamps': [], 'ce_changes': [], 'pe_changes': []}, 'message': 'No historical data for today.'})
+
+    # Group data by timestamp
+    data_by_ts = defaultdict(list)
+    for row in historical_data:
+        data_by_ts[row['timestamp']].append(row)
+
+    sorted_timestamps = sorted(data_by_ts.keys())
+
+    timestamps_res = []
+    ce_changes_res = []
+    pe_changes_res = []
+    
+    # Keep track of previous candle's OI data for comparison
+    prev_candle_oi_map = prev_oi_map.copy()  # Start with previous day data for first candle
+
+    for i, ts in enumerate(sorted_timestamps):
+        # To prevent spikes from partial data, ensure the candle for this timestamp is complete
+        if len(data_by_ts[ts]) < expected_symbol_count:
+            logger.debug(f"Skipping incomplete candle at timestamp {ts}: got {len(data_by_ts[ts])} symbols, expected {expected_symbol_count}")
+            continue
+
+        total_ce_change = 0
+        total_pe_change = 0
+        current_candle_oi_map = {}
+
+        for item in data_by_ts[ts]:
+            symbol = item['symbol']
+            current_oi = item.get('oi', 0)
+            current_candle_oi_map[symbol] = current_oi
+            
+            # Get previous OI (from previous candle or previous day for first candle)
+            prev_oi = prev_candle_oi_map.get(symbol, 0)
+            
+            if prev_oi > 0 and current_oi > 0:
+                change_in_oi = current_oi - prev_oi
+                if symbol.endswith('CE'):
+                    total_ce_change += change_in_oi
+                elif symbol.endswith('PE'):
+                    total_pe_change += change_in_oi
+        
+        timestamps_res.append(ts * 1000) # JS expects milliseconds
+        ce_changes_res.append(total_ce_change)
+        pe_changes_res.append(total_pe_change)
+        
+        # Update prev_candle_oi_map for next iteration
+        prev_candle_oi_map = current_candle_oi_map.copy()
+
+    return jsonify({'status': 'success', 'data': {'timestamps': timestamps_res, 'ce_changes': ce_changes_res, 'pe_changes': pe_changes_res}})
+
 
 @madhan_bp.route('/nifty_chart_data')
 @check_session_validity
