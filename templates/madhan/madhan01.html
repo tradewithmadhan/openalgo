@@ -15,10 +15,12 @@
     }
     .oi-chain-row:last-child { border-bottom: none; }
     .oi-chain-row:hover { background-color: hsl(var(--b2) / 0.5); }
-    .oi-chain-row.atm-row {
-         background-color: hsl(var(--p) / 0.1);
-         border: 1px solid hsl(var(--p) / 0.4);
-         border-radius: 0.5rem; margin: 0.125rem 0;
+    /* Alternating row background colors for better differentiation */
+    .oi-chain-row:nth-child(even) {
+        background-color: rgba(128, 128, 128, 0.08);
+    }
+    .oi-chain-row:nth-child(odd) {
+        background-color: rgba(128, 128, 128, 0.15);
     }
     .strike-cell {
          font-weight: bold; font-size: 1.125rem; text-align: center;
@@ -91,18 +93,39 @@
         z-index: 10; /* Sometimes needed if overlapped */
         position: relative; /* Helps make outline visible */
     }
-    /* Outline for entire Current ATM row */
-    .oi-chain-row.current-atm-row {
-        outline: 1px solid rgba(255, 255, 0, 1) !important;
-        outline-offset: 1px;
-        z-index: 10;
-        position: relative;
-        border-radius: 0.5rem;
-        /* Ensure the outline is visible over grid layout */
-        margin: 2px;
+
+    /* Extra thick borders and glow for Current ATM row */
+    .oi-chain-row:nth-child(even).current-atm-row,
+    .oi-chain-row:nth-child(odd).current-atm-row {
+        border: 5px solid #fbbe2409 !important;  /* for current atm outline make as 0 transparency since shadow is avaliable  */
+        border-bottom: 5px solid #fbbe2409 !important;  /* Override the base class border-bottom */
+        position: relative !important;
+        z-index: 20 !important;
+        box-shadow: 0 0 15px rgba(251, 191, 36, 0.6) !important;
+        margin: 3px 0 !important;
+    }
+    
+    /* Add animated separator line above Current ATM rows | disable this  */ 
+    .oi-chain-row.current-atm-row::before {
+        content: '' !important;
+        position: absolute !important;
+        top: -3px !important;
+        left: 0 !important;
+        right: 0 !important;
+        height: 3px !important;
+        background: linear-gradient(90deg, #fbbe2400, #fbbe2400, #fbbe2400) !important;
+        animation: pulse 2s infinite !important;
+        z-index: 5 !important;
+    }
+    
+    /* Pulse animation for current ATM */
+    @keyframes pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.7; }
     }
     /* Remove individual cell outline for current ATM when row outline is applied */
-    .oi-chain-row.current-atm-row .strike-cell.current-atm {
+    .oi-chain-row:nth-child(even).current-atm-row .strike-cell.current-atm,
+    .oi-chain-row:nth-child(odd).current-atm-row .strike-cell.current-atm {
         outline: none !important;
     }
 
@@ -391,6 +414,8 @@ document.addEventListener('DOMContentLoaded', function() {
 
                 const newOpenAtm = parseInt(data.open_atm_strike, 10) || 0;
                 const newCurrentAtm = parseInt(data.current_atm_strike, 10) || 0;
+                
+
 
                 // Check if ATM values have changed, which would require a re-render
                 const atmChanged = newOpenAtm !== openAtmValue || newCurrentAtm !== currentAtmValue;
@@ -717,20 +742,18 @@ document.addEventListener('DOMContentLoaded', function() {
         const rowsHtml = sortedStrikes.map(({ strike, ce, pe }) => {
             const isITMBoundaryATM = strike === openAtmValue; // Uses state variable
             const isCurrentATM = strike === currentAtmValue; // Uses state variable
+            
+            // Check if strike is within ATM range (±150 points from current ATM)
+            const isATMRange = currentAtmValue > 0 && Math.abs(strike - currentAtmValue) <= 150;
+            
+
 
             const rowClasses = ['oi-chain-row'];
-            if (isITMBoundaryATM) rowClasses.push('atm-row'); // For the purple highlight
-            if (isCurrentATM) rowClasses.push('current-atm-row'); // For the blue outline on entire row
+            if (isCurrentATM) rowClasses.push('current-atm-row'); // For the yellow outline on entire row
 
             const strikeCellClasses = ['strike-cell'];
             if (isITMBoundaryATM) strikeCellClasses.push('open-atm'); // For the yellow background            
-            if (isCurrentATM) strikeCellClasses.push('current-atm'); // For the blue outline
-            
-             // Directly add class for 25000 test strike for debugging
-            if (strike === testStrike) {
-                strikeCellClasses.push('current-atm');
-                rowClasses.push('current-atm-row'); // Also add row class for test strike
-            }
+            if (isCurrentATM) strikeCellClasses.push('current-atm'); // For the yellow outline
 
 
             const oiColumnHtml = `<div class="data-cell">
