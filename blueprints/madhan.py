@@ -588,3 +588,36 @@ def build_oi_and_coi_data(prev_day_data, current_oi_map, change_oi_map):
         coi_data["strikes"].append({"price": strike, "ceOI": vals["ceCOI"], "peOI": vals["peCOI"]})
 
     return oi_data, coi_data
+
+@madhan_bp.route('/api/nifty/spot-data')
+@check_session_validity
+def nifty_spot_data():
+    """Gets current day's Nifty spot data for line chart overlay."""
+    try:
+        # Get current day's historical data for NIFTY spot
+        historical_data = get_current_day_historical_data()
+        if not historical_data:
+            return jsonify({'status': 'success', 'data': {'timestamps': [], 'prices': []}, 'message': 'No spot data for today.'})
+
+        # Filter only NIFTY spot data and sort by timestamp
+        nifty_data = [row for row in historical_data if row['symbol'] == 'NIFTY']
+        nifty_data.sort(key=lambda x: x['timestamp'])
+
+        timestamps = []
+        prices = []
+        
+        for item in nifty_data:
+            # Convert timestamp to milliseconds for Chart.js
+            timestamps.append(item['timestamp'] * 1000)
+            prices.append(item['close'])  # Use close price for the line chart
+
+        return jsonify({
+            'status': 'success', 
+            'data': {
+                'timestamps': timestamps,
+                'prices': prices
+            }
+        })
+    except Exception as e:
+        logger.error(f"Error fetching spot data: {str(e)}")
+        return jsonify({'status': 'error', 'message': f'Error fetching spot data: {str(e)}'})

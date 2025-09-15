@@ -417,7 +417,8 @@ def get_current_day_historical_data():
         nifty_data_query = session.query(
             literal_column("'NIFTY'").label("symbol"), 
             NiftyData.timestamp, 
-            func.coalesce(NiftyData.oi, 0).label('oi')
+            func.coalesce(NiftyData.oi, 0).label('oi'),
+            NiftyData.close
         ).filter(NiftyData.timestamp >= start_of_day_ts)
         nifty_data = nifty_data_query.all()
         option_data = session.query(
