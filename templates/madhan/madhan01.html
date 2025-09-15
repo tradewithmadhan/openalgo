@@ -234,7 +234,11 @@
                     <div class="flex items-center gap-4">
                         <label class="label cursor-pointer gap-2">
                             <span class="label-text font-semibold text-xs">Writers View</span>
-                            <input type="checkbox" id="coi-strike-mode-toggle" class="toggle toggle-xs toggle-primary" />
+                            <input type="checkbox" id="coi-strike-mode-toggle" class="toggle toggle-xs toggle-primary" checked />
+                        </label>
+                        <label class="label cursor-pointer gap-2">
+                            <span class="label-text font-semibold text-xs">Spot Data</span>
+                            <input type="checkbox" id="coi-spot-data-toggle" class="toggle toggle-xs toggle-secondary" />
                         </label>
                         <label class="label cursor-pointer gap-2">
                             <span class="label-text font-semibold">Show Trend</span>
@@ -256,7 +260,11 @@
                     <div class="flex items-center gap-4">
                         <label class="label cursor-pointer gap-2">
                             <span class="label-text font-semibold text-xs">Writers View</span>
-                            <input type="checkbox" id="cepe-strike-mode-toggle" class="toggle toggle-xs toggle-primary" />
+                            <input type="checkbox" id="cepe-strike-mode-toggle" class="toggle toggle-xs toggle-primary" checked />
+                        </label>
+                        <label class="label cursor-pointer gap-2">
+                            <span class="label-text font-semibold text-xs">Spot Data</span>
+                            <input type="checkbox" id="cepe-spot-data-toggle" class="toggle toggle-xs toggle-secondary" />
                         </label>
                         <label class="label cursor-pointer gap-2">
                             <span class="label-text font-semibold">Show Chart</span>
@@ -367,6 +375,8 @@ document.addEventListener('DOMContentLoaded', function() {
     const coiTrendChartWrapper = document.getElementById('coi-trend-chart-wrapper');
     const toggleCePeChartVisibility = document.getElementById('toggle-cepe-chart-visibility');
     const cePeChartWrapper = document.getElementById('cepe-chart-wrapper');
+    const cePeSpotDataToggle = document.getElementById('cepe-spot-data-toggle');
+    const coiSpotDataToggle = document.getElementById('coi-spot-data-toggle');
 
     const toggleLiveDataVisibility = document.getElementById('toggle-live-data-visibility');
     const liveDataWrapper = document.getElementById('live-data-wrapper');
@@ -797,23 +807,30 @@ document.addEventListener('DOMContentLoaded', function() {
             const strikeModeToggle = document.getElementById('coi-strike-mode-toggle').checked;
             const strikeMode = strikeModeToggle ? 'option2' : 'option1';
             const url = `{{ url_for('madhan_bp.nifty_coi_trend') }}?strike_selection_mode=${strikeMode}`;
-            const response = await fetchWithCSRF(url, { cache: 'no-store' });
-            const result = await response.json();
+            
+            // Fetch both COI data and spot data in parallel
+            const [coiResponse, spotResponse] = await Promise.all([
+                fetchWithCSRF(url, { cache: 'no-store' }),
+                fetchSpotData()
+            ]);
+            
+            const coiResult = await coiResponse.json();
+            const spotData = await spotResponse;
 
-            if (result.status === 'success') {
+            if (coiResult.status === 'success') {
                 // Always call render; let the render function handle the empty data case.
-                renderCoiTrendChart(result.data);
+                renderCoiTrendChart(coiResult.data, spotData);
             } else {
-                console.log('COI Trend data not ready:', result.message);
-                renderCoiTrendChart(null); // Explicitly render the no-data message
+                console.log('COI Trend data not ready:', coiResult.message);
+                renderCoiTrendChart(null, spotData); // Explicitly render the no-data message
             }
         } catch (error) {
             console.error('Error fetching COI trend data:', error);
-            renderCoiTrendChart(null); // Explicitly render the no-data message on error
+            renderCoiTrendChart(null, null); // Explicitly render the no-data message on error
         }
     }
 
-    function renderCoiTrendChart(data) {
+    function renderCoiTrendChart(data, spotData) {
         const canvas = document.getElementById('coiTrendChart');
         const ctx = canvas.getContext('2d');
 
@@ -832,32 +849,91 @@ document.addEventListener('DOMContentLoaded', function() {
             return;
         }
 
-        const chartData = {
-            labels: data.timestamps,
-            datasets: [
-                {
-                    label: 'COI %',
-                    data: data.coi_percent,
-                    borderWidth: 2,
-                    pointRadius: 0,
-                    tension: 0.1,
-                    segment: {
-                        borderColor: ctx => (ctx.p1.parsed.y >= 0 ? 'rgba(59, 130, 246, 1)' : 'rgba(239, 68, 68, 1)'),
-                    }
-                },
-                {
-                    label: 'OI Trend %',
-                    data: data.oi_trend_percent,
-                    borderWidth: 2,
-                    pointRadius: 0,
-                    tension: 0.1,
-                    borderDash: [5, 5], // Dashed line for distinction
-                    segment: {
-                        // Use a different color scheme for OI Trend
-                        borderColor: ctx => (ctx.p1.parsed.y >= 0 ? 'rgba(34, 197, 94, 1)' : 'rgba(249, 115, 22, 1)'), // Green for positive, Orange for negative
+        const datasets = [
+            {
+                label: 'COI %',
+                data: data.coi_percent,
+                borderWidth: 2,
+                pointRadius: 0,
+                tension: 0.1,
+                segment: {
+                    borderColor: ctx => (ctx.p1.parsed.y >= 0 ? 'rgba(59, 130, 246, 1)' : 'rgba(239, 68, 68, 1)'),
+                }
+            },
+            {
+                label: 'OI Trend %',
+                data: data.oi_trend_percent,
+                borderWidth: 2,
+                pointRadius: 0,
+                tension: 0.1,
+                borderDash: [5, 5], // Dashed line for distinction
+                segment: {
+                    // Use a different color scheme for OI Trend
+                    borderColor: ctx => (ctx.p1.parsed.y >= 0 ? 'rgba(34, 197, 94, 1)' : 'rgba(249, 115, 22, 1)'), // Green for positive, Orange for negative
+                }
+            }
+        ];
+
+        // Add spot data if available and toggle is enabled
+         if (coiSpotDataToggle.checked && spotData && spotData.timestamps && spotData.prices && spotData.timestamps.length > 0) {
+            // Align spot data with COI data timestamps
+            const alignedSpotPrices = [];
+            for (let i = 0; i < data.timestamps.length; i++) {
+                const coiTimestamp = data.timestamps[i];
+                // Find closest spot data point
+                let closestIndex = 0;
+                let minDiff = Math.abs(spotData.timestamps[0] - coiTimestamp);
+                
+                for (let j = 1; j < spotData.timestamps.length; j++) {
+                    const diff = Math.abs(spotData.timestamps[j] - coiTimestamp);
+                    if (diff < minDiff) {
+                        minDiff = diff;
+                        closestIndex = j;
                     }
                 }
-            ]
+                alignedSpotPrices.push(spotData.prices[closestIndex]);
+            }
+
+            // Create segment colors based on price movement
+            const segmentColors = [];
+            for (let i = 1; i < alignedSpotPrices.length; i++) {
+                const current = alignedSpotPrices[i];
+                const previous = alignedSpotPrices[i - 1];
+                if (current > previous) {
+                    segmentColors.push('rgba(34, 197, 94, 1)'); // Green
+                } else {
+                    segmentColors.push('rgba(239, 68, 68, 1)'); // Red
+                }
+            }
+
+            datasets.push({
+                label: 'Nifty Spot',
+                data: alignedSpotPrices,
+                borderColor: function(context) {
+                    if (context.dataIndex === 0) return 'rgba(156, 163, 175, 1)'; // Gray for first point
+                    return segmentColors[context.dataIndex - 1];
+                },
+                backgroundColor: 'transparent',
+                borderWidth: 1,
+                fill: false,
+                type: 'line',
+                yAxisID: 'y1',
+                tension: 0,
+                pointRadius: 0,
+                pointHoverRadius: 0,
+                segment: {
+                    borderColor: function(ctx) {
+                        const index = ctx.p0DataIndex;
+                        if (index >= segmentColors.length) return 'rgba(156, 163, 175, 1)';
+                        return segmentColors[index];
+                    }
+                }
+            });
+        }
+
+        const chartData = {
+            labels: data.timestamps,
+            datasets: datasets
         };
 
         coiTrendChart = new Chart(ctx, {
@@ -892,6 +968,22 @@ document.addEventListener('DOMContentLoaded', function() {
                         },
                         grid: {
                             color: 'rgba(156, 163, 175, 0.1)'
+                        }
+                    },
+                    y1: {
+                        type: 'linear',
+                        display: true,
+                        position: 'right',
+                        beginAtZero: false,
+                        grace: '5%',
+                        ticks: {
+                            color: '#9ca3af',
+                            callback: function(value) {
+                                return '₹' + value.toFixed(2);
+                            }
+                        },
+                        grid: {
+                            drawOnChartArea: false,
                         }
                     }
                 },
@@ -1060,8 +1152,8 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         ];
 
-        // Add spot data if available
-        if (spotData && spotData.timestamps && spotData.prices && spotData.timestamps.length > 0) {
+        // Add spot data if available and toggle is enabled
+        if (cePeSpotDataToggle.checked && spotData && spotData.timestamps && spotData.prices && spotData.timestamps.length > 0) {
             // Align spot data with CE/PE data timestamps
             const alignedSpotPrices = [];
             for (let i = 0; i < data.timestamps.length; i++) {
@@ -1269,6 +1361,15 @@ document.addEventListener('DOMContentLoaded', function() {
     
     document.getElementById('cepe-strike-mode-toggle').addEventListener('change', function() {
         updateCePeChart();
+    });
+
+    // Add event listeners for spot data toggles
+    cePeSpotDataToggle.addEventListener('change', function() {
+        updateCePeChart();
+    });
+    
+    coiSpotDataToggle.addEventListener('change', function() {
+        updateCoiTrendChart();
     });
 
     setInterval(checkStatus, 5000); // Check status every 5 seconds
