@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, time
 from collections import defaultdict
 from services.history_service import get_history
 from services.madhan.nifty_fetch_service import nifty_fetcher
-from database.madhan_db import get_nifty_data, get_option_data, get_nifty_data_count, get_previous_day_oi, get_nth_candle_oi_for_all_symbols, get_current_day_historical_data, get_current_day_instrument_data, SessionLocal, NiftyData
+from database.madhan_db import get_nifty_data, get_option_data, get_nifty_data_count, get_previous_day_oi, get_nth_candle_oi_for_all_symbols, get_current_day_historical_data, get_current_day_instrument_data, SessionLocal, NiftyData, get_tracked_symbols
 from database.auth_db import get_api_key_for_tradingview
 
 
@@ -38,7 +38,7 @@ def madhan02_page():
 @check_session_validity
 def madhan03_page():
     """Render the new MadhaN03 page"""
-    return render_template('madhan/index.html')
+    return render_template('madhan/sk_ezaychart.html')
 
 @madhan_bp.route('/api/test-data')
 @check_session_validity
@@ -588,6 +588,193 @@ def build_oi_and_coi_data(prev_day_data, current_oi_map, change_oi_map):
         coi_data["strikes"].append({"price": strike, "ceOI": vals["ceCOI"], "peOI": vals["peCOI"]})
 
     return oi_data, coi_data
+
+@madhan_bp.route('/api/ezayChart_data')
+@check_session_validity
+def ezay_chart_data():
+    """Gets option data for a specific strike price for charting with enhanced calculations."""
+    try:
+        import pytz
+        import math
+        
+        strike_price = request.args.get('strike')
+        if not strike_price:
+            return jsonify({'status': 'error', 'message': 'Strike price is required'}), 400
+        
+        try:
+            strike_price = int(strike_price)
+        except ValueError:
+            return jsonify({'status': 'error', 'message': 'Invalid strike price format'}), 400
+        
+        # Get tracked symbols to find CE and PE for the given strike
+        tracked_symbols = get_tracked_symbols()
+        
+        ce_symbol = None
+        pe_symbol = None
+        
+        # Find CE and PE symbols for the given strike
+        for symbol in tracked_symbols:
+            extracted_strike = extract_strike(symbol)
+            if extracted_strike == strike_price:
+                if symbol.endswith('CE'):
+                    ce_symbol = symbol
+                elif symbol.endswith('PE'):
+                    pe_symbol = symbol
+        
+        if not ce_symbol and not pe_symbol:
+            return jsonify({'status': 'error', 'message': f'No option data found for strike {strike_price}'}), 404
+        
+        # Get current day's historical data for both CE and PE
+        ce_data = []
+        pe_data = []
+        spot_data = []
+        
+        if ce_symbol:
+            ce_data = get_current_day_instrument_data(ce_symbol)
+        
+        if pe_symbol:
+            pe_data = get_current_day_instrument_data(pe_symbol)
+            
+        # Get NIFTY spot data for intrinsic value calculations
+        spot_data = get_current_day_instrument_data('NIFTY')
+        
+        # Create a spot price lookup by timestamp
+        spot_lookup = {item['timestamp']: item['close'] for item in spot_data}
+        
+        # IST timezone
+        ist_tz = pytz.timezone('Asia/Kolkata')
+        
+        # Format data for TradingView Lightweight Charts with enhanced calculations
+        def format_chart_data_enhanced(data, option_type):
+            enhanced_data = []
+            combined_premium_values = []  # For LLP calculation
+            
+            for item in data:
+                if item['open'] is None or item['close'] is None:
+                    continue
+                    
+                # Convert UTC timestamp to IST
+                utc_dt = datetime.fromtimestamp(item['timestamp'], tz=pytz.UTC)
+                ist_dt = utc_dt.astimezone(ist_tz)
+                ist_timestamp = int(ist_dt.timestamp())
+                
+                # Get corresponding spot price
+                spot_close = spot_lookup.get(item['timestamp'], 0)
+                
+                # Calculate intrinsic and extrinsic values
+                if option_type == 'CE':
+                    intrinsic = max(spot_close - strike_price, 0)
+                    extrinsic = item['close'] - intrinsic
+                elif option_type == 'PE':
+                    intrinsic = max(strike_price - spot_close, 0)
+                    extrinsic = item['close'] - intrinsic
+                else:
+                    intrinsic = 0
+                    extrinsic = 0
+                
+                enhanced_item = {
+                    'time': ist_timestamp,
+                    'open': item['open'],
+                    'high': item['high'],
+                    'low': item['low'],
+                    'close': item['close'],
+                    'volume': item['volume'],
+                    'intrinsic': intrinsic,
+                    'extrinsic': extrinsic,
+                    'spot_close': spot_close
+                }
+                
+                enhanced_data.append(enhanced_item)
+            
+            return enhanced_data
+        
+        # Process CE and PE data
+        formatted_ce_data = format_chart_data_enhanced(ce_data, 'CE') if ce_data else []
+        formatted_pe_data = format_chart_data_enhanced(pe_data, 'PE') if pe_data else []
+        
+        # Calculate combined premium data and additional metrics
+        combined_data = []
+        if formatted_ce_data and formatted_pe_data:
+            # Align data by timestamp
+            ce_dict = {item['time']: item for item in formatted_ce_data}
+            pe_dict = {item['time']: item for item in formatted_pe_data}
+            
+            common_timestamps = set(ce_dict.keys()) & set(pe_dict.keys())
+            
+            combined_premium_values = []
+            for timestamp in sorted(common_timestamps):
+                ce_item = ce_dict[timestamp]
+                pe_item = pe_dict[timestamp]
+                
+                # Calculate combined metrics
+                open_combined_premium = ce_item['open'] + pe_item['open']
+                combined_premium = ce_item['close'] + pe_item['close']
+                combined_extrinsic = ce_item['extrinsic'] + pe_item['extrinsic']
+                
+                combined_premium_values.append(combined_premium)
+                
+                combined_item = {
+                    'time': timestamp,
+                    'open_combined_premium': open_combined_premium,
+                    'combined_premium': combined_premium,
+                    'combined_extrinsic': combined_extrinsic,
+                    'ce_intrinsic': ce_item['intrinsic'],
+                    'pe_intrinsic': pe_item['intrinsic'],
+                    'ce_extrinsic': ce_item['extrinsic'],
+                    'pe_extrinsic': pe_item['extrinsic'],
+                    'spot_close': ce_item['spot_close']
+                }
+                
+                combined_data.append(combined_item)
+        
+        # Calculate LLP (Lowest Low of combined_premium)
+        llp = min(combined_premium_values) if combined_premium_values else 0
+        
+        # Add LLP to each combined data point
+        for item in combined_data:
+            item['llp'] = llp
+        
+        return jsonify({
+            'status': 'success',
+            'data': {
+                'strike': strike_price,
+                'ce_symbol': ce_symbol,
+                'pe_symbol': pe_symbol,
+                'ce_data': formatted_ce_data,
+                'pe_data': formatted_pe_data,
+                'combined_data': combined_data,
+                'llp': llp,
+                'timezone': 'Asia/Kolkata'
+            }
+        })
+        
+    except Exception as e:
+        logger.error(f"Error fetching ezayChart data: {str(e)}")
+        return jsonify({'status': 'error', 'message': f'Error fetching chart data: {str(e)}'}), 500
+
+@madhan_bp.route('/api/strikes')
+@check_session_validity
+def get_strikes():
+    """Gets available strike prices from tracked symbols."""
+    try:
+        tracked_symbols = get_tracked_symbols()
+        strikes = set()
+        
+        for symbol in tracked_symbols:
+            strike = extract_strike(symbol)
+            if strike is not None:
+                strikes.add(strike)
+        
+        sorted_strikes = sorted(list(strikes))
+        
+        return jsonify({
+            'status': 'success',
+            'data': sorted_strikes
+        })
+        
+    except Exception as e:
+        logger.error(f"Error fetching strikes: {str(e)}")
+        return jsonify({'status': 'error', 'message': f'Error fetching strikes: {str(e)}'}), 500
 
 @madhan_bp.route('/api/nifty/spot-data')
 @check_session_validity

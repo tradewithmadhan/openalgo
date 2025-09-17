@@ -1,0 +1,794 @@
+{% extends "base.html" %}
+
+{% block head %}
+<!-- TradingView Lightweight Charts Latest Version -->
+<script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
+<style>
+    .chart-container {
+        position: relative;
+        width: 100%;
+        height: calc(100vh - 150px);
+        min-height: 700px;
+        border: 1px solid oklch(var(--bc) / 0.2);
+        border-radius: 1rem;
+        background: oklch(var(--b1));
+        overflow: hidden;
+    }
+    
+    .chart-controls {
+        display: flex;
+        gap: 1rem;
+        align-items: center;
+        margin-bottom: 1rem;
+        padding: 1rem;
+        background: oklch(var(--b2));
+        border-radius: 1rem;
+        border: 1px solid oklch(var(--bc) / 0.2);
+    }
+    
+    .control-group {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+    
+    .chart-title {
+        font-size: 1.5rem;
+        font-weight: 600;
+        color: #1f2937;
+        margin-bottom: 1rem;
+    }
+    
+    .status-indicator {
+        display: inline-block;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        margin-right: 0.5rem;
+    }
+    
+    .status-active {
+        background-color: #10b981;
+    }
+    
+    .status-inactive {
+        background-color: #ef4444;
+    }
+    
+    .chart-info {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 1rem;
+        padding: 0.75rem 1rem;
+        background: #f3f4f6;
+        border-radius: 6px;
+        font-size: 0.875rem;
+        color: #6b7280;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="w-full">
+    <!-- TradingView Chart Container Card -->
+    <div class="bg-base-100 rounded-box border border-base-300 shadow-lg">
+        <div class="p-4">
+            <!-- SK EzayChart Header with Controls -->
+            <div class="flex justify-between items-center mb-4 p-4 bg-base-200 rounded-box border border-base-300">
+                <div class="flex items-center gap-4">
+                    <div>
+                        <h1 class="text-2xl font-bold text-base-content mb-1">SK EzayChart</h1>
+                    </div>
+                    <!-- Strike Price Selection -->
+                    <div class="control-group">
+                        <label class="label-text text-xs">Strike Price:</label>
+                        <select id="strike-select" class="select select-bordered select-sm w-32">
+                            <option value="">Loading...</option>
+                        </select>
+                    </div>
+                    
+                    <!-- Series Toggle Controls -->
+                    <div class="control-group">
+                        <label class="label-text text-xs">CE/PE Series:</label>
+                        <div class="flex gap-2">
+                            <label class="cursor-pointer label">
+                                <input type="checkbox" id="toggle-intrinsic" class="checkbox checkbox-sm" checked>
+                                <span class="label-text text-xs ml-1">Intrinsic</span>
+                            </label>
+                            <label class="cursor-pointer label">
+                                <input type="checkbox" id="toggle-extrinsic" class="checkbox checkbox-sm" checked>
+                                <span class="label-text text-xs ml-1">Extrinsic</span>
+                            </label>
+                        </div>
+                    </div>
+                    
+                    <div class="control-group">
+                        <label class="label-text text-xs">Combined Series:</label>
+                        <div class="flex gap-2">
+                            <label class="cursor-pointer label">
+                                <input type="checkbox" id="toggle-combined-premium" class="checkbox checkbox-sm" checked>
+                                <span class="label-text text-xs ml-1">Premium</span>
+                            </label>
+                            <label class="cursor-pointer label">
+                                <input type="checkbox" id="toggle-llp" class="checkbox checkbox-sm" checked>
+                                <span class="label-text text-xs ml-1">LLP</span>
+                            </label>
+                            <label class="cursor-pointer label">
+                                <input type="checkbox" id="toggle-combined-extrinsic" class="checkbox checkbox-sm" checked>
+                                <span class="label-text text-xs ml-1">Extrinsic</span>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+                <div class="flex items-center space-x-2">
+                    <span class="status-indicator" id="chart-status"></span>
+                    <div class="text-sm text-base-content/70" id="chart-symbol">No Strike Selected</div>
+                </div>
+            </div>
+            
+
+            
+
+
+            <!-- Chart Container -->
+            <div class="chart-container rounded-box border border-base-300 bg-base-200 overflow-hidden" id="chart-container">
+                <div class="flex items-center justify-center h-full text-base-content/50" id="chart-placeholder">
+                    <div class="text-center">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-16 w-16 mx-auto mb-4 opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 00-2-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                        </svg>
+                        <p class="text-lg font-medium">Chart Disabled</p>
+                        <p class="text-sm">Enable chart to view trading data</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+
+</div>
+
+<script>
+// Global variables
+let chart = null;
+let candlestickSeries = null;
+let lineSeries = null;
+let areaSeries = null;
+let barSeries = null;
+let currentSeries = null;
+let ceSeries = null;
+let peSeries = null;
+let combinedSeries = null;
+let llpSeries = null;
+let ceIntrinsicSeries = null;
+let peIntrinsicSeries = null;
+let ceExtrinsicSeries = null;
+let peExtrinsicSeries = null;
+let combinedExtrinsicSeries = null;
+let isChartEnabled = true;
+let currentChartType = 'candlestick';  // Default to candlestick
+let currentStrike = '';
+let currentOptionType = 'both';  // Default to both CE & PE
+let dataPoints = 0;
+let chartData = null;
+let autoRefreshInterval = null;
+
+// DOM elements
+const chartContainer = document.getElementById('chart-container');
+const chartPlaceholder = document.getElementById('chart-placeholder');
+const strikeSelect = document.getElementById('strike-select');
+const chartStatus = document.getElementById('chart-status');
+const chartSymbol = document.getElementById('chart-symbol');
+
+// Toggle control elements
+const toggleIntrinsic = document.getElementById('toggle-intrinsic');
+const toggleExtrinsic = document.getElementById('toggle-extrinsic');
+const toggleCombinedPremium = document.getElementById('toggle-combined-premium');
+const toggleLLP = document.getElementById('toggle-llp');
+const toggleCombinedExtrinsic = document.getElementById('toggle-combined-extrinsic');
+
+
+
+
+// Initialize chart
+function initializeChart() {
+    if (chart) {
+        chart.remove();
+    }
+
+    // Theme detection function
+    function getTheme() {
+        const currentTheme = localStorage.getItem('theme') || document.documentElement.getAttribute('data-theme');
+        return ['dark', 'synthwave', 'halloween', 'forest', 'black', 'luxury', 'dracula', 'night', 'coffee', 'dim', 'sunset'].includes(currentTheme) ? 'dark' : 'light';
+    }
+
+    const theme = getTheme();
+    const isDarkMode = theme === 'dark';
+
+    chart = LightweightCharts.createChart(chartContainer, {
+        width: chartContainer.clientWidth,
+        height: chartContainer.clientHeight,
+        layout: {
+            background: { color: isDarkMode ? '#1a1a1a' : '#ffffff' },
+            textColor: isDarkMode ? '#a6adbb' : '#333',
+        },
+        grid: {
+            vertLines: { color: isDarkMode ? 'rgba(166, 173, 187, 0.1)' : 'rgba(0, 0, 0, 0.1)' },
+            horzLines: { color: isDarkMode ? 'rgba(166, 173, 187, 0.1)' : 'rgba(0, 0, 0, 0.1)' },
+        },
+        crosshair: {
+            mode: LightweightCharts.CrosshairMode.Normal,
+            vertLine: { color: isDarkMode ? 'rgba(166, 173, 187, 0.5)' : 'rgba(0, 0, 0, 0.3)', style: 2 },
+            horzLine: { color: isDarkMode ? 'rgba(166, 173, 187, 0.5)' : 'rgba(0, 0, 0, 0.3)', style: 2 },
+        },
+        rightPriceScale: {
+            borderColor: 'transparent',
+        },
+        timeScale: {
+            borderColor: 'transparent',
+            timeVisible: true,
+            secondsVisible: false,
+            tickMarkFormatter: (time) => {
+                // Convert timestamp to IST
+                const date = new Date(time * 1000);
+                return date.toLocaleTimeString('en-IN', {
+                    timeZone: 'Asia/Kolkata',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    hour12: true,
+                });
+            },
+        },
+    });
+
+    // Function to update chart theme
+    function updateChartTheme() {
+        const newTheme = getTheme();
+        const newIsDarkMode = newTheme === 'dark';
+        
+        chart.applyOptions({
+            layout: {
+                background: { color: newIsDarkMode ? '#1a1a1a' : '#ffffff' },
+                textColor: newIsDarkMode ? '#a6adbb' : '#333',
+            },
+            grid: {
+                vertLines: { color: newIsDarkMode ? 'rgba(166, 173, 187, 0.1)' : 'rgba(0, 0, 0, 0.1)' },
+                horzLines: { color: newIsDarkMode ? 'rgba(166, 173, 187, 0.1)' : 'rgba(0, 0, 0, 0.1)' },
+            },
+            crosshair: {
+                vertLine: { color: newIsDarkMode ? 'rgba(166, 173, 187, 0.5)' : 'rgba(0, 0, 0, 0.3)', style: 2 },
+                horzLine: { color: newIsDarkMode ? 'rgba(166, 173, 187, 0.5)' : 'rgba(0, 0, 0, 0.3)', style: 2 },
+            },
+            rightPriceScale: {
+                borderColor: 'transparent',
+            },
+            timeScale: {
+                borderColor: 'transparent',
+            },
+        });
+    }
+
+    // Add theme change observer
+    const chartThemeObserver = new MutationObserver((mutationsList) => {
+        for (const mutation of mutationsList) {
+            if (mutation.type === 'attributes' && mutation.attributeName === 'data-theme') {
+                updateChartTheme();
+            }
+        }
+    });
+    chartThemeObserver.observe(document.documentElement, { attributes: true });
+
+    loadStrikes();
+    chartPlaceholder.style.display = 'none';
+    
+    // Handle resize
+    window.addEventListener('resize', () => {
+        if (chart) {
+            chart.applyOptions({ width: chartContainer.clientWidth });
+        }
+    });
+}
+
+// Load available strikes from API
+async function loadStrikes() {
+            try {
+                const response = await fetch('/madhan/api/strikes');
+                const data = await response.json();
+        
+        strikeSelect.innerHTML = '<option value="">Select Strike</option>';
+        
+        if (data.status === 'success' && data.data) {
+            // Sort strikes in descending order (high to low)
+            const sortedStrikes = data.data.sort((a, b) => b - a);
+            
+            sortedStrikes.forEach(strike => {
+                const option = document.createElement('option');
+                option.value = strike;
+                option.textContent = strike;
+                strikeSelect.appendChild(option);
+            });
+            
+            // Set middle strike as default
+            if (sortedStrikes.length > 0) {
+                const middleIndex = Math.floor(sortedStrikes.length / 2);
+                const middleStrike = sortedStrikes[middleIndex];
+                strikeSelect.value = middleStrike;
+                currentStrike = middleStrike;
+                
+                // Automatically load the chart for the middle strike
+                setTimeout(() => {
+                    createSeries();
+                    startAutoRefresh(); // Start auto-refresh for default strike
+                }, 100);
+            }
+        }
+    } catch (error) {
+        console.error('Error loading strikes:', error);
+        strikeSelect.innerHTML = '<option value="">Error loading strikes</option>';
+    }
+}
+
+// Create series based on chart type and option type
+function createSeries() {
+    if (!chart) return;
+
+    // Clear existing series
+    if (ceSeries) {
+        chart.removeSeries(ceSeries);
+        ceSeries = null;
+    }
+    if (peSeries) {
+        chart.removeSeries(peSeries);
+        peSeries = null;
+    }
+    if (combinedSeries) {
+        chart.removeSeries(combinedSeries);
+        combinedSeries = null;
+    }
+    if (llpSeries) {
+        chart.removeSeries(llpSeries);
+        llpSeries = null;
+    }
+    if (ceIntrinsicSeries) {
+        chart.removeSeries(ceIntrinsicSeries);
+        ceIntrinsicSeries = null;
+    }
+    if (peIntrinsicSeries) {
+        chart.removeSeries(peIntrinsicSeries);
+        peIntrinsicSeries = null;
+    }
+    if (ceExtrinsicSeries) {
+        chart.removeSeries(ceExtrinsicSeries);
+        ceExtrinsicSeries = null;
+    }
+    if (peExtrinsicSeries) {
+        chart.removeSeries(peExtrinsicSeries);
+        peExtrinsicSeries = null;
+    }
+    if (combinedExtrinsicSeries) {
+        chart.removeSeries(combinedExtrinsicSeries);
+        combinedExtrinsicSeries = null;
+    }
+
+    // Create all series by default
+    
+    // 1. CE Premium Series
+    if (currentOptionType === 'both' || currentOptionType === 'ce') {
+        switch (currentChartType) {
+            case 'candlestick':
+                ceSeries = chart.addSeries(LightweightCharts.CandlestickSeries, {
+                    upColor: '#26a69a',
+                    downColor: '#ef5350',
+                    borderVisible: false,
+                    wickUpColor: '#26a69a',
+                    wickDownColor: '#ef5350',
+                    title: 'CE Premium',
+                });
+                break;
+            case 'line':
+                ceSeries = chart.addSeries(LightweightCharts.LineSeries, {
+                    color: '#2962FF',
+                    lineWidth: 2,
+                    title: 'CE Premium',
+                });
+                break;
+            case 'area':
+                ceSeries = chart.addSeries(LightweightCharts.AreaSeries, {
+                    topColor: 'rgba(41, 98, 255, 0.56)',
+                    bottomColor: 'rgba(41, 98, 255, 0.04)',
+                    lineColor: 'rgba(41, 98, 255, 1)',
+                    lineWidth: 2,
+                    title: 'CE Premium',
+                });
+                break;
+            case 'bar':
+                ceSeries = chart.addSeries(LightweightCharts.BarSeries, {
+                    upColor: '#26a69a',
+                    downColor: '#ef5350',
+                    title: 'CE Premium',
+                });
+                break;
+        }
+    }
+
+    // 2. PE Premium Series
+    if (currentOptionType === 'both' || currentOptionType === 'pe') {
+        switch (currentChartType) {
+            case 'candlestick':
+                peSeries = chart.addSeries(LightweightCharts.CandlestickSeries, {
+                    upColor: '#ff6b6b',
+                    downColor: '#4ecdc4',
+                    borderVisible: false,
+                    wickUpColor: '#ff6b6b',
+                    wickDownColor: '#4ecdc4',
+                    title: 'PE Premium',
+                });
+                break;
+            case 'line':
+                peSeries = chart.addSeries(LightweightCharts.LineSeries, {
+                    color: '#ff6b6b',
+                    lineWidth: 2,
+                    title: 'PE Premium',
+                });
+                break;
+            case 'area':
+                peSeries = chart.addSeries(LightweightCharts.AreaSeries, {
+                    topColor: 'rgba(255, 107, 107, 0.56)',
+                    bottomColor: 'rgba(255, 107, 107, 0.04)',
+                    lineColor: 'rgba(255, 107, 107, 1)',
+                    lineWidth: 2,
+                    title: 'PE Premium',
+                });
+                break;
+            case 'bar':
+                peSeries = chart.addSeries(LightweightCharts.BarSeries, {
+                    upColor: '#ff6b6b',
+                    downColor: '#4ecdc4',
+                    title: 'PE Premium',
+                });
+                break;
+        }
+    }
+
+    // 3. Combined Premium Series (always line chart for clarity)
+    combinedSeries = chart.addSeries(LightweightCharts.LineSeries, {
+        color: '#2196f3',
+        lineWidth: 3,
+        title: 'Combined Premium',
+    });
+
+    // 4. LLP Series (always line chart)
+    llpSeries = chart.addSeries(LightweightCharts.LineSeries, {
+        color: '#1976d2',
+        lineWidth: 2,
+        title: 'LLP (Lowest Low Premium)',
+    });
+
+    // 5. CE Intrinsic Series (always line chart)
+    if (currentOptionType === 'both' || currentOptionType === 'ce') {
+        ceIntrinsicSeries = chart.addSeries(LightweightCharts.LineSeries, {
+            color: '#4caf50',
+            lineWidth: 1,
+            title: 'CE Intrinsic',
+        });
+    }
+
+    // 6. PE Intrinsic Series (always line chart)
+    if (currentOptionType === 'both' || currentOptionType === 'pe') {
+        peIntrinsicSeries = chart.addSeries(LightweightCharts.LineSeries, {
+            color: '#8bc34a',
+            lineWidth: 1,
+            title: 'PE Intrinsic',
+        });
+    }
+
+    // 7. CE Extrinsic Series (always line chart)
+    if (currentOptionType === 'both' || currentOptionType === 'ce') {
+        ceExtrinsicSeries = chart.addSeries(LightweightCharts.LineSeries, {
+            color: '#00bcd4',
+            lineWidth: 1,
+            title: 'CE Extrinsic',
+        });
+    }
+
+    // 8. PE Extrinsic Series (always line chart)
+    if (currentOptionType === 'both' || currentOptionType === 'pe') {
+        peExtrinsicSeries = chart.addSeries(LightweightCharts.LineSeries, {
+            color: '#009688',
+            lineWidth: 1,
+            title: 'PE Extrinsic',
+        });
+    }
+
+    // 9. Combined Extrinsic Series (always line chart)
+    combinedExtrinsicSeries = chart.addSeries(LightweightCharts.LineSeries, {
+        color: '#ffeb3b',
+        lineWidth: 2,
+        title: 'Combined Extrinsic',
+    });
+
+    if (currentStrike) {
+        loadOptionData();
+    }
+}
+
+// Destroy chart
+function destroyChart() {
+    if (chart) {
+        chart.remove();
+        chart = null;
+    }
+    
+    // Stop auto-refresh
+    stopAutoRefresh();
+    
+    // Reset all series variables
+    ceSeries = null;
+    peSeries = null;
+    combinedSeries = null;
+    llpSeries = null;
+    ceIntrinsicSeries = null;
+    peIntrinsicSeries = null;
+    ceExtrinsicSeries = null;
+    peExtrinsicSeries = null;
+    combinedExtrinsicSeries = null;
+    
+    chartPlaceholder.style.display = 'flex';
+}
+
+
+
+// Load option data from API
+async function loadOptionData() {
+    if (!currentStrike) {
+        console.log('No strike selected');
+        return;
+    }
+
+    try {
+        const response = await fetch(`/madhan/api/ezayChart_data?strike=${currentStrike}`);
+        const data = await response.json();
+        
+        console.log('API Response:', data);
+        chartData = data; // Store for reference
+        
+        if (data.status === 'success') {
+            let totalDataPoints = 0;
+            
+            // 1. Load CE Premium data
+            if ((currentOptionType === 'both' || currentOptionType === 'ce') && ceSeries && data.data.ce_data) {
+                console.log('Loading CE data:', data.data.ce_data.length, 'points');
+                
+                if (currentChartType === 'candlestick' || currentChartType === 'bar') {
+                    ceSeries.setData(data.data.ce_data);
+                } else {
+                    // Convert OHLC to line data (using close price)
+                    const lineData = data.data.ce_data.map(item => ({
+                        time: item.time,
+                        value: item.close
+                    }));
+                    ceSeries.setData(lineData);
+                }
+                totalDataPoints += data.data.ce_data.length;
+            }
+            
+            // 2. Load PE Premium data
+            if ((currentOptionType === 'both' || currentOptionType === 'pe') && peSeries && data.data.pe_data) {
+                console.log('Loading PE data:', data.data.pe_data.length, 'points');
+                
+                if (currentChartType === 'candlestick' || currentChartType === 'bar') {
+                    peSeries.setData(data.data.pe_data);
+                } else {
+                    // Convert OHLC to line data (using close price)
+                    const lineData = data.data.pe_data.map(item => ({
+                        time: item.time,
+                        value: item.close
+                    }));
+                    peSeries.setData(lineData);
+                }
+                totalDataPoints += data.data.pe_data.length;
+            }
+            
+            // 3. Load Combined Premium data
+            if (combinedSeries && data.data.combined_data) {
+                console.log('Loading Combined Premium data:', data.data.combined_data.length, 'points');
+                const lineData = data.data.combined_data.map(item => ({
+                    time: item.time,
+                    value: item.combined_premium
+                }));
+                combinedSeries.setData(lineData);
+            }
+            
+            // 4. Load LLP data (constant line)
+            if (llpSeries && data.data.llp !== undefined && data.data.combined_data) {
+                console.log('Loading LLP data:', data.data.llp);
+                const llpData = data.data.combined_data.map(item => ({
+                    time: item.time,
+                    value: data.data.llp
+                }));
+                llpSeries.setData(llpData);
+            }
+            
+            // 5. Load CE Intrinsic data
+            if (ceIntrinsicSeries && data.data.combined_data) {
+                const lineData = data.data.combined_data.map(item => ({
+                    time: item.time,
+                    value: item.ce_intrinsic
+                }));
+                ceIntrinsicSeries.setData(lineData);
+            }
+            
+            // 6. Load PE Intrinsic data
+            if (peIntrinsicSeries && data.data.combined_data) {
+                const lineData = data.data.combined_data.map(item => ({
+                    time: item.time,
+                    value: item.pe_intrinsic
+                }));
+                peIntrinsicSeries.setData(lineData);
+            }
+            
+            // 7. Load CE Extrinsic data
+            if (ceExtrinsicSeries && data.data.combined_data) {
+                const lineData = data.data.combined_data.map(item => ({
+                    time: item.time,
+                    value: item.ce_extrinsic
+                }));
+                ceExtrinsicSeries.setData(lineData);
+            }
+            
+            // 8. Load PE Extrinsic data
+            if (peExtrinsicSeries && data.data.combined_data) {
+                const lineData = data.data.combined_data.map(item => ({
+                    time: item.time,
+                    value: item.pe_extrinsic
+                }));
+                peExtrinsicSeries.setData(lineData);
+            }
+            
+            // 9. Load Combined Extrinsic data
+            if (combinedExtrinsicSeries && data.data.combined_data) {
+                console.log('Loading Combined Extrinsic data:', data.data.combined_data.length, 'points');
+                const lineData = data.data.combined_data.map(item => ({
+                    time: item.time,
+                    value: item.combined_extrinsic
+                }));
+                combinedExtrinsicSeries.setData(lineData);
+            }
+            
+            dataPoints = totalDataPoints;
+            
+            // Update chart symbol display with timezone info
+                document.getElementById('chart-symbol').textContent = `Strike ${data.data.strike} - CE: ${data.data.ce_symbol || 'N/A'} | PE: ${data.data.pe_symbol || 'N/A'} (${data.data.timezone || 'UTC'})`;
+            
+
+        } else {
+            console.error('Error loading option data:', data.message);
+        }
+    } catch (error) {
+        console.error('Error fetching option data:', error);
+    }
+}
+
+// Generate sample trading data
+function generateSampleData() {
+    const data = [];
+    const lineData = [];
+    let basePrice = 18000;
+    const now = new Date();
+    
+    for (let i = 100; i >= 0; i--) {
+        const time = Math.floor((now.getTime() - i * 60000) / 1000); // 1 minute intervals
+        const open = basePrice + (Math.random() - 0.5) * 100;
+        const close = open + (Math.random() - 0.5) * 50;
+        const high = Math.max(open, close) + Math.random() * 25;
+        const low = Math.min(open, close) - Math.random() * 25;
+        
+        data.push({
+            time: time,
+            open: parseFloat(open.toFixed(2)),
+            high: parseFloat(high.toFixed(2)),
+            low: parseFloat(low.toFixed(2)),
+            close: parseFloat(close.toFixed(2))
+        });
+        
+        lineData.push({
+            time: time,
+            value: parseFloat(close.toFixed(2))
+        });
+        
+        basePrice = close;
+    }
+    
+    return { candlestick: data, line: lineData };
+}
+
+
+
+// Event listeners
+strikeSelect.addEventListener('change', (e) => {
+    currentStrike = e.target.value;
+    if (currentStrike) {
+        createSeries();
+        startAutoRefresh(); // Start auto-refresh when strike is selected
+    } else {
+        stopAutoRefresh(); // Stop auto-refresh when no strike is selected
+    }
+});
+
+// Toggle event handlers
+toggleIntrinsic.addEventListener('change', () => {
+    if (chart) {
+        if (toggleIntrinsic.checked) {
+            // Show intrinsic series
+            if (ceIntrinsicSeries) ceIntrinsicSeries.applyOptions({ visible: true });
+            if (peIntrinsicSeries) peIntrinsicSeries.applyOptions({ visible: true });
+        } else {
+            // Hide intrinsic series
+            if (ceIntrinsicSeries) ceIntrinsicSeries.applyOptions({ visible: false });
+            if (peIntrinsicSeries) peIntrinsicSeries.applyOptions({ visible: false });
+        }
+    }
+});
+
+toggleExtrinsic.addEventListener('change', () => {
+    if (chart) {
+        if (toggleExtrinsic.checked) {
+            // Show extrinsic series
+            if (ceExtrinsicSeries) ceExtrinsicSeries.applyOptions({ visible: true });
+            if (peExtrinsicSeries) peExtrinsicSeries.applyOptions({ visible: true });
+        } else {
+            // Hide extrinsic series
+            if (ceExtrinsicSeries) ceExtrinsicSeries.applyOptions({ visible: false });
+            if (peExtrinsicSeries) peExtrinsicSeries.applyOptions({ visible: false });
+        }
+    }
+});
+
+toggleCombinedPremium.addEventListener('change', () => {
+    if (chart && combinedSeries) {
+        combinedSeries.applyOptions({ visible: toggleCombinedPremium.checked });
+    }
+});
+
+toggleLLP.addEventListener('change', () => {
+    if (chart && llpSeries) {
+        llpSeries.applyOptions({ visible: toggleLLP.checked });
+    }
+});
+
+toggleCombinedExtrinsic.addEventListener('change', () => {
+    if (chart && combinedExtrinsicSeries) {
+        combinedExtrinsicSeries.applyOptions({ visible: toggleCombinedExtrinsic.checked });
+    }
+});
+
+// Auto-refresh functions
+function startAutoRefresh() {
+    // Clear any existing interval
+    if (autoRefreshInterval) {
+        clearInterval(autoRefreshInterval);
+    }
+    
+    // Start new interval - refresh every 60 seconds (1 minute)
+    autoRefreshInterval = setInterval(() => {
+        if (currentStrike && chart) {
+            console.log('Auto-refreshing chart data at:', new Date().toLocaleTimeString());
+            loadOptionData();
+        }
+    }, 60000); // 60000ms = 1 minute
+}
+
+function stopAutoRefresh() {
+    if (autoRefreshInterval) {
+        clearInterval(autoRefreshInterval);
+        autoRefreshInterval = null;
+    }
+}
+
+// Initialize on page load
+document.addEventListener('DOMContentLoaded', () => {
+    initializeChart();
+});
+</script>
+{% endblock %}
