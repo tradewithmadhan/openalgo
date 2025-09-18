@@ -649,7 +649,7 @@ def ezay_chart_data():
             enhanced_data = []
             combined_premium_values = []  # For LLP calculation
             
-            for item in data:
+            for i, item in enumerate(data):
                 if item['open'] is None or item['close'] is None:
                     continue
                     
@@ -672,16 +672,25 @@ def ezay_chart_data():
                     intrinsic = 0
                     extrinsic = 0
                 
+                # Signal detection for individual Extrinsic pattern
+                # Signal: previous candle low < Extrinsic and current candle close > Extrinsic
+                extrinsic_signal = False
+                if i > 0:  # Need previous candle
+                    prev_item = data[i-1]
+                    if prev_item['low'] is not None and prev_item['low'] < extrinsic and item['close'] > extrinsic:
+                        extrinsic_signal = True
+                
                 enhanced_item = {
                     'time': ist_timestamp,
-                    'open': item['open'],
-                    'high': item['high'],
-                    'low': item['low'],
-                    'close': item['close'],
+                    'open': round(item['open'], 2),
+                    'high': round(item['high'], 2),
+                    'low': round(item['low'], 2),
+                    'close': round(item['close'], 2),
                     'volume': item['volume'],
-                    'intrinsic': intrinsic,
-                    'extrinsic': extrinsic,
-                    'spot_close': spot_close
+                    'intrinsic': round(intrinsic, 2),
+                    'extrinsic': round(extrinsic, 2),
+                    'spot_close': round(spot_close, 2),
+                    'extrinsic_signal': extrinsic_signal
                 }
                 
                 enhanced_data.append(enhanced_item)
@@ -702,7 +711,9 @@ def ezay_chart_data():
             common_timestamps = set(ce_dict.keys()) & set(pe_dict.keys())
             
             combined_premium_values = []
-            for timestamp in sorted(common_timestamps):
+            sorted_timestamps = sorted(common_timestamps)
+            
+            for i, timestamp in enumerate(sorted_timestamps):
                 ce_item = ce_dict[timestamp]
                 pe_item = pe_dict[timestamp]
                 
@@ -713,22 +724,51 @@ def ezay_chart_data():
                 
                 combined_premium_values.append(combined_premium)
                 
+                # Signal detection for Combined_Extrinsic pattern
+                # Signal: (previous ce low < Combined_Extrinsic AND current ce close > Combined_Extrinsic) 
+                #         OR (previous pe low < Combined_Extrinsic AND current pe close > Combined_Extrinsic)
+                combined_extrinsic_signal = False
+                if i > 0:  # Need previous candle
+                    prev_timestamp = sorted_timestamps[i-1]
+                    prev_ce_item = ce_dict[prev_timestamp]
+                    prev_pe_item = pe_dict[prev_timestamp]
+                    
+                    # Check CE condition: previous ce low < Combined_Extrinsic AND current ce close > Combined_Extrinsic
+                    ce_condition = (prev_ce_item['low'] < combined_extrinsic and ce_item['close'] > combined_extrinsic)
+                    
+                    # Check PE condition: previous pe low < Combined_Extrinsic AND current pe close > Combined_Extrinsic
+                    pe_condition = (prev_pe_item['low'] < combined_extrinsic and pe_item['close'] > combined_extrinsic)
+                    
+                    if ce_condition or pe_condition:
+                        combined_extrinsic_signal = True
+                
+                # CP_CE Signal detection: Combined Premium ≈ Combined Extrinsic (within 5%)
+                cp_ce_signal = False
+                if combined_extrinsic > 0:  # Avoid division by zero
+                    tolerance = combined_extrinsic * 0.02  # 5% tolerance
+                    if abs(combined_premium - combined_extrinsic) <= tolerance:
+                        cp_ce_signal = True
+                
                 combined_item = {
                     'time': timestamp,
-                    'open_combined_premium': open_combined_premium,
-                    'combined_premium': combined_premium,
-                    'combined_extrinsic': combined_extrinsic,
-                    'ce_intrinsic': ce_item['intrinsic'],
-                    'pe_intrinsic': pe_item['intrinsic'],
-                    'ce_extrinsic': ce_item['extrinsic'],
-                    'pe_extrinsic': pe_item['extrinsic'],
-                    'spot_close': ce_item['spot_close']
+                    'open_combined_premium': round(open_combined_premium, 2),
+                    'combined_premium': round(combined_premium, 2),
+                    'combined_extrinsic': round(combined_extrinsic, 2),
+                    'ce_intrinsic': round(ce_item['intrinsic'], 2),
+                    'pe_intrinsic': round(pe_item['intrinsic'], 2),
+                    'ce_extrinsic': round(ce_item['extrinsic'], 2),
+                    'pe_extrinsic': round(pe_item['extrinsic'], 2),
+                    'spot_close': round(ce_item['spot_close'], 2),
+                    'combined_extrinsic_signal': combined_extrinsic_signal,
+                    'ce_extrinsic_signal': ce_item.get('extrinsic_signal', False),
+                    'pe_extrinsic_signal': pe_item.get('extrinsic_signal', False),
+                    'cp_ce_signal': cp_ce_signal
                 }
                 
                 combined_data.append(combined_item)
         
         # Calculate LLP (Lowest Low of combined_premium)
-        llp = min(combined_premium_values) if combined_premium_values else 0
+        llp = round(min(combined_premium_values), 2) if combined_premium_values else 0
         
         # Add LLP to each combined data point
         for item in combined_data:

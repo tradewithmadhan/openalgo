@@ -119,6 +119,15 @@
                             </label>
                         </div>
                     </div>
+                    
+                    <!-- Signal Toggle Control -->
+                    <div class="control-group">
+                        <label class="label-text text-xs">Signals:</label>
+                        <label class="cursor-pointer label">
+                            <input type="checkbox" id="toggle-signals" class="checkbox checkbox-sm" checked>
+                            <span class="label-text text-xs ml-1">Show Signals</span>
+                        </label>
+                    </div>
                 </div>
                 
                 <div class="flex items-center gap-4">
@@ -260,7 +269,14 @@ let peIntrinsicSeries = null;
 let ceExtrinsicSeries = null;
 let peExtrinsicSeries = null;
 let combinedExtrinsicSeries = null;
+let signalsEnabled = true;  // Toggle for signal markers
 let isChartEnabled = true;
+
+// Marker primitives for signal markers
+let ceMarkersPrimitive = null;
+let peMarkersPrimitive = null;
+let combinedMarkersPrimitive = null;
+let cpCeMarkersPrimitive = null;
 let currentChartType = 'candlestick';  // Default to candlestick
 let currentStrike = '';
 let currentOptionType = 'both';  // Default to both CE & PE
@@ -281,6 +297,7 @@ const toggleExtrinsic = document.getElementById('toggle-extrinsic');
 const toggleCombinedPremium = document.getElementById('toggle-combined-premium');
 const toggleLLP = document.getElementById('toggle-llp');
 const toggleCombinedExtrinsic = document.getElementById('toggle-combined-extrinsic');
+const toggleSignals = document.getElementById('toggle-signals');
 
 
 
@@ -465,6 +482,11 @@ function createSeries() {
         combinedExtrinsicSeries = null;
     }
 
+    // Reset marker primitives when series are recreated
+    ceMarkersPrimitive = null;
+    peMarkersPrimitive = null;
+    combinedMarkersPrimitive = null;
+
     // Create all series by default
     
     // 1. CE Premium Series
@@ -601,6 +623,9 @@ function createSeries() {
         lineWidth: 2,
         title: 'Combined Extrinsic',
     });
+
+    // 10. Signal variables (we'll use setMarkers on existing series)
+    // No need to create separate signal series - we'll add markers to existing series
 
     if (currentStrike) {
         loadOptionData();
@@ -750,6 +775,143 @@ async function loadOptionData() {
                 combinedExtrinsicSeries.setData(lineData);
             }
             
+            // 10. Load Signal data (markers for signal detection)
+            // Add markers to existing series based on signal detection
+            
+            // CE Signals - add markers to CE series
+            if (ceSeries && data.data.ce_data) {
+                if (signalsEnabled) {
+                    const ceSignalData = data.data.ce_data.filter(item => item.extrinsic_signal);
+                    if (ceSignalData.length > 0) {
+                        const ceMarkers = ceSignalData.map(point => ({
+                            time: point.time,
+                            position: 'aboveBar',
+                            color: '#00ff00',
+                            shape: 'circle',
+                            text: 'CE↑'
+                        }));
+                        // Create or update CE markers primitive
+                        if (ceMarkersPrimitive) {
+                            ceMarkersPrimitive.setMarkers(ceMarkers);
+                        } else {
+                            ceMarkersPrimitive = LightweightCharts.createSeriesMarkers(ceSeries, ceMarkers);
+                        }
+                        console.log('CE Signals detected:', ceSignalData.length);
+                    } else {
+                        // Clear markers
+                        if (ceMarkersPrimitive) {
+                            ceMarkersPrimitive.setMarkers([]);
+                        }
+                    }
+                } else {
+                    // Clear markers when disabled
+                    if (ceMarkersPrimitive) {
+                        ceMarkersPrimitive.setMarkers([]);
+                    }
+                }
+            }
+            
+            // PE Signals - add markers to PE series
+            if (peSeries && data.data.pe_data) {
+                if (signalsEnabled) {
+                    const peSignalData = data.data.pe_data.filter(item => item.extrinsic_signal);
+                    if (peSignalData.length > 0) {
+                        const peMarkers = peSignalData.map(point => ({
+                            time: point.time,
+                            position: 'aboveBar',
+                            color: '#ff0000',
+                            shape: 'circle',
+                            text: 'PE↑'
+                        }));
+                        // Create or update PE markers primitive
+                        if (peMarkersPrimitive) {
+                            peMarkersPrimitive.setMarkers(peMarkers);
+                        } else {
+                            peMarkersPrimitive = LightweightCharts.createSeriesMarkers(peSeries, peMarkers);
+                        }
+                        console.log('PE Signals detected:', peSignalData.length);
+                    } else {
+                        // Clear markers
+                        if (peMarkersPrimitive) {
+                            peMarkersPrimitive.setMarkers([]);
+                        }
+                    }
+                } else {
+                    // Clear markers when disabled
+                    if (peMarkersPrimitive) {
+                        peMarkersPrimitive.setMarkers([]);
+                    }
+                }
+            }
+            
+            // CP_CE Signals - add markers to Combined Premium series (above)
+            if (combinedSeries && data.data.combined_data) {
+                if (signalsEnabled) {
+                    const cpCeSignalData = data.data.combined_data.filter(item => item.cp_ce_signal);
+                    
+                    if (cpCeSignalData.length > 0) {
+                        const cpCeMarkers = cpCeSignalData.map(point => ({
+                            time: point.time,
+                            position: 'aboveBar',
+                            color: '#2196f3', // Same color as Combined Premium
+                            shape: 'circle',
+                            text: 'CP_CE'
+                        }));
+                        // Create or update CP_CE markers primitive
+                        if (cpCeMarkersPrimitive) {
+                            cpCeMarkersPrimitive.setMarkers(cpCeMarkers);
+                        } else {
+                            cpCeMarkersPrimitive = LightweightCharts.createSeriesMarkers(combinedSeries, cpCeMarkers);
+                        }
+                        console.log('CP_CE signals detected:', cpCeSignalData.length);
+                    } else {
+                        // Clear markers
+                        if (cpCeMarkersPrimitive) {
+                            cpCeMarkersPrimitive.setMarkers([]);
+                        }
+                    }
+                } else {
+                    // Clear markers when disabled
+                    if (cpCeMarkersPrimitive) {
+                        cpCeMarkersPrimitive.setMarkers([]);
+                    }
+                }
+            }
+            
+            // Combined Extrinsic Signals - add markers to Combined Extrinsic series (below)
+            if (combinedExtrinsicSeries && data.data.combined_data) {
+                if (signalsEnabled) {
+                    const combinedExtrinsicSignalData = data.data.combined_data.filter(item => item.combined_extrinsic_signal);
+                    
+                    if (combinedExtrinsicSignalData.length > 0) {
+                        const combinedExtrinsicMarkers = combinedExtrinsicSignalData.map(point => ({
+                            time: point.time,
+                            position: 'belowBar',
+                            color: '#ffeb3b', // Same color as Combined Extrinsic
+                            shape: 'circle',
+                            text: 'C P'
+                        }));
+                        // Create or update Combined Extrinsic markers primitive
+                        if (combinedMarkersPrimitive) {
+                            combinedMarkersPrimitive.setMarkers(combinedExtrinsicMarkers);
+                        } else {
+                            combinedMarkersPrimitive = LightweightCharts.createSeriesMarkers(combinedExtrinsicSeries, combinedExtrinsicMarkers);
+                        }
+                        console.log('Combined Extrinsic signals detected:', combinedExtrinsicSignalData.length);
+                    } else {
+                        // Clear markers
+                        if (combinedMarkersPrimitive) {
+                            combinedMarkersPrimitive.setMarkers([]);
+                        }
+                    }
+                } else {
+                    // Clear markers when disabled
+                    if (combinedMarkersPrimitive) {
+                        combinedMarkersPrimitive.setMarkers([]);
+                    }
+                }
+            }
+            
             dataPoints = totalDataPoints;
             
             // Update chart symbol display with timezone info
@@ -854,6 +1016,14 @@ toggleLLP.addEventListener('change', () => {
 toggleCombinedExtrinsic.addEventListener('change', () => {
     if (chart && combinedExtrinsicSeries) {
         combinedExtrinsicSeries.applyOptions({ visible: toggleCombinedExtrinsic.checked });
+    }
+});
+
+toggleSignals.addEventListener('change', () => {
+    signalsEnabled = toggleSignals.checked;
+    if (chart && currentStrike) {
+        // Refresh chart data to update signal markers
+        loadOptionData();
     }
 });
 
