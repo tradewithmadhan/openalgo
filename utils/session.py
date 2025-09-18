@@ -121,6 +121,6 @@ def invalidate_session_if_invalid(f):
             # Revoke tokens before clearing session
             revoke_user_tokens()
             session.clear()
-            clear_madhan_db()
+            #clear_madhan_db() 
         return f(*args, **kwargs)
     return decorated_function

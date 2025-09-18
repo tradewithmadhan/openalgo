@@ -755,21 +755,42 @@ def ezay_chart_data():
 @madhan_bp.route('/api/strikes')
 @check_session_validity
 def get_strikes():
-    """Gets available strike prices from tracked symbols."""
+    """Gets available strike prices and symbols from tracked symbols."""
     try:
         tracked_symbols = get_tracked_symbols()
-        strikes = set()
+        strikes_data = {}
+        symbols_map = {}
         
         for symbol in tracked_symbols:
             strike = extract_strike(symbol)
             if strike is not None:
-                strikes.add(strike)
+                if strike not in strikes_data:
+                    strikes_data[strike] = {'ce_symbol': None, 'pe_symbol': None}
+                    
+                if symbol.endswith('CE'):
+                    strikes_data[strike]['ce_symbol'] = symbol
+                    symbols_map[f"{strike}_CE"] = {
+                        'symbol': symbol,
+                        'exchange': 'NFO',
+                        'strike': strike,
+                        'type': 'CE'
+                    }
+                elif symbol.endswith('PE'):
+                    strikes_data[strike]['pe_symbol'] = symbol
+                    symbols_map[f"{strike}_PE"] = {
+                        'symbol': symbol,
+                        'exchange': 'NFO',
+                        'strike': strike,
+                        'type': 'PE'
+                    }
         
-        sorted_strikes = sorted(list(strikes))
+        sorted_strikes = sorted(list(strikes_data.keys()))
         
         return jsonify({
             'status': 'success',
-            'data': sorted_strikes
+            'data': sorted_strikes,
+            'strikes_data': strikes_data,
+            'symbols_map': symbols_map
         })
         
     except Exception as e:
