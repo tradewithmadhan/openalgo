@@ -673,11 +673,29 @@ def ezay_chart_data():
                     extrinsic = 0
                 
                 # Signal detection for individual Extrinsic pattern
-                # Signal: previous candle low < Extrinsic and current candle close > Extrinsic
+                # CE/PE Extrinsic Signal: (previous candle low < previous Extrinsic and current candle close > current Extrinsic) 
+                #                     OR (current candle low < current Extrinsic and current candle close > current Extrinsic)
                 extrinsic_signal = False
-                if i > 0:  # Need previous candle
+                if i > 0:  # Need previous candle for first condition
                     prev_item = data[i-1]
-                    if prev_item['low'] is not None and prev_item['low'] < extrinsic and item['close'] > extrinsic:
+                    # Calculate previous extrinsic value
+                    prev_spot_close = spot_lookup.get(prev_item['timestamp'], 0)
+                    if option_type == 'CE':
+                        prev_intrinsic = max(prev_spot_close - strike_price, 0)
+                        prev_extrinsic = prev_item['close'] - prev_intrinsic
+                    elif option_type == 'PE':
+                        prev_intrinsic = max(strike_price - prev_spot_close, 0)
+                        prev_extrinsic = prev_item['close'] - prev_intrinsic
+                    else:
+                        prev_extrinsic = 0
+                    
+                    # Condition 1: previous candle low < previous Extrinsic and current candle close > current Extrinsic
+                    condition1 = (prev_item['low'] is not None and prev_item['low'] < prev_extrinsic and item['close'] > extrinsic)
+                    
+                    # Condition 2: current candle low < current Extrinsic and current candle close > current Extrinsic
+                    condition2 = (item['low'] is not None and item['low'] < extrinsic and item['close'] > extrinsic)
+                    
+                    if condition1 or condition2:
                         extrinsic_signal = True
                 
                 enhanced_item = {
@@ -725,27 +743,35 @@ def ezay_chart_data():
                 combined_premium_values.append(combined_premium)
                 
                 # Signal detection for Combined_Extrinsic pattern
-                # Signal: (previous ce low < Combined_Extrinsic AND current ce close > Combined_Extrinsic) 
-                #         OR (previous pe low < Combined_Extrinsic AND current pe close > Combined_Extrinsic)
+                # Combined Extrinsic Signal: 
+                # CE: (previous ce low < previous Combined_Extrinsic AND current ce close > current Combined_Extrinsic) 
+                #     OR (current ce low < current Combined_Extrinsic AND current ce close > current Combined_Extrinsic)
+                # PE: (previous pe low < previous Combined_Extrinsic AND current pe close > current Combined_Extrinsic) 
+                #     OR (current pe low < current Combined_Extrinsic AND current pe close > current Combined_Extrinsic)
                 combined_extrinsic_signal = False
                 if i > 0:  # Need previous candle
                     prev_timestamp = sorted_timestamps[i-1]
                     prev_ce_item = ce_dict[prev_timestamp]
                     prev_pe_item = pe_dict[prev_timestamp]
                     
-                    # Check CE condition: previous ce low < Combined_Extrinsic AND current ce close > Combined_Extrinsic
-                    ce_condition = (prev_ce_item['low'] < combined_extrinsic and ce_item['close'] > combined_extrinsic)
+                    # Calculate previous combined extrinsic
+                    prev_combined_extrinsic = prev_ce_item['extrinsic'] + prev_pe_item['extrinsic']
                     
-                    # Check PE condition: previous pe low < Combined_Extrinsic AND current pe close > Combined_Extrinsic
-                    pe_condition = (prev_pe_item['low'] < combined_extrinsic and pe_item['close'] > combined_extrinsic)
+                    # CE Conditions
+                    ce_condition1 = (prev_ce_item['low'] < prev_combined_extrinsic and ce_item['close'] > combined_extrinsic)
+                    ce_condition2 = (ce_item['low'] < combined_extrinsic and ce_item['close'] > combined_extrinsic)
                     
-                    if ce_condition or pe_condition:
+                    # PE Conditions  
+                    pe_condition1 = (prev_pe_item['low'] < prev_combined_extrinsic and pe_item['close'] > combined_extrinsic)
+                    pe_condition2 = (pe_item['low'] < combined_extrinsic and pe_item['close'] > combined_extrinsic)
+                    
+                    if ce_condition1 or ce_condition2 or pe_condition1 or pe_condition2:
                         combined_extrinsic_signal = True
                 
                 # CP_CE Signal detection: Combined Premium ≈ Combined Extrinsic (within 5%)
                 cp_ce_signal = False
                 if combined_extrinsic > 0:  # Avoid division by zero
-                    tolerance = combined_extrinsic * 0.02  # 5% tolerance
+                    tolerance = combined_extrinsic * 0.02  # 2% tolerance
                     if abs(combined_premium - combined_extrinsic) <= tolerance:
                         cp_ce_signal = True
                 
