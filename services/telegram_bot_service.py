@@ -9,6 +9,7 @@ import httpx
 from telegram import Bot, Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 from telegram.constants import ParseMode
+import telegram.error
 import json
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
@@ -29,6 +30,7 @@ from database.telegram_db import (
     delete_telegram_user,
     get_user_credentials
 )
+from database.auth_db import get_username_by_apikey
 from utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -41,10 +43,11 @@ class TelegramBotService:
         self.bot = None
         self.is_running = False
         self.bot_token = None
-        self.http_client = httpx.AsyncClient(timeout=30.0)
+        self.http_client = None  # Will be created in thread
         self.bot_thread = None
-        self.bot_loop = None
+        self.bot_loop = None  # Store the bot's event loop
         self.sdk_clients = {}  # Cache for OpenAlgo SDK clients per user
+        self._stop_event = threading.Event()  # Thread-safe stop signal
 
     def _get_sdk_client(self, telegram_id: int) -> Optional[openalgo_api]:
         """Get or create OpenAlgo SDK client for a user"""
@@ -106,18 +109,40 @@ class TelegramBotService:
 
             logger.debug(f"Generating intraday chart for {symbol} on {exchange} with interval {interval}")
 
-            # Get historical data
-            loop = asyncio.get_event_loop()
-            history_data = await loop.run_in_executor(
-                None,
-                lambda: client.history(
-                    symbol=symbol,
-                    exchange=exchange,
-                    interval=interval,
-                    start_date=start_date.strftime("%Y-%m-%d"),
-                    end_date=end_date.strftime("%Y-%m-%d")
-                )
-            )
+            # Get historical data - be robust about event loops
+            history_data = None
+
+            # Try async first if we have a loop
+            if hasattr(self, 'bot_loop') and self.bot_loop:
+                try:
+                    logger.debug("Using bot's event loop for intraday history")
+                    history_data = await self.bot_loop.run_in_executor(
+                        None,
+                        lambda: client.history(
+                            symbol=symbol,
+                            exchange=exchange,
+                            interval=interval,
+                            start_date=start_date.strftime("%Y-%m-%d"),
+                            end_date=end_date.strftime("%Y-%m-%d")
+                        )
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to fetch via bot loop: {e}")
+
+            # If that didn't work, try direct sync call
+            if history_data is None:
+                try:
+                    logger.debug("Using synchronous history fetch for intraday")
+                    history_data = client.history(
+                        symbol=symbol,
+                        exchange=exchange,
+                        interval=interval,
+                        start_date=start_date.strftime("%Y-%m-%d"),
+                        end_date=end_date.strftime("%Y-%m-%d")
+                    )
+                except Exception as e:
+                    logger.error(f"Synchronous history fetch failed: {e}")
+                    return None
 
             # Check if we got data
             if history_data is None or (isinstance(history_data, pd.DataFrame) and history_data.empty):
@@ -235,18 +260,40 @@ class TelegramBotService:
 
             logger.debug(f"Generating daily chart for {symbol} on {exchange} with interval {interval}")
 
-            # Get historical data
-            loop = asyncio.get_event_loop()
-            history_data = await loop.run_in_executor(
-                None,
-                lambda: client.history(
-                    symbol=symbol,
-                    exchange=exchange,
-                    interval=interval,
-                    start_date=start_date.strftime("%Y-%m-%d"),
-                    end_date=end_date.strftime("%Y-%m-%d")
-                )
-            )
+            # Get historical data - be robust about event loops
+            history_data = None
+
+            # Try async first if we have a loop
+            if hasattr(self, 'bot_loop') and self.bot_loop:
+                try:
+                    logger.debug("Using bot's event loop for daily history")
+                    history_data = await self.bot_loop.run_in_executor(
+                        None,
+                        lambda: client.history(
+                            symbol=symbol,
+                            exchange=exchange,
+                            interval=interval,
+                            start_date=start_date.strftime("%Y-%m-%d"),
+                            end_date=end_date.strftime("%Y-%m-%d")
+                        )
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to fetch daily via bot loop: {e}")
+
+            # If that didn't work, try direct sync call
+            if history_data is None:
+                try:
+                    logger.debug("Using synchronous history fetch for daily")
+                    history_data = client.history(
+                        symbol=symbol,
+                        exchange=exchange,
+                        interval=interval,
+                        start_date=start_date.strftime("%Y-%m-%d"),
+                        end_date=end_date.strftime("%Y-%m-%d")
+                    )
+                except Exception as e:
+                    logger.error(f"Synchronous daily history fetch failed: {e}")
+                    return None
 
             # Check if we got data
             if history_data is None or (isinstance(history_data, pd.DataFrame) and history_data.empty):
@@ -386,75 +433,239 @@ class TelegramBotService:
             logger.error(f"Failed to initialize bot: {e}")
             return False, str(e)
 
-    def _run_bot_async(self):
-        """Run bot in separate thread with its own event loop"""
-        self.bot_loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(self.bot_loop)
+    def initialize_bot_sync(self, token: str) -> Tuple[bool, str]:
+        """Synchronous initialization for eventlet environments"""
+        import sys
+
+        # Check if we're in eventlet environment
+        if 'eventlet' in sys.modules:
+            logger.info("Using synchronous initialization for eventlet environment")
+            # Use synchronous requests to validate token
+            import requests
+
+            try:
+                response = requests.get(
+                    f"https://api.telegram.org/bot{token}/getMe",
+                    timeout=10
+                )
+
+                if response.status_code == 200:
+                    data = response.json()
+                    if data.get('ok'):
+                        bot_info = data.get('result', {})
+                        bot_username = bot_info.get('username', 'unknown')
+
+                        # Store token and update config
+                        self.bot_token = token
+                        update_bot_config({
+                            'bot_token': token,
+                            'is_active': False,
+                            'bot_username': bot_username
+                        })
+
+                        logger.info(f"Bot validated: @{bot_username}")
+                        return True, f"Bot initialized successfully: @{bot_username}"
+                    else:
+                        return False, f"Invalid response: {data.get('description', 'Unknown error')}"
+                else:
+                    return False, f"HTTP {response.status_code}: Failed to validate token"
+
+            except Exception as e:
+                logger.error(f"Sync initialization error: {e}")
+                # Store token anyway for retry later
+                self.bot_token = token
+                return True, "Token stored (will validate on start)"
+
+        else:
+            # Non-eventlet environment, use regular async initialization
+            logger.info("Using async initialization (non-eventlet environment)")
+            import asyncio
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                return loop.run_until_complete(self.initialize_bot(token))
+            finally:
+                loop.close()
+
+    def _run_bot_in_thread(self):
+        """Run bot in separate thread with its own isolated event loop"""
+        import sys
+
+        # Check if eventlet is active
+        if 'eventlet' in sys.modules:
+            logger.info("Eventlet detected - using special handling for asyncio")
+            # For eventlet, we need to be very careful with asyncio
+            import asyncio
+
+            # Reset the event loop policy to avoid eventlet's monkey-patching
+            try:
+                # Use the default, unpatched event loop policy
+                from asyncio import DefaultEventLoopPolicy, SelectorEventLoop
+                policy = DefaultEventLoopPolicy()
+                asyncio.set_event_loop_policy(policy)
+                logger.info("Reset to default event loop policy")
+            except Exception as e:
+                logger.warning(f"Could not reset event loop policy: {e}")
+        else:
+            import asyncio
+
+        # Create new event loop in this thread
+        logger.info("Creating new event loop in bot thread")
+
+        # Create a new event loop for this thread
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        self.bot_loop = loop  # Store the loop so we can schedule tasks in it
+
         try:
-            self.bot_loop.run_until_complete(self._start_bot())
+            # Create HTTP client in this thread's event loop
+            self.http_client = httpx.AsyncClient(timeout=30.0)
+
+            # Run the bot
+            loop.run_until_complete(self._start_bot_isolated())
         except Exception as e:
-            logger.debug(f"Bot loop ended: {e}")
+            logger.error(f"Bot thread error: {e}")
         finally:
-            # Clean shutdown
-            self.bot_loop.close()
-
-    async def _start_bot(self):
-        """Start the bot with proper handlers"""
-        try:
-            # Create application
-            self.application = Application.builder().token(self.bot_token).build()
-
-            # Add command handlers
-            self.application.add_handler(CommandHandler("start", self.cmd_start))
-            self.application.add_handler(CommandHandler("help", self.cmd_help))
-            self.application.add_handler(CommandHandler("link", self.cmd_link))
-            self.application.add_handler(CommandHandler("unlink", self.cmd_unlink))
-            self.application.add_handler(CommandHandler("status", self.cmd_status))
-            self.application.add_handler(CommandHandler("orderbook", self.cmd_orderbook))
-            self.application.add_handler(CommandHandler("tradebook", self.cmd_tradebook))
-            self.application.add_handler(CommandHandler("positions", self.cmd_positions))
-            self.application.add_handler(CommandHandler("holdings", self.cmd_holdings))
-            self.application.add_handler(CommandHandler("funds", self.cmd_funds))
-            self.application.add_handler(CommandHandler("pnl", self.cmd_pnl))
-            self.application.add_handler(CommandHandler("quote", self.cmd_quote))
-            self.application.add_handler(CommandHandler("chart", self.cmd_chart))
-            self.application.add_handler(CommandHandler("menu", self.cmd_menu))
-
-            # Add callback query handler for inline buttons
-            self.application.add_handler(CallbackQueryHandler(self.button_callback))
-
-            # Initialize
-            await self.application.initialize()
-            await self.application.start()
-
-            # Always use polling mode
-            logger.debug("Starting bot in polling mode...")
-            await self.application.updater.start_polling()
-
-            self.is_running = True
-            update_bot_config({'is_active': True})
-
-            # Keep running
-            while self.is_running:
-                await asyncio.sleep(1)
-
-            # Clean shutdown when is_running becomes False
-            logger.debug("Bot stopping gracefully...")
-
-        except Exception as e:
-            logger.error(f"Error in bot operation: {e}")
+            # Cleanup
+            try:
+                if self.http_client:
+                    loop.run_until_complete(self.http_client.aclose())
+            except:
+                pass
+            loop.close()
+            self.bot_loop = None  # Clear the reference
             self.is_running = False
-            raise
-        finally:
-            # Ensure updater is stopped if it was started
-            if self.application and self.application.updater.running:
-                try:
-                    await self.application.updater.stop()
-                except Exception as e:
-                    logger.debug(f"Error stopping updater in finally: {e}")
 
-    async def start_bot(self) -> Tuple[bool, str]:
-        """Start the bot in polling mode"""
+    async def handle_error(self, update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle errors in telegram bot operations"""
+        import telegram.error
+
+        error = context.error
+
+        # Handle specific Telegram API errors
+        if isinstance(error, telegram.error.NetworkError):
+            logger.warning(f"Telegram NetworkError: {error}. Will retry automatically.")
+        elif isinstance(error, telegram.error.Conflict):
+            logger.error("Another instance of the bot is running! Please stop other instances.")
+            self.is_running = False
+        elif isinstance(error, telegram.error.TimedOut):
+            logger.warning("Request to Telegram timed out. Will retry automatically.")
+        elif isinstance(error, telegram.error.BadRequest):
+            logger.error(f"Bad request to Telegram API: {error}")
+        else:
+            logger.error(f"Unhandled error in Telegram bot: {error}", exc_info=error)
+
+        # If we have an update, try to inform the user (if possible)
+        if update and hasattr(update, 'effective_chat'):
+            try:
+                await context.bot.send_message(
+                    chat_id=update.effective_chat.id,
+                    text="⚠️ An error occurred. Please try again later."
+                )
+            except:
+                pass  # If we can't send the message, just ignore
+
+    async def _start_bot_isolated(self):
+        """Start the bot with proper handlers and network error handling"""
+        retry_count = 0
+        max_retries = 5
+        base_delay = 5  # seconds
+
+        while retry_count < max_retries:
+            try:
+                # Create application
+                self.application = Application.builder().token(self.bot_token).build()
+
+                # Add command handlers
+                self.application.add_handler(CommandHandler("start", self.cmd_start))
+                self.application.add_handler(CommandHandler("help", self.cmd_help))
+                self.application.add_handler(CommandHandler("link", self.cmd_link))
+                self.application.add_handler(CommandHandler("unlink", self.cmd_unlink))
+                self.application.add_handler(CommandHandler("status", self.cmd_status))
+                self.application.add_handler(CommandHandler("orderbook", self.cmd_orderbook))
+                self.application.add_handler(CommandHandler("tradebook", self.cmd_tradebook))
+                self.application.add_handler(CommandHandler("positions", self.cmd_positions))
+                self.application.add_handler(CommandHandler("holdings", self.cmd_holdings))
+                self.application.add_handler(CommandHandler("funds", self.cmd_funds))
+                self.application.add_handler(CommandHandler("pnl", self.cmd_pnl))
+                self.application.add_handler(CommandHandler("quote", self.cmd_quote))
+                self.application.add_handler(CommandHandler("chart", self.cmd_chart))
+                self.application.add_handler(CommandHandler("menu", self.cmd_menu))
+
+                # Add callback query handler for inline buttons
+                self.application.add_handler(CallbackQueryHandler(self.button_callback))
+
+                # Add error handler for network issues
+                self.application.add_error_handler(self.handle_error)
+
+                # Initialize
+                await self.application.initialize()
+                await self.application.start()
+
+                # Configure polling with better error handling
+                logger.debug("Starting bot in polling mode...")
+                await self.application.updater.start_polling(
+                    drop_pending_updates=True,  # Ignore old messages
+                    allowed_updates=Update.ALL_TYPES
+                )
+
+                self.is_running = True
+                update_bot_config({'is_active': True})
+                logger.info("Telegram bot started successfully and is polling for updates")
+
+                # Reset retry count on successful connection
+                retry_count = 0
+
+                # Keep running until stop signal
+                while not self._stop_event.is_set():
+                    await asyncio.sleep(1)
+
+                # Stop signal received - clean shutdown
+                logger.debug("Stop signal received, shutting down bot...")
+                self.is_running = False
+
+                # Stop the updater and wait for tasks to complete
+                if self.application and self.application.updater.running:
+                    await self.application.updater.stop()
+                    await self.application.stop()
+                    await self.application.shutdown()
+                    # Give tasks a moment to clean up
+                    await asyncio.sleep(0.5)
+
+                # Clean shutdown when is_running becomes False
+                logger.debug("Bot stopping gracefully...")
+                break
+
+            except (httpx.ConnectError, httpx.NetworkError, httpx.TimeoutException, telegram.error.NetworkError) as e:
+                retry_count += 1
+                delay = base_delay * (2 ** retry_count)  # Exponential backoff
+                logger.warning(f"Network error while connecting to Telegram (attempt {retry_count}/{max_retries}): {type(e).__name__}")
+                logger.debug(f"Network error details: {str(e)}")
+
+                if retry_count < max_retries:
+                    logger.info(f"Retrying in {delay} seconds...")
+                    await asyncio.sleep(delay)
+                else:
+                    logger.error("Max retries reached. Unable to connect to Telegram servers.")
+                    logger.info("This might be due to: 1) No internet connection, 2) Telegram blocked by firewall/ISP, 3) DNS issues")
+                    self.is_running = False
+                    break
+
+            except Exception as e:
+                # For non-network errors, log and stop
+                logger.error(f"Unexpected error in bot operation: {e}")
+                self.is_running = False
+                break
+
+        # Cleanup after the retry loop
+        if self.application and hasattr(self.application, 'updater') and self.application.updater.running:
+            try:
+                await self.application.updater.stop()
+            except Exception as e:
+                logger.debug(f"Error stopping updater: {e}")
+
+    def start_bot(self) -> Tuple[bool, str]:
+        """Start the bot in a separate thread"""
         try:
             if self.is_running:
                 return False, "Bot is already running"
@@ -465,78 +676,64 @@ class TelegramBotService:
 
             self.bot_token = config['bot_token']
 
-            # Start bot in separate thread
-            self.bot_thread = threading.Thread(target=self._run_bot_async, daemon=True)
+            # Reset stop event
+            self._stop_event.clear()
+
+            # Start bot in separate thread with isolated event loop
+            self.bot_thread = threading.Thread(
+                target=self._run_bot_in_thread,
+                daemon=True,
+                name="TelegramBotThread"
+            )
             self.bot_thread.start()
 
-            # Wait a bit for the bot to start
-            await asyncio.sleep(2)
+            # Wait for bot to start
+            import time
+            for _ in range(10):  # Wait up to 5 seconds
+                if self.is_running:
+                    return True, "Bot started successfully"
+                time.sleep(0.5)
 
-            if self.is_running:
-                return True, "Bot started successfully"
-            else:
-                return False, "Bot failed to start"
+            return False, "Bot failed to start within timeout"
 
         except Exception as e:
             logger.error(f"Failed to start bot: {e}")
             return False, str(e)
 
-    def stop_bot_sync(self) -> Tuple[bool, str]:
-        """Stop the bot synchronously (for use from Flask routes)"""
+    def stop_bot(self) -> Tuple[bool, str]:
+        """Stop the bot"""
         try:
             if not self.is_running:
                 return False, "Bot is not running"
 
-            # Signal the bot to stop
-            logger.debug("Stopping bot...")
-            self.is_running = False
+            logger.debug("Stopping Telegram bot...")
 
-            # If we have a bot loop running in another thread, handle shutdown properly
-            if self.bot_loop and self.bot_loop.is_running() and self.application:
-                # Schedule the shutdown in the bot's event loop
-                async def shutdown():
-                    try:
-                        if self.application.updater.running:
-                            await self.application.updater.stop()
-                        await self.application.stop()
-                        await self.application.shutdown()
-                    except Exception as e:
-                        logger.error(f"Error during shutdown: {e}")
+            # Signal the thread to stop
+            self._stop_event.set()
 
-                # Run the shutdown in the bot's event loop
-                future = asyncio.run_coroutine_threadsafe(shutdown(), self.bot_loop)
-                # Wait for shutdown to complete (max 10 seconds)
-                try:
-                    future.result(timeout=10)
-                    logger.debug("Bot shutdown completed")
-                except concurrent.futures.TimeoutError:
-                    logger.warning("Shutdown timeout - forcing stop")
-                except Exception as e:
-                    logger.warning(f"Shutdown error: {e}")
-
-            # Wait for the thread to finish (with timeout)
+            # Wait for thread to finish
             if self.bot_thread and self.bot_thread.is_alive():
-                self.bot_thread.join(timeout=5.0)
+                self.bot_thread.join(timeout=10.0)
                 if self.bot_thread.is_alive():
-                    logger.warning("Thread did not stop cleanly")
-                self.bot_thread = None
+                    logger.warning("Bot thread did not stop cleanly")
+                    self.is_running = False
 
-            # Clean up
+            self.bot_thread = None
             self.application = None
-            self.bot_loop = None
+            self.bot_loop = None  # Clear the loop reference
 
+            # Update database
             update_bot_config({'is_active': False})
 
+            logger.info("Telegram bot stopped")
             return True, "Bot stopped successfully"
 
         except Exception as e:
             logger.error(f"Failed to stop bot: {e}")
             return False, str(e)
 
-    async def stop_bot(self) -> Tuple[bool, str]:
-        """Stop the bot (async wrapper for compatibility)"""
-        # Just call the sync version since we're dealing with threads
-        return self.stop_bot_sync()
+    # Alias for compatibility
+    stop_bot_sync = stop_bot
 
     # Command Handlers
     async def cmd_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -633,17 +830,46 @@ class TelegramBotService:
 
             if test_response and test_response.get('status') == 'success':
                 # Valid credentials, save them
-                # Use telegram username or ID as the openalgo_username for tracking
-                username_for_db = f"@{user.username}" if user.username else f"telegram_{user.id}"
+                # Get the actual OpenAlgo username from the API key
+                openalgo_username = None
+                try:
+                    openalgo_username = get_username_by_apikey(api_key)
+                    logger.info(f"API key lookup returned: '{openalgo_username}'")
+                except Exception as e:
+                    logger.error(f"Error getting username from API key: {e}")
+
+                # If we couldn't get username from API key, try to extract from response
+                if not openalgo_username and test_response.get('data'):
+                    # Some brokers return username in the funds response
+                    data = test_response.get('data', {})
+                    if isinstance(data, dict):
+                        openalgo_username = data.get('username') or data.get('user_id') or data.get('client_id')
+                        if openalgo_username:
+                            logger.info(f"Got username from funds response: {openalgo_username}")
+
+                # Log for debugging
+                logger.info(f"Linking Telegram user {user.id} (@{user.username}) with OpenAlgo username: '{openalgo_username}'")
+
+                # If we still can't get username, DON'T use telegram username with @
+                # Use a proper fallback
+                if not openalgo_username:
+                    # Try to get from session or use telegram ID
+                    openalgo_username = f"user_{user.id}"
+                    logger.warning(f"Could not get OpenAlgo username, using fallback: {openalgo_username}")
+                else:
+                    logger.info(f"Successfully retrieved OpenAlgo username: {openalgo_username}")
+
                 create_or_update_telegram_user(
                     telegram_id=user.id,
-                    username=username_for_db,
+                    username=openalgo_username,  # Use the actual OpenAlgo username
                     telegram_username=user.username,
                     first_name=user.first_name,
                     last_name=user.last_name,
                     api_key=api_key,
                     host_url=host_url
                 )
+
+                logger.info(f"Database updated - Username stored as: {openalgo_username}")
 
                 await update.message.reply_text(
                     "✅ Account linked successfully!\n"
@@ -1476,11 +1702,14 @@ class TelegramBotService:
     async def send_notification(self, telegram_id: int, message: str) -> bool:
         """Send a notification to a specific Telegram user."""
         try:
-            if not self.application:
-                logger.error("Bot not initialized")
+            if not self.application or not self.is_running:
+                logger.error("Bot not initialized or not running")
                 return False
 
-            await self.application.bot.send_message(
+            # Get the bot from the application
+            bot = self.application.bot
+
+            await bot.send_message(
                 chat_id=telegram_id,
                 text=message,
                 parse_mode='Markdown'
@@ -1494,8 +1723,8 @@ class TelegramBotService:
     async def broadcast_message(self, message: str, filters: Dict = None) -> Tuple[int, int]:
         """Broadcast a message to all or filtered users."""
         try:
-            if not self.application:
-                logger.error("Bot not initialized for broadcast")
+            if not self.application or not self.is_running:
+                logger.error("Bot not initialized or not running for broadcast")
                 return 0, 0
 
             # Get all telegram users
@@ -1516,7 +1745,8 @@ class TelegramBotService:
                 try:
                     telegram_id = user.get('telegram_id')
                     if telegram_id:
-                        await self.application.bot.send_message(
+                        bot = self.application.bot
+                        await bot.send_message(
                             chat_id=telegram_id,
                             text=message,
                             parse_mode='Markdown'

@@ -3,9 +3,9 @@ Telegram Alert Service for Order Notifications
 Handles asynchronous sending of order-related alerts to users via Telegram
 """
 
-import asyncio
 from typing import Dict, Any, Optional, List
 from concurrent.futures import ThreadPoolExecutor
+import time
 from datetime import datetime
 import json
 from database.telegram_db import (
@@ -32,7 +32,6 @@ def _get_telegram_bot_service():
             # Create a mock object with minimal interface
             class MockTelegramBotService:
                 is_running = False
-                bot_loop = None
                 async def send_notification(self, *args, **kwargs):
                     return False
             telegram_bot_service = MockTelegramBotService()
@@ -175,8 +174,8 @@ class TelegramAlertService:
             logger.error(f"Error formatting order details: {e}")
             return f"Order Type: {order_type}\nStatus: {response.get('status', 'unknown')}"
 
-    async def send_alert_async(self, telegram_id: int, message: str) -> bool:
-        """Send alert message asynchronously"""
+    def send_alert_sync(self, telegram_id: int, message: str) -> bool:
+        """Send alert message synchronously (thread-safe)"""
         try:
             # Get telegram bot service
             bot_service = _get_telegram_bot_service()
@@ -188,14 +187,36 @@ class TelegramAlertService:
                 add_notification(telegram_id, message, priority=8)
                 return True
 
-            # Send notification directly
-            success = await bot_service.send_notification(telegram_id, message)
-
-            if not success:
-                # If failed, add to queue for retry
+            # Check if bot has an event loop running
+            if not hasattr(bot_service, 'bot_loop') or bot_service.bot_loop is None:
+                logger.error("Bot loop not available")
                 add_notification(telegram_id, message, priority=8)
+                return False
 
-            return success
+            # Schedule the async task in the bot's existing event loop
+            import asyncio
+            import concurrent.futures
+
+            try:
+                # Use run_coroutine_threadsafe to schedule in the bot's loop
+                future = asyncio.run_coroutine_threadsafe(
+                    bot_service.send_notification(telegram_id, message),
+                    bot_service.bot_loop
+                )
+                # Wait for the result (max 10 seconds)
+                success = future.result(timeout=10)
+
+                if not success:
+                    # If failed, add to queue for retry
+                    add_notification(telegram_id, message, priority=8)
+
+                logger.info(f"Telegram notification sent: {success}")
+                return success
+
+            except concurrent.futures.TimeoutError:
+                logger.error("Timeout sending telegram notification")
+                add_notification(telegram_id, message, priority=8)
+                return False
 
         except Exception as e:
             logger.error(f"Error sending telegram alert: {e}")
@@ -224,16 +245,28 @@ class TelegramAlertService:
 
             # Get username from API key
             username = None
-            if api_key:
-                username = get_username_by_apikey(api_key)
-                logger.debug(f"Username from api_key: {username}")
-            elif order_data.get('apikey'):
-                username = get_username_by_apikey(order_data.get('apikey'))
-                logger.debug(f"Username from order_data: {username}")
+            api_key_used = api_key or order_data.get('apikey')
+
+            if api_key_used:
+                logger.debug(f"Looking up username for API key (first 10 chars): {api_key_used[:10] if api_key_used else 'None'}...")
+                username = get_username_by_apikey(api_key_used)
+                logger.debug(f"Username lookup result: {username}")
+            else:
+                logger.warning("No API key provided for telegram alert")
 
             if not username:
-                logger.warning(f"No username found for telegram alert - api_key present: {bool(api_key or order_data.get('apikey'))}")
-                return
+                logger.warning(f"No username found for telegram alert - api_key present: {bool(api_key_used)}, api_key_length: {len(api_key_used) if api_key_used else 0}")
+                # Try to get username from session if available
+                try:
+                    from flask import has_request_context, session
+                    if has_request_context() and session.get('user'):
+                        username = session.get('user')
+                        logger.info(f"Using username from session: {username}")
+                except:
+                    pass
+
+                if not username:
+                    return
 
             # Get telegram user
             telegram_user = get_telegram_user_by_username(username)
@@ -257,17 +290,9 @@ class TelegramAlertService:
             # Get telegram bot service
             bot_service = _get_telegram_bot_service()
 
-            # Use the bot's event loop if available
-            if bot_service.bot_loop and bot_service.bot_loop.is_running():
-                # Schedule in bot's event loop
-                asyncio.run_coroutine_threadsafe(
-                    self.send_alert_async(telegram_id, message),
-                    bot_service.bot_loop
-                )
-            else:
-                # Use thread pool executor for truly async execution
-                logger.info(f"Queueing alert via thread pool for telegram_id: {telegram_id}")
-                alert_executor.submit(self._send_alert_sync_wrapper, telegram_id, message)
+            # Use thread pool executor for non-blocking execution
+            logger.info(f"Queueing alert via thread pool for telegram_id: {telegram_id}")
+            alert_executor.submit(self.send_alert_sync, telegram_id, message)
 
             logger.info(f"Telegram alert queued successfully for {order_type}")
 
@@ -275,17 +300,8 @@ class TelegramAlertService:
             # Log error but don't raise - we don't want to affect order processing
             logger.error(f"Error queuing telegram alert: {e}", exc_info=True)
 
-    def _send_alert_sync_wrapper(self, telegram_id: int, message: str):
-        """Wrapper to run async function in sync context"""
-        try:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                loop.run_until_complete(self.send_alert_async(telegram_id, message))
-            finally:
-                loop.close()
-        except Exception as e:
-            logger.error(f"Error in sync wrapper: {e}")
+    # Backward compatibility wrapper
+    _send_alert_sync_wrapper = send_alert_sync
 
     def send_broadcast_alert(self, message: str, filters: Optional[Dict] = None):
         """Send broadcast alert to multiple users"""

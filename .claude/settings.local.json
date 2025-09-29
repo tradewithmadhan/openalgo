@@ -37,7 +37,9 @@
       "Read(//d/openalgo/**)",
       "Bash(netstat:*)",
       "Bash(gunzip:*)",
-      "Read(//d//**)"
+      "Read(//d//**)",
+      "Read(//c/Users/Admin1/Downloads/**)",
+      "Bash(docker exec:*)"
     ],
     "deny": []
   }
