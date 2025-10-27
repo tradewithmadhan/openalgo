@@ -332,7 +332,7 @@ def setup_environment(app):
             ('Latency DB', ensure_latency_tables_exists),
             ('Strategy DB', ensure_strategy_tables_exists),
             ('Sandbox DB', ensure_sandbox_tables_exists),
-            ('Madhan DB', ensure_madhan_tables_exists),
+            ('Madhan DB', ensure_madhan_tables_exist),
         ]
 
         db_init_start = time.time()
