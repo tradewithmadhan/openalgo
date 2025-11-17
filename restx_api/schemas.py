@@ -90,7 +90,7 @@ class OptionsOrderSchema(Schema):
     underlying = fields.Str(required=True)  # Underlying symbol (NIFTY, BANKNIFTY, RELIANCE, or NIFTY28NOV24FUT)
     exchange = fields.Str(required=True)  # Exchange (NSE_INDEX, NSE, BSE_INDEX, BSE, NFO, BFO)
     expiry_date = fields.Str(required=False)  # Optional if underlying includes expiry (DDMMMYY format)
-    strike_int = fields.Int(required=True, validate=validate.Range(min=1))  # Strike interval
+    strike_int = fields.Int(required=False, validate=validate.Range(min=1), allow_none=True)  # OPTIONAL: Strike interval. If not provided, actual strikes from database will be used (RECOMMENDED for accuracy)
     offset = fields.Str(required=True)  # ATM, ITM1-ITM50, OTM1-OTM50
     option_type = fields.Str(required=True, validate=validate.OneOf(["CE", "PE", "ce", "pe"]))  # Call or Put
     action = fields.Str(required=True, validate=validate.OneOf(["BUY", "SELL", "buy", "sell"]))
@@ -100,6 +100,13 @@ class OptionsOrderSchema(Schema):
     price = fields.Float(missing=0.0, validate=validate.Range(min=0, error="Price must be a non-negative number."))
     trigger_price = fields.Float(missing=0.0, validate=validate.Range(min=0, error="Trigger price must be a non-negative number."))
     disclosed_quantity = fields.Int(missing=0, validate=validate.Range(min=0, error="Disclosed quantity must be a non-negative integer."))
+
+class SyntheticFutureSchema(Schema):
+    """Schema for synthetic future calculation"""
+    apikey = fields.Str(required=True)
+    underlying = fields.Str(required=True)  # Underlying symbol (NIFTY, BANKNIFTY, RELIANCE)
+    exchange = fields.Str(required=True)  # Exchange (NSE_INDEX, NSE, BSE_INDEX, BSE)
+    expiry_date = fields.Str(required=True)  # Expiry date in DDMMMYY format (e.g., 28OCT25)
 
 class MarginPositionSchema(Schema):
     """Schema for a single position in margin calculation"""
