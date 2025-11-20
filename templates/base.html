@@ -1,9 +1,10 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <!-- Add blocking script to set theme before any content loads -->
     <script>
-        (function() {
+        (function () {
             // Check if we're in analyze mode first
             const analyzeMode = sessionStorage.getItem('analyzeMode') || localStorage.getItem('analyzeMode');
             if (analyzeMode === 'true') {
@@ -18,18 +19,22 @@
     </script>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="OpenAlgo is your premier open source algorithmic trading platform, offering a robust and secure environment for developing and executing trading strategies.">
+    <meta name="description"
+        content="OpenAlgo is your premier open source algorithmic trading platform, offering a robust and secure environment for developing and executing trading strategies.">
     <meta name="csrf-token" content="{{ csrf_token() }}">
     <title>OpenAlgo</title>
 
     <!-- Favicon and touch icons -->
     <link rel="shortcut icon" href="{{ url_for('static', filename='favicon/favicon.ico') }}">
-    <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='favicon/apple-touch-icon.png') }}">
-    <link rel="icon" type="image/png" sizes="32x32" href="{{ url_for('static', filename='favicon/favicon-32x32.png') }}">
-    <link rel="icon" type="image/png" sizes="16x16" href="{{ url_for('static', filename='favicon/favicon-16x16.png') }}">
+    <link rel="apple-touch-icon" sizes="180x180"
+        href="{{ url_for('static', filename='favicon/apple-touch-icon.png') }}">
+    <link rel="icon" type="image/png" sizes="32x32"
+        href="{{ url_for('static', filename='favicon/favicon-32x32.png') }}">
+    <link rel="icon" type="image/png" sizes="16x16"
+        href="{{ url_for('static', filename='favicon/favicon-16x16.png') }}">
     <link rel="manifest" href="{{ url_for('static', filename='favicon/site.webmanifest') }}">
     <link rel="mask-icon" href="{{ url_for('static', filename='favicon/safari-pinned-tab.svg') }}" color="#5bbad5">
-    
+
     <!-- Compiled Tailwind CSS with DaisyUI -->
     <link rel="stylesheet" href="{{ url_for('static', filename='css/main.css') }}">
 
@@ -53,7 +58,7 @@
             const token = document.querySelector('meta[name="csrf-token"]');
             return token ? token.getAttribute('content') : '';
         }
-        
+
         // Helper function to add CSRF token to fetch requests
         function fetchWithCSRF(url, options = {}) {
             options.headers = options.headers || {};
@@ -70,12 +75,14 @@
 
     {% block head %}{% endblock %}
 </head>
+
 <body class="min-h-screen bg-base-100">
     <div class="drawer">
         <input id="main-drawer" type="checkbox" class="drawer-toggle" />
         <div class="drawer-content flex flex-col min-h-screen">
             <!-- Fixed Navbar -->
-            <div class="sticky top-0 z-30 flex h-16 w-full justify-center bg-base-100 bg-opacity-90 backdrop-blur transition-all duration-100">
+            <div
+                class="sticky top-0 z-30 flex h-16 w-full justify-center bg-base-100 bg-opacity-90 backdrop-blur transition-all duration-100">
                 <nav class="navbar w-full">
                     {% include 'navbar.html' %}
                 </nav>
@@ -89,32 +96,37 @@
             <!-- Flash Messages -->
             <div class="container mx-auto px-4 mt-4">
                 {% with messages = get_flashed_messages(with_categories=true) %}
-                    {% if messages %}
-                        {% for category, message in messages %}
-                            <div class="alert {{ 'alert-success' if category == 'success' else 'alert-error' }} shadow-lg mb-4">
-                                <div class="flex items-center">
-                                    {% if category == 'success' %}
-                                    <svg xmlns="http://www.w3.org/2000/svg" class="stroke-current shrink-0 h-6 w-6" fill="none" viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                                    </svg>
-                                    {% else %}
-                                    <svg xmlns="http://www.w3.org/2000/svg" class="stroke-current shrink-0 h-6 w-6" fill="none" viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                                    </svg>
-                                    {% endif %}
-                                    <span>{{ message }}</span>
-                                    <button onclick="this.parentElement.parentElement.remove()" class="btn btn-ghost btn-sm btn-circle ml-auto">✕</button>
-                                </div>
-                            </div>
-                        {% endfor %}
-                    {% endif %}
+                {% if messages %}
+                {% for category, message in messages %}
+                <div class="alert {{ 'alert-success' if category == 'success' else 'alert-error' }} shadow-lg mb-4">
+                    <div class="flex items-center">
+                        {% if category == 'success' %}
+                        <svg xmlns="http://www.w3.org/2000/svg" class="stroke-current shrink-0 h-6 w-6" fill="none"
+                            viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        {% else %}
+                        <svg xmlns="http://www.w3.org/2000/svg" class="stroke-current shrink-0 h-6 w-6" fill="none"
+                            viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        {% endif %}
+                        <span>{{ message }}</span>
+                        <button onclick="this.parentElement.parentElement.remove()"
+                            class="btn btn-ghost btn-sm btn-circle ml-auto">✕</button>
+                    </div>
+                </div>
+                {% endfor %}
+                {% endif %}
                 {% endwith %}
             </div>
 
             <!-- Main Content -->
-            <main class="flex-grow bg-base-100 {% block main_class %}mt-6{% endblock %}">
+            <main class="flex-grow bg-base-100 {% block main_class %}mt-2{% endblock %}">
                 {% block content_wrapper %}
-                <div class="container mx-auto px-4">
+                <div class="w-full mx-auto px-2">
                     {% block content %}{% endblock %}
                 </div>
                 {% endblock %}
@@ -137,99 +149,99 @@
                 </div>
                 <ul class="menu menu-lg gap-2">
                     <li>
-                        <a href="{{ url_for('dashboard_bp.dashboard') }}" 
-                           class="{{ 'active' if request.endpoint == 'dashboard_bp.dashboard' }}">
+                        <a href="{{ url_for('dashboard_bp.dashboard') }}"
+                            class="{{ 'active' if request.endpoint == 'dashboard_bp.dashboard' }}">
                             Dashboard
                         </a>
                     </li>
                     <li>
-                        <a href="{{ url_for('orders_bp.orderbook') }}" 
-                           class="{{ 'active' if request.endpoint == 'orders_bp.orderbook' }}">
+                        <a href="{{ url_for('orders_bp.orderbook') }}"
+                            class="{{ 'active' if request.endpoint == 'orders_bp.orderbook' }}">
                             Orderbook
                         </a>
                     </li>
                     <li>
-                        <a href="{{ url_for('orders_bp.tradebook') }}" 
-                           class="{{ 'active' if request.endpoint == 'orders_bp.tradebook' }}">
+                        <a href="{{ url_for('orders_bp.tradebook') }}"
+                            class="{{ 'active' if request.endpoint == 'orders_bp.tradebook' }}">
                             Tradebook
                         </a>
                     </li>
                     <li>
-                        <a href="{{ url_for('orders_bp.positions') }}" 
-                           class="{{ 'active' if request.endpoint == 'orders_bp.positions' }}">
+                        <a href="{{ url_for('orders_bp.positions') }}"
+                            class="{{ 'active' if request.endpoint == 'orders_bp.positions' }}">
                             Positions
                         </a>
                     </li>
                     <li>
-                        <a href="{{ url_for('orders_bp.holdings') }}" 
-                           class="{{ 'active' if request.endpoint == 'orders_bp.holdings' }}">
+                        <a href="{{ url_for('orders_bp.holdings') }}"
+                            class="{{ 'active' if request.endpoint == 'orders_bp.holdings' }}">
                             Holdings
                         </a>
                     </li>
                     <li>
-                        <a href="{{ url_for('python_strategy_bp.index') }}" 
-                           class="{{ 'active' if request.endpoint.startswith('python_strategy_bp.') }}">
+                        <a href="{{ url_for('python_strategy_bp.index') }}"
+                            class="{{ 'active' if request.endpoint.startswith('python_strategy_bp.') }}">
                             Python Strategies
                         </a>
                     </li>
                     <li>
                         <a href="{{ url_for('platforms_bp.index') }}"
-                           class="{{ 'active' if request.endpoint == 'platforms_bp.index' or request.endpoint == 'tv_json_bp.tradingview_json' or request.endpoint == 'gc_json_bp.gocharting_json' or request.endpoint.startswith('chartink_bp.') }}">
+                            class="{{ 'active' if request.endpoint == 'platforms_bp.index' or request.endpoint == 'tv_json_bp.tradingview_json' or request.endpoint == 'gc_json_bp.gocharting_json' or request.endpoint.startswith('chartink_bp.') }}">
                             Platforms
                         </a>
                     </li>
                     <li>
                         <a href="{{ url_for('strategy_bp.index') }}"
-                           class="{{ 'active' if request.endpoint.startswith('strategy_bp.') }}">
+                            class="{{ 'active' if request.endpoint.startswith('strategy_bp.') }}">
                             Strategy
                         </a>
                     </li>
                     <div class="divider"></div>
                     <li>
                         <a href="{{ url_for('auth.change_password') }}"
-                           class="{{ 'active' if request.endpoint == 'auth.change_password' }}">
+                            class="{{ 'active' if request.endpoint == 'auth.change_password' }}">
                             Profile
                         </a>
                     </li>
                     <li>
                         <a href="{{ url_for('sandbox_bp.sandbox_config') }}"
-                           class="{{ 'active' if request.endpoint.startswith('sandbox_bp.') }}">
+                            class="{{ 'active' if request.endpoint.startswith('sandbox_bp.') }}">
                             Sandbox Config
                         </a>
                     </li>
                     <li>
                         <a href="{{ url_for('api_key_bp.manage_api_key') }}"
-                           class="{{ 'active' if request.endpoint == 'api_key_bp.manage_api_key' }}">
+                            class="{{ 'active' if request.endpoint == 'api_key_bp.manage_api_key' }}">
                             API Key
                         </a>
                     </li>
                     <li>
                         <a href="{{ url_for('telegram_bp.index') }}"
-                           class="{{ 'active' if request.endpoint.startswith('telegram_bp.') }}">
+                            class="{{ 'active' if request.endpoint.startswith('telegram_bp.') }}">
                             Telegram Bot
                         </a>
                     </li>
                     <li>
                         <a href="{{ url_for('log_bp.view_logs') }}"
-                           class="{{ 'active' if request.endpoint == 'log_bp.view_logs' }}">
+                            class="{{ 'active' if request.endpoint == 'log_bp.view_logs' }}">
                             Logs
                         </a>
                     </li>
                     <li>
-                        <a href="{{ url_for('traffic_bp.traffic_dashboard') }}" 
-                           class="{{ 'active' if request.endpoint == 'traffic_bp.traffic_dashboard' }}">
+                        <a href="{{ url_for('traffic_bp.traffic_dashboard') }}"
+                            class="{{ 'active' if request.endpoint == 'traffic_bp.traffic_dashboard' }}">
                             Traffic Monitor
                         </a>
                     </li>
                     <li>
-                        <a href="{{ url_for('search_bp.token') }}" 
-                           class="{{ 'active' if request.endpoint == 'search_bp.token' }}">
+                        <a href="{{ url_for('search_bp.token') }}"
+                            class="{{ 'active' if request.endpoint == 'search_bp.token' }}">
                             Search
                         </a>
                     </li>
                     <li>
                         <a href="{{ url_for('analyzer_bp.analyzer') }}"
-                           class="{{ 'active' if request.endpoint == 'analyzer_bp.analyzer' }}">
+                            class="{{ 'active' if request.endpoint == 'analyzer_bp.analyzer' }}">
                             API Analyzer
                         </a>
                     </li>
@@ -241,7 +253,7 @@
                     <div class="divider"></div>
                     <li>
                         <form method="POST" action="{{ url_for('auth.logout') }}" class="m-0">
-                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
                             <button type="submit" class="btn btn-ghost btn-sm text-error justify-start w-full">
                                 Logout
                             </button>
@@ -259,7 +271,7 @@
             // Play sound
             const alertSound = document.getElementById('alert-sound');
             if (alertSound) {
-                alertSound.play().catch(() => {});
+                alertSound.play().catch(() => { });
             }
 
             const toast = document.createElement('div');
@@ -270,7 +282,7 @@
 
             // Icon based on type
             let icon = '';
-            switch(type) {
+            switch (type) {
                 case 'success':
                     icon = '<svg xmlns="http://www.w3.org/2000/svg" class="stroke-current shrink-0 h-6 w-6" fill="none" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>';
                     break;
@@ -302,4 +314,5 @@
 
     {% block scripts %}{% endblock %}
 </body>
+
 </html>
