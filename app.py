@@ -50,6 +50,7 @@ from blueprints.security import security_bp  # Import the security blueprint
 from blueprints.sandbox import sandbox_bp  # Import the sandbox blueprint
 from blueprints.logging import logging_bp  # Import the logging blueprint
 from blueprints.playground import playground_bp  # Import the API playground blueprint
+from blueprints.admin import admin_bp  # Import the admin blueprint
 from services.telegram_bot_service import telegram_bot_service
 from database.telegram_db import get_bot_config
 from blueprints.madhan import madhan_bp # Import the madhan blueprint
@@ -223,6 +224,7 @@ def create_app():
     app.register_blueprint(sandbox_bp)  # Register Sandbox blueprint
     app.register_blueprint(playground_bp)  # Register API playground blueprint
     app.register_blueprint(logging_bp)  # Register Logging blueprint
+    app.register_blueprint(admin_bp)  # Register Admin blueprint
     app.register_blueprint(madhan_bp)  # Register Madhan blueprint
 
 
@@ -387,6 +389,7 @@ def setup_environment(app):
 
         from database.chart_prefs_db import ensure_chart_prefs_tables_exists
         from database.market_calendar_db import ensure_market_calendar_tables_exists
+        from database.qty_freeze_db import ensure_qty_freeze_tables_exists
 
         db_init_functions = [
             ('Auth DB', ensure_auth_tables_exists),
@@ -403,11 +406,12 @@ def setup_environment(app):
             ('Action Center DB', ensure_action_center_tables_exists),
             ('Chart Prefs DB', ensure_chart_prefs_tables_exists),
             ('Market Calendar DB', ensure_market_calendar_tables_exists),
+            ('Qty Freeze DB', ensure_qty_freeze_tables_exists),
             ('Madhan DB', ensure_madhan_tables_exist),
         ]
 
         db_init_start = time.time()
-        with ThreadPoolExecutor(max_workers=14) as executor:
+        with ThreadPoolExecutor(max_workers=15) as executor:
             # Submit all database initialization tasks
             futures = {executor.submit(func): name for name, func in db_init_functions}
 
