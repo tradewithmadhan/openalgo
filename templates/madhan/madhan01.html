@@ -278,6 +278,33 @@
             </div>
         </div>
 
+        <!-- CE/PE Strike Changes Bar Chart Card -->
+        <div class="card bg-base-100 shadow-xl mt-1">
+            <div class="card-body p-2">
+                <div class="card-title justify-between items-center">
+                    <h2 class="text-xl font-bold">CE/PE Strike Changes per Candle</h2>
+                    <div class="flex items-center gap-4">
+                        <label class="label cursor-pointer gap-2">
+                            <span class="label-text font-semibold text-xs">Strike Price</span>
+                            <select id="cepe-strike-selection" class="select select-xs select-bordered">
+                            </select>
+                        </label>
+                        <label class="label cursor-pointer gap-2">
+                            <span class="label-text font-semibold text-xs">Spot Data</span>
+                            <input type="checkbox" id="cepe-strike-spot-data-toggle" class="toggle toggle-xs toggle-secondary" />
+                        </label>
+                        <label class="label cursor-pointer gap-2">
+                            <span class="label-text font-semibold">Show Chart</span>
+                            <input type="checkbox" id="toggle-cepe-strike-chart-visibility" class="toggle toggle-sm toggle-accent" checked />
+                        </label>
+                    </div>
+                </div>
+                <div id="cepe-strike-chart-wrapper" style="height: 600px;">
+                    <canvas id="cePeStrikeChart"></canvas>
+                </div>
+            </div>
+        </div>
+
         <!-- Data Tables Grid -->
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-1">
             <!-- Live Data Table -->
@@ -377,6 +404,10 @@ document.addEventListener('DOMContentLoaded', function() {
     const cePeChartWrapper = document.getElementById('cepe-chart-wrapper');
     const cePeSpotDataToggle = document.getElementById('cepe-spot-data-toggle');
     const coiSpotDataToggle = document.getElementById('coi-spot-data-toggle');
+    const toggleCePeStrikeChartVisibility = document.getElementById('toggle-cepe-strike-chart-visibility');
+    const cePeStrikeChartWrapper = document.getElementById('cepe-strike-chart-wrapper');
+    const cePeStrikeSpotDataToggle = document.getElementById('cepe-strike-spot-data-toggle');
+    const cePeStrikeSelection = document.getElementById('cepe-strike-selection');
 
     const toggleLiveDataVisibility = document.getElementById('toggle-live-data-visibility');
     const liveDataWrapper = document.getElementById('live-data-wrapper');
@@ -389,6 +420,7 @@ document.addEventListener('DOMContentLoaded', function() {
     let lastOiData = []; // Cache the last data to re-render on toggle
     let coiTrendChart = null;
     let cePeChart = null;
+    let cePeStrikeChart = null;
 
 
     const nifty_count_el = document.getElementById('nifty-count');
@@ -397,6 +429,38 @@ document.addEventListener('DOMContentLoaded', function() {
     const current_atm_strike_el = document.getElementById('current-atm-strike');
     const ce_count_el = document.getElementById('ce-count');
     const pe_count_el = document.getElementById('pe-count');
+
+    function updateCePeStrikeOptions() {
+        if (!cePeStrikeSelection) {
+            return;
+        }
+
+        cePeStrikeSelection.innerHTML = '';
+
+        if (!currentAtmValue || isNaN(currentAtmValue)) {
+            const placeholder = document.createElement('option');
+            placeholder.value = '';
+            placeholder.textContent = 'Waiting for ATM strike...';
+            placeholder.disabled = true;
+            placeholder.selected = true;
+            cePeStrikeSelection.appendChild(placeholder);
+            return;
+        }
+
+        const step = 50;
+        const range = 5;
+
+        for (let i = -range; i <= range; i++) {
+            const strike = currentAtmValue + i * step;
+            const option = document.createElement('option');
+            option.value = String(strike);
+            option.textContent = strike === currentAtmValue ? `${strike} (ATM)` : String(strike);
+            if (i === 0) {
+                option.selected = true;
+            }
+            cePeStrikeSelection.appendChild(option);
+        }
+    }
 
     function setStatus(message, is_running) {
         statusText.textContent = message;
@@ -427,10 +491,8 @@ document.addEventListener('DOMContentLoaded', function() {
                 
 
 
-                // Check if ATM values have changed, which would require a re-render
                 const atmChanged = newOpenAtm !== openAtmValue || newCurrentAtm !== currentAtmValue;
 
-                // Update the central state variables
                 openAtmValue = newOpenAtm;
                 currentAtmValue = newCurrentAtm;
 
@@ -442,9 +504,12 @@ document.addEventListener('DOMContentLoaded', function() {
                 ce_count_el.textContent = data.ce_count || '0';
                 pe_count_el.textContent = data.pe_count || '0';
 
-                // If ATM values changed and we have data, trigger a re-render of the OI chain
                 if (atmChanged && lastOiData.length > 0) {
                     updateUnifiedOiChain(lastOiData);
+                }
+
+                if (atmChanged) {
+                    updateCePeStrikeOptions();
                 }
             } else {
                 setStatus('Error checking status.', false);
@@ -1058,6 +1123,200 @@ document.addEventListener('DOMContentLoaded', function() {
 
     }
 
+    function renderCePeStrikeChart(data, spotData) {
+        const canvas = document.getElementById('cePeStrikeChart');
+        const ctx = canvas.getContext('2d');
+
+        if (cePeStrikeChart) {
+            cePeStrikeChart.destroy();
+            cePeStrikeChart = null;
+        }
+
+        if (!data || !data.timestamps || data.timestamps.length === 0) {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.fillStyle = '#666';
+            ctx.font = '16px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText('No CE/PE changes data available', canvas.width / 2, canvas.height / 2);
+            return;
+        }
+
+        const labels = data.timestamps.map(timestamp => {
+            const date = new Date(timestamp);
+            return date.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' });
+        });
+
+        const ceData = data.ce_changes || [];
+        const peData = data.pe_changes || [];
+
+        const datasets = [
+            {
+                label: 'CE Change',
+                data: ceData,
+                backgroundColor: 'rgba(239, 68, 68, 0.8)',
+                borderColor: 'rgba(239, 68, 68, 1)',
+                borderWidth: 2,
+                barThickness: 'flex',
+                maxBarThickness: 60,
+                type: 'bar',
+                yAxisID: 'y'
+            },
+            {
+                label: 'PE Change',
+                data: peData,
+                backgroundColor: 'rgba(34, 197, 94, 0.8)',
+                borderColor: 'rgba(34, 197, 94, 1)',
+                borderWidth: 2,
+                barThickness: 'flex',
+                maxBarThickness: 60,
+                type: 'bar',
+                yAxisID: 'y'
+            }
+        ];
+
+        if (cePeStrikeSpotDataToggle.checked && spotData && spotData.timestamps && spotData.prices && spotData.timestamps.length > 0) {
+            const alignedSpotPrices = [];
+            for (let i = 0; i < data.timestamps.length; i++) {
+                const cepeTimestamp = data.timestamps[i];
+                let closestIndex = 0;
+                let minDiff = Math.abs(spotData.timestamps[0] - cepeTimestamp);
+
+                for (let j = 1; j < spotData.timestamps.length; j++) {
+                    const diff = Math.abs(spotData.timestamps[j] - cepeTimestamp);
+                    if (diff < minDiff) {
+                        minDiff = diff;
+                        closestIndex = j;
+                    }
+                }
+                alignedSpotPrices.push(spotData.prices[closestIndex]);
+            }
+
+            const segmentColors = [];
+            for (let i = 1; i < alignedSpotPrices.length; i++) {
+                const current = alignedSpotPrices[i];
+                const previous = alignedSpotPrices[i - 1];
+                if (current > previous) {
+                    segmentColors.push('rgba(34, 197, 94, 1)');
+                } else {
+                    segmentColors.push('rgba(239, 68, 68, 1)');
+                }
+            }
+
+            datasets.push({
+                label: 'Nifty Spot',
+                data: alignedSpotPrices,
+                borderColor: function(context) {
+                    if (context.dataIndex === 0) return 'rgba(156, 163, 175, 1)';
+                    return segmentColors[context.dataIndex - 1];
+                },
+                backgroundColor: 'transparent',
+                borderWidth: 1,
+                fill: false,
+                type: 'line',
+                yAxisID: 'y1',
+                tension: 0,
+                pointRadius: 0,
+                pointHoverRadius: 0,
+                segment: {
+                    borderColor: function(ctx) {
+                        const index = ctx.p0DataIndex;
+                        if (index >= segmentColors.length) return 'rgba(156, 163, 175, 1)';
+                        return segmentColors[index];
+                    }
+                }
+            });
+        }
+
+        const chartData = {
+            labels: labels,
+            datasets: datasets
+        };
+
+        cePeStrikeChart = new Chart(ctx, {
+            type: 'bar',
+            data: chartData,
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: {
+                    intersect: false,
+                    mode: 'index'
+                },
+                scales: {
+                    x: {
+                        title: {
+                            display: true,
+                            text: 'Time'
+                        },
+                        grid: {
+                            display: false,
+                            color: 'rgba(255, 255, 255, 0.1)'
+                        }
+                    },
+                    y: {
+                        type: 'linear',
+                        display: true,
+                        position: 'left',
+                        title: {
+                            display: true,
+                            text: 'Change Value'
+                        },
+                        grid: {
+                            display: false
+                        },
+                        beginAtZero: true
+                    },
+                    y1: {
+                        type: 'linear',
+                        display: true,
+                        position: 'right',
+                        title: {
+                            display: true,
+                            text: 'Nifty Spot Price'
+                        },
+                        grid: {
+                            drawOnChartArea: false,
+                        },
+                        beginAtZero: false,
+                        grace: '5%',
+                        ticks: {
+                            callback: function(value) {
+                                return '₹' + value.toLocaleString('en-IN', {
+                                    minimumFractionDigits: 0,
+                                    maximumFractionDigits: 0
+                                });
+                            }
+                        }
+                    }
+                },
+                plugins: {
+                    legend: {
+                        display: true,
+                        position: 'top'
+                    },
+                    tooltip: {
+                        callbacks: {
+                            title: function(context) {
+                                const index = context[0].dataIndex;
+                                const timestamp = data.timestamps[index];
+                                const date = new Date(timestamp);
+                                return date.toLocaleString();
+                            },
+                            label: function(context) {
+                                const value = context.parsed.y;
+                                if (context.dataset.label === 'Nifty Spot') {
+                                    return `${context.dataset.label}: ₹${value.toFixed(2)}`;
+                                } else {
+                                    return `${context.dataset.label}: ${formatIndianNumber(value)}`;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
     async function fetchSpotData() {
         try {
             const url = `{{ url_for('madhan_bp.nifty_spot_data') }}`;
@@ -1096,6 +1355,30 @@ document.addEventListener('DOMContentLoaded', function() {
         } catch (error) {
             console.error('Error fetching CE/PE changes data:', error);
             renderCePeChart(null, null);
+        }
+    }
+
+    async function updateCePeStrikeChart() {
+        try {
+            const strike_price = cePeStrikeSelection ? cePeStrikeSelection.value : '';
+            if (!strike_price) {
+                console.log('No strike price selected for CE/PE strike chart.');
+                return;
+            }
+            const url = `{{ url_for('madhan_bp.nifty_ce_pe_strike_changes') }}?strike_price=${strike_price}`;
+            const response = await fetchWithCSRF(url, { cache: 'no-store' });
+            const result = await response.json();
+
+            const spotData = await fetchSpotData();
+
+            if (response.ok && result && Array.isArray(result.timestamps)) {
+                renderCePeStrikeChart(result, spotData);
+            } else {
+                renderCePeStrikeChart(null, spotData);
+            }
+        } catch (error) {
+            console.error('Error fetching CE/PE strike changes data:', error);
+            renderCePeStrikeChart(null, null);
         }
     }
 
@@ -1324,6 +1607,7 @@ document.addEventListener('DOMContentLoaded', function() {
     updateCombinedTable();
     updateCoiTrendChart();
     updateCePeChart();
+    updateCePeStrikeChart();
 
 
     // Add event listeners for OI Chain toggles
@@ -1342,6 +1626,10 @@ document.addEventListener('DOMContentLoaded', function() {
 
     toggleCePeChartVisibility.addEventListener('change', function() {
         cePeChartWrapper.classList.toggle('hidden', !this.checked);
+    });
+
+    toggleCePeStrikeChartVisibility.addEventListener('change', function() {
+        cePeStrikeChartWrapper.classList.toggle('hidden', !this.checked);
     });
 
 
@@ -1372,11 +1660,20 @@ document.addEventListener('DOMContentLoaded', function() {
         updateCoiTrendChart();
     });
 
+    cePeStrikeSpotDataToggle.addEventListener('change', function() {
+        updateCePeStrikeChart();
+    });
+
+    cePeStrikeSelection.addEventListener('change', function() {
+        updateCePeStrikeChart();
+    });
+
     setInterval(checkStatus, 5000); // Check status every 5 seconds
     setInterval(updateCombinedTable, 10000); // Refresh combined data every 10 seconds
     setInterval(fetchPrevDayOiData, 30000); // Refresh prev day analysis every 30 seconds
     setInterval(updateCoiTrendChart, 60000); // Refresh COI chart every 60 seconds
     setInterval(updateCePeChart, 60000); // Refresh CE/PE chart every 60 seconds
+    setInterval(updateCePeStrikeChart, 60000); // Refresh CE/PE strike chart every 60 seconds
 });
 </script>
 {% endblock %}
