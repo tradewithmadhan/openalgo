@@ -436,6 +436,172 @@ def nifty_ce_pe_changes():
     return jsonify({'status': 'success', 'data': {'timestamps': timestamps_res, 'ce_changes': ce_changes_res, 'pe_changes': pe_changes_res}})
 
 
+
+
+    strike_price = request.args.get("strike_price", type=int)
+
+    # -------------------- Validation --------------------
+    if not strike_price or strike_price <= 0:
+        return jsonify({
+            "timestamps": [],
+            "ce_changes": [],
+            "pe_changes": [],
+            "error": "strike_price query parameter is required"
+        }), 400
+
+    # -------------------- Previous day OI (baseline) --------------------
+    prev_day_data = nifty_fetcher.get_previous_day_oi()
+    prev_oi_map = {row["symbol"]: row["oi"] for row in prev_day_data}
+
+    # -------------------- Current day historical OI --------------------
+    historical_data = nifty_fetcher.get_current_day_historical_data()
+
+    # -------------------- Group by timestamp --------------------
+    data_by_ts = defaultdict(list)
+    for row in historical_data:
+        data_by_ts[row["timestamp"]].append(row)
+
+    # -------------------- Results --------------------
+    timestamps_res = []
+    ce_changes_res = []
+    pe_changes_res = []
+
+    # -------------------- Candle-to-candle baseline --------------------
+    prev_candle_oi_map = prev_oi_map.copy()
+
+    # -------------------- Iterate candles --------------------
+    for ts in sorted(data_by_ts.keys()):
+
+        rows = data_by_ts[ts]
+
+        total_ce_change = 0
+        total_pe_change = 0
+        current_candle_oi_map = {}
+
+        found_ce = False
+        found_pe = False
+
+        for row in rows:
+            symbol = row["symbol"]
+            current_oi = row["oi"]
+
+            # Save snapshot for next candle
+            current_candle_oi_map[symbol] = current_oi
+
+            if symbol == "NIFTY":
+                continue
+
+            strike = extract_strike(symbol)
+            if strike != strike_price:
+                continue
+
+            prev_oi = prev_candle_oi_map.get(symbol, 0)
+            change_in_oi = current_oi - prev_oi
+
+            if symbol.endswith("CE"):
+                total_ce_change += change_in_oi
+                found_ce = True
+            elif symbol.endswith("PE"):
+                total_pe_change += change_in_oi
+                found_pe = True
+
+        # Skip incomplete strike candles
+        if not (found_ce and found_pe):
+            continue
+
+        timestamps_res.append(ts * 1000)  # JS expects ms
+        ce_changes_res.append(total_ce_change)
+        pe_changes_res.append(total_pe_change)
+
+        # Update baseline
+        prev_candle_oi_map = current_candle_oi_map.copy()
+
+    return jsonify({
+        "timestamps": timestamps_res,
+        "ce_changes": ce_changes_res,
+        "pe_changes": pe_changes_res
+    })
+
+
+
+@madhan_bp.route('/api/nifty/ce-pe-strike-changes')
+@check_session_validity
+def nifty_ce_pe_strike_changes():
+    strike_price = request.args.get("strike_price", type=int)
+
+    if not strike_price or strike_price <= 0:
+        return jsonify({
+            "timestamps": [],
+            "ce_changes": [],
+            "pe_changes": [],
+            "error": "strike_price query parameter is required"
+        }), 400
+
+    # ✅ SAME AS nifty_ce_pe_changes
+    prev_day_data = get_previous_day_oi()
+    prev_oi_map = {item["symbol"]: item.get("oi", 0) for item in prev_day_data}
+
+    # ✅ SAME AS nifty_ce_pe_changes (IMPORTANT FIX)
+    historical_data = get_current_day_historical_data()
+
+    data_by_ts = defaultdict(list)
+    for row in historical_data:
+        data_by_ts[row["timestamp"]].append(row)
+
+    timestamps_res = []
+    ce_changes_res = []
+    pe_changes_res = []
+
+    prev_candle_oi_map = prev_oi_map.copy()
+
+    for ts in sorted(data_by_ts.keys()):
+        rows = data_by_ts[ts]
+
+        total_ce_change = 0
+        total_pe_change = 0
+        current_candle_oi_map = {}
+
+        found_ce = False
+        found_pe = False
+
+        for row in rows:
+            symbol = row["symbol"]
+            current_oi = row.get("oi", 0)
+
+            current_candle_oi_map[symbol] = current_oi
+
+            if symbol == "NIFTY":
+                continue
+
+            if extract_strike(symbol) != strike_price:
+                continue
+
+            prev_oi = prev_candle_oi_map.get(symbol, 0)
+            delta = current_oi - prev_oi
+
+            if symbol.endswith("CE"):
+                total_ce_change += delta
+                found_ce = True
+            elif symbol.endswith("PE"):
+                total_pe_change += delta
+                found_pe = True
+
+        if not (found_ce and found_pe):
+            continue
+
+        timestamps_res.append(ts * 1000)
+        ce_changes_res.append(total_ce_change)
+        pe_changes_res.append(total_pe_change)
+
+        prev_candle_oi_map = current_candle_oi_map.copy()
+
+    return jsonify({
+        "timestamps": timestamps_res,
+        "ce_changes": ce_changes_res,
+        "pe_changes": pe_changes_res
+    })
+
+
 @madhan_bp.route('/nifty_chart_data')
 @check_session_validity
 def nifty_chart_data():
