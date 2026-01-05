@@ -1005,17 +1005,19 @@ document.addEventListener('DOMContentLoaded', function() {
                     if (coiTrendOiLabel && oiTrendPercentArray.length > 0) {
                         const lastOi = oiTrendPercentArray[oiTrendPercentArray.length - 1];
                         const formattedOi = `${lastOi >= 0 ? '+' : ''}${lastOi.toFixed(1)}%`;
-                        coiTrendOiLabel.textContent = `[OI: ${formattedOi}`;
+                        const oiColorClass = lastOi >= 0 ? 'text-green-500' : 'text-red-500';
+                        coiTrendOiLabel.innerHTML = `[OI: <span class="${oiColorClass}">${formattedOi}</span>`;
                     }
 
                     if (coiTrendCoiLabel && coiPercentArray.length > 0) {
                         const lastCoi = coiPercentArray[coiPercentArray.length - 1];
                         const formattedCoi = `${lastCoi >= 0 ? '+' : ''}${lastCoi.toFixed(1)}%`;
 
-                        if (coiTrendOiLabel && coiTrendOiLabel.textContent) {
-                            coiTrendCoiLabel.textContent = ` | COI: ${formattedCoi}]`;
+                        const coiColorClass = lastCoi >= 0 ? 'text-green-500' : 'text-red-500';
+                        if (coiTrendOiLabel && coiTrendOiLabel.innerHTML) {
+                            coiTrendCoiLabel.innerHTML = ` | COI: <span class="${coiColorClass}">${formattedCoi}</span>]`;
                         } else {
-                            coiTrendCoiLabel.textContent = `[COI: ${formattedCoi}]`;
+                            coiTrendCoiLabel.innerHTML = `[COI: <span class="${coiColorClass}">${formattedCoi}</span>]`;
                         }
                     }
                 }
