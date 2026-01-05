@@ -1067,3 +1067,195 @@ def nifty_spot_data():
     except Exception as e:
         logger.error(f"Error fetching spot data: {str(e)}")
         return jsonify({'status': 'error', 'message': f'Error fetching spot data: {str(e)}'})
+
+
+@madhan_bp.route('/api/nifty/support-resistance')
+@check_session_validity
+def nifty_support_resistance():
+    """Calculates support and resistance strikes based on OI and COI for each timestamp."""
+    open_atm = nifty_fetcher.open_atm_strike
+    if not open_atm or open_atm == 0:
+        return jsonify({
+            'status': 'success', 
+            'data': {
+                'timestamps': [], 
+                'oi_support': [], 
+                'oi_resistance': [],
+                'coi_support': [],
+                'coi_resistance': [],
+                'oi_sr': None,
+                'coi_sr': None
+            }, 
+            'message': 'ATM strike not calculated yet.'
+        })
+
+    # Always use all strikes (option1)
+    expected_symbol_count = len(nifty_fetcher.option_symbols) + 1  # +1 for NIFTY index
+
+    # Get previous day OI data for COI calculation
+    prev_day_data = get_previous_day_oi()
+    prev_oi_map = {item['symbol']: item.get('oi', 0) for item in prev_day_data}
+
+    # Get current day historical data
+    historical_data = get_current_day_historical_data()
+    if not historical_data:
+        return jsonify({
+            'status': 'success', 
+            'data': {
+                'timestamps': [], 
+                'oi_support': [], 
+                'oi_resistance': [],
+                'coi_support': [],
+                'coi_resistance': [],
+                'oi_sr': None,
+                'coi_sr': None
+            }, 
+            'message': 'No historical data for today.'
+        })
+
+    # Group data by timestamp
+    data_by_ts = defaultdict(list)
+    for row in historical_data:
+        data_by_ts[row['timestamp']].append(row)
+
+    sorted_timestamps = sorted(data_by_ts.keys())
+
+    timestamps_res = []
+    oi_support_res = []
+    oi_resistance_res = []
+    coi_support_res = []
+    coi_resistance_res = []
+
+    for ts in sorted_timestamps:
+        # Skip incomplete candles
+        if len(data_by_ts[ts]) < expected_symbol_count:
+            logger.debug(f"Skipping incomplete candle at timestamp {ts}: got {len(data_by_ts[ts])} symbols, expected {expected_symbol_count}")
+            continue
+
+        # Dictionary to store OI and COI by strike price
+        strike_data = {}  # {strike_price: {'ce_oi': x, 'pe_oi': y, 'ce_coi': z, 'pe_coi': w}}
+
+        for item in data_by_ts[ts]:
+            symbol = item['symbol']
+            current_oi = item.get('oi', 0)
+            
+            # Skip NIFTY index symbol
+            if symbol == 'NIFTY':
+                continue
+            
+            # Extract strike price
+            strike_price = extract_strike(symbol)
+            if strike_price is None:
+                continue
+            
+            # Initialize strike data if not exists
+            if strike_price not in strike_data:
+                strike_data[strike_price] = {
+                    'ce_oi': 0, 
+                    'pe_oi': 0, 
+                    'ce_coi': 0, 
+                    'pe_coi': 0
+                }
+            
+            # Store OI
+            if symbol.endswith('CE'):
+                strike_data[strike_price]['ce_oi'] = current_oi
+            elif symbol.endswith('PE'):
+                strike_data[strike_price]['pe_oi'] = current_oi
+            
+            # Calculate and store COI
+            prev_oi = prev_oi_map.get(symbol, 0)
+            if prev_oi > 0 and current_oi > 0:
+                change_in_oi = current_oi - prev_oi
+                if symbol.endswith('CE'):
+                    strike_data[strike_price]['ce_coi'] = change_in_oi
+                elif symbol.endswith('PE'):
+                    strike_data[strike_price]['pe_coi'] = change_in_oi
+        
+        # Find OI Support: Highest strike where PE OI > CE OI
+        oi_support = None
+        for strike in sorted(strike_data.keys(), reverse=True):
+            if strike_data[strike]['pe_oi'] > strike_data[strike]['ce_oi']:
+                oi_support = strike
+                break
+        
+        # Find OI Resistance: Lowest strike where CE OI > PE OI
+        oi_resistance = None
+        for strike in sorted(strike_data.keys()):
+            if strike_data[strike]['ce_oi'] > strike_data[strike]['pe_oi']:
+                oi_resistance = strike
+                break
+        
+        # Find COI Support: Highest strike where PE COI > CE COI
+        coi_support = None
+        for strike in sorted(strike_data.keys(), reverse=True):
+            if strike_data[strike]['pe_coi'] > strike_data[strike]['ce_coi']:
+                coi_support = strike
+                break
+        
+        # Find COI Resistance: Lowest strike where CE COI > PE COI
+        coi_resistance = None
+        for strike in sorted(strike_data.keys()):
+            if strike_data[strike]['ce_coi'] > strike_data[strike]['pe_coi']:
+                coi_resistance = strike
+                break
+        
+        # Append results
+        timestamps_res.append(ts * 1000)  # JS expects milliseconds
+        oi_support_res.append(oi_support)
+        oi_resistance_res.append(oi_resistance)
+        coi_support_res.append(coi_support)
+        coi_resistance_res.append(coi_resistance)
+
+    # Calculate trends by comparing last two values of both support and resistance
+    oi_trend = None
+    coi_trend = None
+    
+    # OI Trend: Check both support and resistance
+    if len(oi_support_res) >= 2 and len(oi_resistance_res) >= 2:
+        support_valid = oi_support_res[-1] is not None and oi_support_res[-2] is not None
+        resistance_valid = oi_resistance_res[-1] is not None and oi_resistance_res[-2] is not None
+        
+        if support_valid and resistance_valid:
+            support_increasing = oi_support_res[-1] > oi_support_res[-2]
+            resistance_increasing = oi_resistance_res[-1] > oi_resistance_res[-2]
+            
+            # Both moving up = Incremental, Both moving down = Decremental
+            if support_increasing and resistance_increasing:
+                oi_trend = "Incremental"
+            elif not support_increasing and not resistance_increasing:
+                oi_trend = "Decremental"
+            else:
+                # Mixed signals - you can decide: use support priority or mark as "Neutral"
+                oi_trend = "Incremental" if support_increasing else "Decremental"
+    
+    # COI Trend: Check both support and resistance
+    if len(coi_support_res) >= 2 and len(coi_resistance_res) >= 2:
+        support_valid = coi_support_res[-1] is not None and coi_support_res[-2] is not None
+        resistance_valid = coi_resistance_res[-1] is not None and coi_resistance_res[-2] is not None
+        
+        if support_valid and resistance_valid:
+            support_increasing = coi_support_res[-1] > coi_support_res[-2]
+            resistance_increasing = coi_resistance_res[-1] > coi_resistance_res[-2]
+            
+            # Both moving up = Incremental, Both moving down = Decremental
+            if support_increasing and resistance_increasing:
+                coi_trend = "Incremental"
+            elif not support_increasing and not resistance_increasing:
+                coi_trend = "Decremental"
+            else:
+                # Mixed signals - you can decide: use support priority or mark as "Neutral"
+                coi_trend = "Incremental" if support_increasing else "Decremental"
+
+    return jsonify({
+        'status': 'success', 
+        'data': {
+            'timestamps': timestamps_res,
+            'oi_support': oi_support_res,
+            'oi_resistance': oi_resistance_res,
+            'coi_support': coi_support_res,
+            'coi_resistance': coi_resistance_res,
+            'oi_sr': oi_trend,
+            'coi_sr': coi_trend
+        }
+    })

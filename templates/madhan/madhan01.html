@@ -230,7 +230,11 @@
         <div class="card bg-base-100 shadow-xl mt-1">
             <div class="card-body p-2">
                 <div class="card-title justify-between items-center">
-                    <h2 class="text-xl font-bold">OI vs COI Trend</h2>
+                    <h2 class="text-xl font-bold">
+                        OI vs COI Trend
+                        <span id="coi-trend-oi-label" class="text-xs font-normal ml-2"></span>
+                        <span id="coi-trend-coi-label" class="text-xs font-normal ml-2"></span>
+                    </h2>
                     <div class="flex items-center gap-4">
                         <label class="label cursor-pointer gap-2">
                             <span class="label-text font-semibold text-xs">Writers View</span>
@@ -301,6 +305,40 @@
                 </div>
                 <div id="cepe-strike-chart-wrapper" style="height: 600px;">
                     <canvas id="cePeStrikeChart"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- Support / Resistance Chart Card -->
+        <div class="card bg-base-100 shadow-xl mt-1">
+            <div class="card-body p-2">
+                <div class="card-title justify-between items-center">
+                    <h2 class="text-xl font-bold">
+                        Support / Resistance
+                        <span id="oi-sr-label" class="text-xs font-normal ml-2"></span>
+                        <span id="coi-sr-label" class="text-xs font-normal ml-2"></span>
+                    </h2>
+                    <div class="flex items-center gap-4">
+                        <label class="label cursor-pointer gap-2">
+                            <span class="label-text font-semibold text-xs">OI</span>
+                            <input type="checkbox" id="support-resistance-oi-toggle" class="toggle toggle-xs toggle-primary" checked />
+                        </label>
+                        <label class="label cursor-pointer gap-2">
+                            <span class="label-text font-semibold text-xs">COI</span>
+                            <input type="checkbox" id="support-resistance-coi-toggle" class="toggle toggle-xs toggle-primary" checked />
+                        </label>
+                        <label class="label cursor-pointer gap-2">
+                            <span class="label-text font-semibold text-xs">Spot Data</span>
+                            <input type="checkbox" id="support-resistance-spot-data-toggle" class="toggle toggle-xs toggle-secondary" />
+                        </label>
+                        <label class="label cursor-pointer gap-2">
+                            <span class="label-text font-semibold">Show Chart</span>
+                            <input type="checkbox" id="toggle-support-resistance-visibility" class="toggle toggle-sm toggle-accent" checked />
+                        </label>
+                    </div>
+                </div>
+                <div id="support-resistance-chart-wrapper" style="height: 600px;">
+                    <canvas id="supportResistanceChart"></canvas>
                 </div>
             </div>
         </div>
@@ -377,8 +415,6 @@
 {% block scripts %}
 {{ super() }}
 
-
-
 <!-- Chart.js for COI Trend Chart -->
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
@@ -408,6 +444,15 @@ document.addEventListener('DOMContentLoaded', function() {
     const cePeStrikeChartWrapper = document.getElementById('cepe-strike-chart-wrapper');
     const cePeStrikeSpotDataToggle = document.getElementById('cepe-strike-spot-data-toggle');
     const cePeStrikeSelection = document.getElementById('cepe-strike-selection');
+    const toggleSupportResistanceVisibility = document.getElementById('toggle-support-resistance-visibility');
+    const supportResistanceChartWrapper = document.getElementById('support-resistance-chart-wrapper');
+    const supportResistanceOiToggle = document.getElementById('support-resistance-oi-toggle');
+    const supportResistanceCoiToggle = document.getElementById('support-resistance-coi-toggle');
+    const supportResistanceSpotDataToggle = document.getElementById('support-resistance-spot-data-toggle');
+    const oiSrLabel = document.getElementById('oi-sr-label');
+    const coiSrLabel = document.getElementById('coi-sr-label');
+    const coiTrendOiLabel = document.getElementById('coi-trend-oi-label');
+    const coiTrendCoiLabel = document.getElementById('coi-trend-coi-label');
 
     const toggleLiveDataVisibility = document.getElementById('toggle-live-data-visibility');
     const liveDataWrapper = document.getElementById('live-data-wrapper');
@@ -421,6 +466,7 @@ document.addEventListener('DOMContentLoaded', function() {
     let coiTrendChart = null;
     let cePeChart = null;
     let cePeStrikeChart = null;
+    let supportResistanceChart = null;
 
 
     const nifty_count_el = document.getElementById('nifty-count');
@@ -459,6 +505,68 @@ document.addEventListener('DOMContentLoaded', function() {
                 option.selected = true;
             }
             cePeStrikeSelection.appendChild(option);
+        }
+    }
+
+    async function updateSupportResistanceChart() {
+        try {
+            const [response, spotData] = await Promise.all([
+                fetchWithCSRF("{{ url_for('madhan_bp.nifty_support_resistance') }}", { cache: 'no-store' }),
+                fetchSpotData()
+            ]);
+
+            const result = await response.json();
+
+            const hasOiSr = result.data && result.data.oi_sr;
+            const hasCoiSr = result.data && result.data.coi_sr;
+
+            if (oiSrLabel) {
+                oiSrLabel.textContent = hasOiSr ? `[OI: ${result.data.oi_sr}` : '';
+                oiSrLabel.style.color = '';
+                if (hasOiSr) {
+                    const oiValue = String(result.data.oi_sr).toLowerCase();
+                    if (oiValue === 'incremental') {
+                        oiSrLabel.style.color = '#3b82f6';
+                    } else if (oiValue === 'decremental') {
+                        oiSrLabel.style.color = '#ef4444';
+                    }
+                }
+            }
+            if (coiSrLabel) {
+                coiSrLabel.textContent = '';
+                coiSrLabel.style.color = '';
+                if (hasOiSr && hasCoiSr) {
+                    coiSrLabel.textContent = ` | COI: ${result.data.coi_sr}]`;
+                } else if (!hasOiSr && hasCoiSr) {
+                    coiSrLabel.textContent = `[COI: ${result.data.coi_sr}]`;
+                }
+                if (hasCoiSr) {
+                    const coiValue = String(result.data.coi_sr).toLowerCase();
+                    if (coiValue === 'incremental') {
+                        coiSrLabel.style.color = '#3b82f6';
+                    } else if (coiValue === 'decremental') {
+                        coiSrLabel.style.color = '#ef4444';
+                    }
+                }
+            }
+
+            if (result.status !== 'success' || !result.data || !Array.isArray(result.data.timestamps)) {
+                renderSupportResistanceChart(null, spotData);
+                return;
+            }
+
+            renderSupportResistanceChart(result.data, spotData);
+        } catch (error) {
+            console.error('Error fetching support-resistance data:', error);
+            if (oiSrLabel) {
+                oiSrLabel.textContent = '';
+                oiSrLabel.style.color = '';
+            }
+            if (coiSrLabel) {
+                coiSrLabel.textContent = '';
+                coiSrLabel.style.color = '';
+            }
+            renderSupportResistanceChart(null, null);
         }
     }
 
@@ -882,7 +990,35 @@ document.addEventListener('DOMContentLoaded', function() {
             const coiResult = await coiResponse.json();
             const spotData = await spotResponse;
 
+            if (coiTrendOiLabel) {
+                coiTrendOiLabel.textContent = '';
+            }
+            if (coiTrendCoiLabel) {
+                coiTrendCoiLabel.textContent = '';
+            }
+
             if (coiResult.status === 'success') {
+                if (coiResult.data) {
+                    const coiPercentArray = Array.isArray(coiResult.data.coi_percent) ? coiResult.data.coi_percent : [];
+                    const oiTrendPercentArray = Array.isArray(coiResult.data.oi_trend_percent) ? coiResult.data.oi_trend_percent : [];
+
+                    if (coiTrendOiLabel && oiTrendPercentArray.length > 0) {
+                        const lastOi = oiTrendPercentArray[oiTrendPercentArray.length - 1];
+                        const formattedOi = `${lastOi >= 0 ? '+' : ''}${lastOi.toFixed(1)}%`;
+                        coiTrendOiLabel.textContent = `[OI: ${formattedOi}`;
+                    }
+
+                    if (coiTrendCoiLabel && coiPercentArray.length > 0) {
+                        const lastCoi = coiPercentArray[coiPercentArray.length - 1];
+                        const formattedCoi = `${lastCoi >= 0 ? '+' : ''}${lastCoi.toFixed(1)}%`;
+
+                        if (coiTrendOiLabel && coiTrendOiLabel.textContent) {
+                            coiTrendCoiLabel.textContent = ` | COI: ${formattedCoi}]`;
+                        } else {
+                            coiTrendCoiLabel.textContent = `[COI: ${formattedCoi}]`;
+                        }
+                    }
+                }
                 // Always call render; let the render function handle the empty data case.
                 renderCoiTrendChart(coiResult.data, spotData);
             } else {
@@ -1382,6 +1518,192 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
 
+    function renderSupportResistanceChart(data, spotData) {
+        const canvas = document.getElementById('supportResistanceChart');
+        const ctx = canvas.getContext('2d');
+
+        if (supportResistanceChart) {
+            supportResistanceChart.destroy();
+            supportResistanceChart = null;
+        }
+
+        if (!data || !data.timestamps || data.timestamps.length === 0) {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.fillStyle = '#666';
+            ctx.font = '16px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText('No Support/Resistance data available', canvas.width / 2, canvas.height / 2);
+            return;
+        }
+
+        const labels = data.timestamps.map(timestamp => {
+            const date = new Date(timestamp);
+            return date.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' });
+        });
+
+        const oiSupport = data.oi_support || [];
+        const oiResistance = data.oi_resistance || [];
+        const coiSupport = data.coi_support || [];
+        const coiResistance = data.coi_resistance || [];
+
+        const datasets = [];
+
+        if (!supportResistanceOiToggle || supportResistanceOiToggle.checked) {
+            datasets.push(
+                {
+                    label: 'OI Support',
+                    data: oiSupport,
+                    borderColor: 'rgba(59, 130, 246, 1)',
+                    backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                    borderWidth: 2,
+                    pointRadius: 0,
+                    tension: 0.1,
+                    borderDash: [5, 5],
+                    yAxisID: 'y'
+                },
+                {
+                    label: 'OI Resistance',
+                    data: oiResistance,
+                    borderColor: 'rgba(239, 68, 68, 1)',
+                    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                    borderWidth: 2,
+                    pointRadius: 0,
+                    tension: 0.1,
+                    borderDash: [5, 5],
+                    yAxisID: 'y'
+                }
+            );
+        }
+
+        if (!supportResistanceCoiToggle || supportResistanceCoiToggle.checked) {
+            datasets.push(
+                {
+                    label: 'COI Support',
+                    data: coiSupport,
+                    borderColor: 'rgba(59, 130, 246, 1)',
+                    backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                    borderWidth: 2,
+                    pointRadius: 0,
+                    tension: 0.1,
+                    yAxisID: 'y'
+                },
+                {
+                    label: 'COI Resistance',
+                    data: coiResistance,
+                    borderColor: 'rgba(239, 68, 68, 1)',
+                    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                    borderWidth: 2,
+                    pointRadius: 0,
+                    tension: 0.1,
+                    yAxisID: 'y'
+                }
+            );
+        }
+
+        if (
+            supportResistanceSpotDataToggle &&
+            supportResistanceSpotDataToggle.checked &&
+            spotData &&
+            spotData.timestamps &&
+            spotData.prices &&
+            spotData.timestamps.length > 0
+        ) {
+            const alignedSpotPrices = [];
+            for (let i = 0; i < data.timestamps.length; i++) {
+                const ts = data.timestamps[i];
+                let closestIndex = 0;
+                let minDiff = Math.abs(spotData.timestamps[0] - ts);
+                for (let j = 1; j < spotData.timestamps.length; j++) {
+                    const diff = Math.abs(spotData.timestamps[j] - ts);
+                    if (diff < minDiff) {
+                        minDiff = diff;
+                        closestIndex = j;
+                    }
+                }
+                alignedSpotPrices.push(spotData.prices[closestIndex]);
+            }
+
+            datasets.push({
+                label: 'Nifty Spot',
+                data: alignedSpotPrices,
+                borderColor: 'rgba(156, 163, 175, 1)',
+                backgroundColor: 'transparent',
+                borderWidth: 1,
+                pointRadius: 0,
+                tension: 0,
+                yAxisID: 'y',
+                type: 'line'
+            });
+        }
+
+        const chartData = {
+            labels: labels,
+            datasets: datasets
+        };
+
+        supportResistanceChart = new Chart(ctx, {
+            type: 'line',
+            data: chartData,
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: {
+                    intersect: false,
+                    mode: 'index'
+                },
+                scales: {
+                    x: {
+                        title: {
+                            display: true,
+                            text: 'Time'
+                        },
+                        grid: {
+                            display: false
+                        }
+                    },
+                    y: {
+                        type: 'linear',
+                        display: true,
+                        position: 'right',
+                        title: {
+                            display: true,
+                            text: 'Strike Price'
+                        },
+                        grid: {
+                            display: true,
+                            color: 'rgba(156, 163, 175, 0.1)'
+                        },
+                        ticks: {
+                            callback: function(value) {
+                                return value.toFixed(0);
+                            }
+                        }
+                    }
+                },
+                plugins: {
+                    legend: {
+                        display: true,
+                        position: 'top'
+                    },
+                    tooltip: {
+                        callbacks: {
+                            title: function(context) {
+                                return context[0].label;
+                            },
+                            label: function(context) {
+                                const value = context.parsed.y;
+                                if (context.dataset.label === 'Nifty Spot') {
+                                    return `${context.dataset.label}: ₹${value.toFixed(2)}`;
+                                }
+                                return `${context.dataset.label}: ${value.toFixed(0)}`;
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
     function renderCePeChart(data, spotData) {
         const canvas = document.getElementById('cePeChart');
         const ctx = canvas.getContext('2d');
@@ -1608,6 +1930,7 @@ document.addEventListener('DOMContentLoaded', function() {
     updateCoiTrendChart();
     updateCePeChart();
     updateCePeStrikeChart();
+    updateSupportResistanceChart();
 
 
     // Add event listeners for OI Chain toggles
@@ -1631,6 +1954,28 @@ document.addEventListener('DOMContentLoaded', function() {
     toggleCePeStrikeChartVisibility.addEventListener('change', function() {
         cePeStrikeChartWrapper.classList.toggle('hidden', !this.checked);
     });
+
+    toggleSupportResistanceVisibility.addEventListener('change', function() {
+        supportResistanceChartWrapper.classList.toggle('hidden', !this.checked);
+    });
+
+    if (supportResistanceOiToggle) {
+        supportResistanceOiToggle.addEventListener('change', function() {
+            updateSupportResistanceChart();
+        });
+    }
+
+    if (supportResistanceCoiToggle) {
+        supportResistanceCoiToggle.addEventListener('change', function() {
+            updateSupportResistanceChart();
+        });
+    }
+
+    if (supportResistanceSpotDataToggle) {
+        supportResistanceSpotDataToggle.addEventListener('change', function() {
+            updateSupportResistanceChart();
+        });
+    }
 
 
 
@@ -1671,9 +2016,10 @@ document.addEventListener('DOMContentLoaded', function() {
     setInterval(checkStatus, 5000); // Check status every 5 seconds
     setInterval(updateCombinedTable, 10000); // Refresh combined data every 10 seconds
     setInterval(fetchPrevDayOiData, 30000); // Refresh prev day analysis every 30 seconds
-    setInterval(updateCoiTrendChart, 60000); // Refresh COI chart every 60 seconds
-    setInterval(updateCePeChart, 60000); // Refresh CE/PE chart every 60 seconds
-    setInterval(updateCePeStrikeChart, 60000); // Refresh CE/PE strike chart every 60 seconds
+    setInterval(updateCoiTrendChart, 30000); // Refresh COI chart every 30 seconds
+    setInterval(updateCePeChart, 30000); // Refresh CE/PE chart every 30 seconds
+    setInterval(updateCePeStrikeChart, 30000); // Refresh CE/PE strike chart every 30 seconds
+    setInterval(updateSupportResistanceChart, 30000); // Refresh Support/Resistance chart every 30 seconds
 });
 </script>
 {% endblock %}
