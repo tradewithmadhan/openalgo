@@ -523,6 +523,7 @@ document.addEventListener('DOMContentLoaded', function() {
             if (oiSrLabel) {
                 oiSrLabel.textContent = hasOiSr ? `[OI: ${result.data.oi_sr}` : '';
                 oiSrLabel.style.color = '';
+                oiSrLabel.style.fontSize = '1.5rem'; // Add this line - adjust size as needed
                 if (hasOiSr) {
                     const oiValue = String(result.data.oi_sr).toLowerCase();
                     if (oiValue === 'incremental') {
@@ -535,6 +536,7 @@ document.addEventListener('DOMContentLoaded', function() {
             if (coiSrLabel) {
                 coiSrLabel.textContent = '';
                 coiSrLabel.style.color = '';
+                coiSrLabel.style.fontSize = '1.5rem';
                 if (hasOiSr && hasCoiSr) {
                     coiSrLabel.textContent = ` | COI: ${result.data.coi_sr}]`;
                 } else if (!hasOiSr && hasCoiSr) {
@@ -992,9 +994,11 @@ document.addEventListener('DOMContentLoaded', function() {
 
             if (coiTrendOiLabel) {
                 coiTrendOiLabel.textContent = '';
+                coiTrendOiLabel.style.fontSize = '1.5rem';
             }
             if (coiTrendCoiLabel) {
                 coiTrendCoiLabel.textContent = '';
+                coiTrendCoiLabel.style.fontSize = '1.5rem';
             }
 
             if (coiResult.status === 'success') {
