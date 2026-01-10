@@ -128,7 +128,8 @@ def nifty_status():
         'current_atm_strike': nifty_fetcher.current_atm_strike,
         'expiry_date': nifty_fetcher.expiry_date,
         'ce_count': ce_count,
-        'pe_count': pe_count
+        'pe_count': pe_count,
+        'Trading date': nifty_fetcher.trading_date,
     })
 
 @madhan_bp.route('/api/nifty/data')

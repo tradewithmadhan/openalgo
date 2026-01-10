@@ -123,10 +123,63 @@
         0%, 100% { opacity: 1; }
         50% { opacity: 0.7; }
     }
-    /* Remove individual cell outline for current ATM when row outline is applied */
     .oi-chain-row:nth-child(even).current-atm-row .strike-cell.current-atm,
     .oi-chain-row:nth-child(odd).current-atm-row .strike-cell.current-atm {
         outline: none !important;
+    }
+
+    .dashboard-layout {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        align-items: flex-start;
+    }
+
+    .dashboard-section {
+        position: relative;
+        flex: 0 0 auto;
+        min-width: 320px;
+        min-height: 240px;
+        resize: both;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+    }
+
+    .dashboard-section .card-body {
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+    }
+
+    .dashboard-content-wrapper {
+        flex: 1;
+        min-height: 0;
+        position: relative;
+        overflow: auto;
+    }
+
+    .dashboard-content-wrapper canvas {
+        width: 100% !important;
+        height: 100% !important;
+    }
+
+    #dashboard-fullscreen-backdrop {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.6);
+        z-index: 900;
+    }
+
+    .dashboard-section.dashboard-fullscreen {
+        position: fixed !important;
+        inset: 0.5rem;
+        margin: 0 !important;
+        z-index: 901;
+        max-width: none;
+        max-height: none;
+        width: auto !important;
+        height: auto !important;
     }
 
 </style>
@@ -189,164 +242,160 @@
         </div>
     </div>
 
-    <!-- Scrollable content -->
     <div class="px-4">
-        <!-- Unified OI Chain -->
-        <div class="card bg-base-100 shadow-xl">
-            <div class="card-body p-2">
-                <div class="card-title justify-between items-center mb-2">
-                    <h2 class="text-xl font-bold">Unified OI Chain</h2>
-                    <!-- Controls for toggling columns -->
-                    <div class="flex items-center gap-4">
-                        <label class="label cursor-pointer gap-2">
-                            <span class="label-text font-semibold">Session</span>
-                            <input type="checkbox" id="toggle-session-change" class="toggle toggle-sm toggle-success" checked />
-                        </label>
-                        <label class="label cursor-pointer gap-2">
-                            <span class="label-text font-semibold">3Min</span>
-                            <input type="checkbox" id="toggle-3min-change" class="toggle toggle-sm toggle-info" checked />
-                        </label>
-                        <label class="label cursor-pointer gap-2">
-                            <span class="label-text font-semibold">6Min</span>
-                            <input type="checkbox" id="toggle-6min-change" class="toggle toggle-sm toggle-warning" checked />
-                        </label>
-                        <div class="divider divider-horizontal mx-1"></div>
-                        <label class="label cursor-pointer gap-2">
-                            <span class="label-text font-semibold">Full View</span>
-                            <input type="checkbox" id="toggle-oi-view" class="toggle toggle-sm toggle-primary" />
-                        </label>
-                        <div class="divider divider-horizontal mx-1"></div>
-                        <label class="label cursor-pointer gap-2">
-                            <span class="label-text font-semibold">Show Chain</span>
-                            <input type="checkbox" id="toggle-oi-chain-visibility" class="toggle toggle-sm toggle-accent" checked />
-                        </label>
+        <div id="dashboard-layout" class="dashboard-layout">
+            <div class="card bg-base-100 shadow-xl dashboard-section" data-section-id="unified-oi-chain">
+                <div class="card-body p-2">
+                    <div class="card-title justify-between items-center mb-2">
+                        <h2 class="text-xl font-bold">Unified OI Chain</h2>
+                        <div class="flex items-center gap-4">
+                            <label class="label cursor-pointer gap-2">
+                                <span class="label-text font-semibold">Session</span>
+                                <input type="checkbox" id="toggle-session-change" class="toggle toggle-sm toggle-success" checked />
+                            </label>
+                            <label class="label cursor-pointer gap-2">
+                                <span class="label-text font-semibold">3Min</span>
+                                <input type="checkbox" id="toggle-3min-change" class="toggle toggle-sm toggle-info"  />
+                            </label>
+                            <label class="label cursor-pointer gap-2">
+                                <span class="label-text font-semibold">6Min</span>
+                                <input type="checkbox" id="toggle-6min-change" class="toggle toggle-sm toggle-warning"  />
+                            </label>
+                            <div class="divider divider-horizontal mx-1"></div>
+                            <label class="label cursor-pointer gap-2">
+                                <span class="label-text font-semibold">Full View</span>
+                                <input type="checkbox" id="toggle-oi-view" class="toggle toggle-sm toggle-primary" />
+                            </label>
+                            <div class="divider divider-horizontal mx-1"></div>
+                            <label class="label cursor-pointer gap-2">
+                                <span class="label-text font-semibold">Show Chain</span>
+                                <input type="checkbox" id="toggle-oi-chain-visibility" class="toggle toggle-sm toggle-accent" checked />
+                            </label>
+                            <button type="button" class="btn btn-ghost btn-xs" data-fullscreen-target="unified-oi-chain">Full</button>
+                        </div>
                     </div>
-                </div>
-                <div id="unified-oi-chain-container" class="mt-2"></div>
-            </div>
-        </div>
-
-        <!-- COI Trend Chart Card -->
-        <div class="card bg-base-100 shadow-xl mt-1">
-            <div class="card-body p-2">
-                <div class="card-title justify-between items-center">
-                    <h2 class="text-xl font-bold">
-                        OI vs COI Trend
-                        <span id="coi-trend-oi-label" class="text-xs font-normal ml-2"></span>
-                        <span id="coi-trend-coi-label" class="text-xs font-normal ml-2"></span>
-                    </h2>
-                    <div class="flex items-center gap-4">
-                        <label class="label cursor-pointer gap-2">
-                            <span class="label-text font-semibold text-xs">Writers View</span>
-                            <input type="checkbox" id="coi-strike-mode-toggle" class="toggle toggle-xs toggle-primary" checked />
-                        </label>
-                        <label class="label cursor-pointer gap-2">
-                            <span class="label-text font-semibold text-xs">Spot Data</span>
-                            <input type="checkbox" id="coi-spot-data-toggle" class="toggle toggle-xs toggle-secondary" />
-                        </label>
-                        <label class="label cursor-pointer gap-2">
-                            <span class="label-text font-semibold">Show Trend</span>
-                            <input type="checkbox" id="toggle-coi-chart-visibility" class="toggle toggle-sm toggle-accent" checked />
-                        </label>
-                    </div>
-                </div>
-                <div id="coi-trend-chart-wrapper" style="height: 1000px;">
-                    <canvas id="coiTrendChart"></canvas>
+                    <div id="unified-oi-chain-container" class="mt-2 dashboard-content-wrapper"></div>
                 </div>
             </div>
-        </div>
 
-        <!-- CE/PE Changes Bar Chart Card -->
-        <div class="card bg-base-100 shadow-xl mt-1">
-            <div class="card-body p-2">
-                <div class="card-title justify-between items-center">
-                    <h2 class="text-xl font-bold">CE/PE Changes per Candle</h2>
-                    <div class="flex items-center gap-4">
-                        <label class="label cursor-pointer gap-2">
-                            <span class="label-text font-semibold text-xs">Writers View</span>
-                            <input type="checkbox" id="cepe-strike-mode-toggle" class="toggle toggle-xs toggle-primary" checked />
-                        </label>
-                        <label class="label cursor-pointer gap-2">
-                            <span class="label-text font-semibold text-xs">Spot Data</span>
-                            <input type="checkbox" id="cepe-spot-data-toggle" class="toggle toggle-xs toggle-secondary" />
-                        </label>
-                        <label class="label cursor-pointer gap-2">
-                            <span class="label-text font-semibold">Show Chart</span>
-                            <input type="checkbox" id="toggle-cepe-chart-visibility" class="toggle toggle-sm toggle-accent" checked />
-                        </label>
+            <div class="card bg-base-100 shadow-xl mt-1 dashboard-section" data-section-id="coi-trend">
+                <div class="card-body p-2">
+                    <div class="card-title justify-between items-center">
+                        <h2 class="text-xl font-bold">
+                            OI vs COI Trend
+                            <span id="coi-trend-oi-label" class="text-xs font-normal ml-2"></span>
+                            <span id="coi-trend-coi-label" class="text-xs font-normal ml-2"></span>
+                        </h2>
+                        <div class="flex items-center gap-4">
+                            <label class="label cursor-pointer gap-2">
+                                <span class="label-text font-semibold text-xs">Writers View</span>
+                                <input type="checkbox" id="coi-strike-mode-toggle" class="toggle toggle-xs toggle-primary" checked />
+                            </label>
+                            <label class="label cursor-pointer gap-2">
+                                <span class="label-text font-semibold text-xs">Spot Data</span>
+                                <input type="checkbox" id="coi-spot-data-toggle" class="toggle toggle-xs toggle-secondary" />
+                            </label>
+                            <label class="label cursor-pointer gap-2">
+                                <span class="label-text font-semibold">Show Trend</span>
+                                <input type="checkbox" id="toggle-coi-chart-visibility" class="toggle toggle-sm toggle-accent" checked />
+                            </label>
+                            <button type="button" class="btn btn-ghost btn-xs" data-fullscreen-target="coi-trend">Full</button>
+                        </div>
+                    </div>
+                    <div id="coi-trend-chart-wrapper" class="dashboard-content-wrapper">
+                        <canvas id="coiTrendChart"></canvas>
                     </div>
                 </div>
-                <div id="cepe-chart-wrapper" style="height: 600px;">
-                    <canvas id="cePeChart"></canvas>
-                </div>
             </div>
-        </div>
 
-        <!-- CE/PE Strike Changes Bar Chart Card -->
-        <div class="card bg-base-100 shadow-xl mt-1">
-            <div class="card-body p-2">
-                <div class="card-title justify-between items-center">
-                    <h2 class="text-xl font-bold">CE/PE Strike Changes per Candle</h2>
-                    <div class="flex items-center gap-4">
-                        <label class="label cursor-pointer gap-2">
-                            <span class="label-text font-semibold text-xs">Strike Price</span>
-                            <select id="cepe-strike-selection" class="select select-xs select-bordered">
-                            </select>
-                        </label>
-                        <label class="label cursor-pointer gap-2">
-                            <span class="label-text font-semibold text-xs">Spot Data</span>
-                            <input type="checkbox" id="cepe-strike-spot-data-toggle" class="toggle toggle-xs toggle-secondary" />
-                        </label>
-                        <label class="label cursor-pointer gap-2">
-                            <span class="label-text font-semibold">Show Chart</span>
-                            <input type="checkbox" id="toggle-cepe-strike-chart-visibility" class="toggle toggle-sm toggle-accent" checked />
-                        </label>
+            <div class="card bg-base-100 shadow-xl mt-1 dashboard-section" data-section-id="cepe-changes">
+                <div class="card-body p-2">
+                    <div class="card-title justify-between items-center">
+                        <h2 class="text-xl font-bold">CE/PE Changes per Candle</h2>
+                        <div class="flex items-center gap-4">
+                            <label class="label cursor-pointer gap-2">
+                                <span class="label-text font-semibold text-xs">Writers View</span>
+                                <input type="checkbox" id="cepe-strike-mode-toggle" class="toggle toggle-xs toggle-primary" checked />
+                            </label>
+                            <label class="label cursor-pointer gap-2">
+                                <span class="label-text font-semibold text-xs">Spot Data</span>
+                                <input type="checkbox" id="cepe-spot-data-toggle" class="toggle toggle-xs toggle-secondary" />
+                            </label>
+                            <label class="label cursor-pointer gap-2">
+                                <span class="label-text font-semibold">Show Chart</span>
+                                <input type="checkbox" id="toggle-cepe-chart-visibility" class="toggle toggle-sm toggle-accent" checked />
+                            </label>
+                            <button type="button" class="btn btn-ghost btn-xs" data-fullscreen-target="cepe-changes">Full</button>
+                        </div>
+                    </div>
+                    <div id="cepe-chart-wrapper" class="dashboard-content-wrapper">
+                        <canvas id="cePeChart"></canvas>
                     </div>
                 </div>
-                <div id="cepe-strike-chart-wrapper" style="height: 600px;">
-                    <canvas id="cePeStrikeChart"></canvas>
-                </div>
             </div>
-        </div>
 
-        <!-- Support / Resistance Chart Card -->
-        <div class="card bg-base-100 shadow-xl mt-1">
-            <div class="card-body p-2">
-                <div class="card-title justify-between items-center">
-                    <h2 class="text-xl font-bold">
-                        Support / Resistance
-                        <span id="oi-sr-label" class="text-xs font-normal ml-2"></span>
-                        <span id="coi-sr-label" class="text-xs font-normal ml-2"></span>
-                    </h2>
-                    <div class="flex items-center gap-4">
-                        <label class="label cursor-pointer gap-2">
-                            <span class="label-text font-semibold text-xs">OI</span>
-                            <input type="checkbox" id="support-resistance-oi-toggle" class="toggle toggle-xs toggle-primary" checked />
-                        </label>
-                        <label class="label cursor-pointer gap-2">
-                            <span class="label-text font-semibold text-xs">COI</span>
-                            <input type="checkbox" id="support-resistance-coi-toggle" class="toggle toggle-xs toggle-primary" checked />
-                        </label>
-                        <label class="label cursor-pointer gap-2">
-                            <span class="label-text font-semibold text-xs">Spot Data</span>
-                            <input type="checkbox" id="support-resistance-spot-data-toggle" class="toggle toggle-xs toggle-secondary" />
-                        </label>
-                        <label class="label cursor-pointer gap-2">
-                            <span class="label-text font-semibold">Show Chart</span>
-                            <input type="checkbox" id="toggle-support-resistance-visibility" class="toggle toggle-sm toggle-accent" checked />
-                        </label>
+            <div class="card bg-base-100 shadow-xl mt-1 dashboard-section" data-section-id="cepe-strike-changes">
+                <div class="card-body p-2">
+                    <div class="card-title justify-between items-center">
+                        <h2 class="text-xl font-bold">CE/PE Strike Changes per Candle</h2>
+                        <div class="flex items-center gap-4">
+                            <label class="label cursor-pointer gap-2">
+                                <span class="label-text font-semibold text-xs">Strike Price</span>
+                                <select id="cepe-strike-selection" class="select select-xs select-bordered">
+                                </select>
+                            </label>
+                            <label class="label cursor-pointer gap-2">
+                                <span class="label-text font-semibold text-xs">Spot Data</span>
+                                <input type="checkbox" id="cepe-strike-spot-data-toggle" class="toggle toggle-xs toggle-secondary" />
+                            </label>
+                            <label class="label cursor-pointer gap-2">
+                                <span class="label-text font-semibold">Show Chart</span>
+                                <input type="checkbox" id="toggle-cepe-strike-chart-visibility" class="toggle toggle-sm toggle-accent" checked />
+                            </label>
+                            <button type="button" class="btn btn-ghost btn-xs" data-fullscreen-target="cepe-strike-changes">Full</button>
+                        </div>
+                    </div>
+                    <div id="cepe-strike-chart-wrapper" class="dashboard-content-wrapper">
+                        <canvas id="cePeStrikeChart"></canvas>
                     </div>
                 </div>
-                <div id="support-resistance-chart-wrapper" style="height: 600px;">
-                    <canvas id="supportResistanceChart"></canvas>
+            </div>
+
+            <div class="card bg-base-100 shadow-xl mt-1 dashboard-section" data-section-id="support-resistance">
+                <div class="card-body p-2">
+                    <div class="card-title justify-between items-center">
+                        <h2 class="text-xl font-bold">
+                            Support / Resistance
+                            <span id="oi-sr-label" class="text-xs font-normal ml-2"></span>
+                            <span id="coi-sr-label" class="text-xs font-normal ml-2"></span>
+                        </h2>
+                        <div class="flex items-center gap-4">
+                            <label class="label cursor-pointer gap-2">
+                                <span class="label-text font-semibold text-xs">OI</span>
+                                <input type="checkbox" id="support-resistance-oi-toggle" class="toggle toggle-xs toggle-primary" checked />
+                            </label>
+                            <label class="label cursor-pointer gap-2">
+                                <span class="label-text font-semibold text-xs">COI</span>
+                                <input type="checkbox" id="support-resistance-coi-toggle" class="toggle toggle-xs toggle-primary"  />
+                            </label>
+                            <label class="label cursor-pointer gap-2">
+                                <span class="label-text font-semibold text-xs">Spot Data</span>
+                                <input type="checkbox" id="support-resistance-spot-data-toggle" class="toggle toggle-xs toggle-secondary" checked />
+                            </label>
+                            <label class="label cursor-pointer gap-2">
+                                <span class="label-text font-semibold">Show Chart</span>
+                                <input type="checkbox" id="toggle-support-resistance-visibility" class="toggle toggle-sm toggle-accent" checked />
+                            </label>
+                            <button type="button" class="btn btn-ghost btn-xs" data-fullscreen-target="support-resistance">Full</button>
+                        </div>
+                    </div>
+                    <div id="support-resistance-chart-wrapper" class="dashboard-content-wrapper">
+                        <canvas id="supportResistanceChart"></canvas>
+                    </div>
                 </div>
             </div>
-        </div>
 
-        <!-- Data Tables Grid -->
-        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-1">
-            <!-- Live Data Table -->
-            <div class="card bg-base-100 shadow-xl">
+            <div class="card bg-base-100 shadow-xl mt-1 dashboard-section" data-section-id="live-data">
                 <div class="card-body p-2">
                     <div class="card-title justify-between items-center">
                         <h2 class="text-lg font-bold">Live Data</h2>
@@ -354,8 +403,9 @@
                             <span class="label-text font-semibold">Show Table</span>
                             <input type="checkbox" id="toggle-live-data-visibility" class="toggle toggle-sm toggle-accent" />
                         </label>
+                        <button type="button" class="btn btn-ghost btn-xs" data-fullscreen-target="live-data">Full</button>
                     </div>
-                    <div id="live-data-wrapper" class="overflow-x-auto h-48 hidden">
+                    <div id="live-data-wrapper" class="overflow-x-auto hidden dashboard-content-wrapper">
                         <table class="table table-zebra table-pin-rows w-full table-sm">
                             <thead>
                                 <tr>
@@ -375,8 +425,7 @@
                 </div>
             </div>
 
-            <!-- Previous Day OI Table -->
-            <div class="card bg-base-100 shadow-xl">
+            <div class="card bg-base-100 shadow-xl mt-1 dashboard-section" data-section-id="prev-day-analysis">
                 <div class="card-body p-2">
                     <div class="card-title justify-between items-center">
                         <h2 class="text-lg font-bold">Previous Day Closing Analysis</h2>
@@ -384,8 +433,9 @@
                             <span class="label-text font-semibold">Show Table</span>
                             <input type="checkbox" id="toggle-prev-day-visibility" class="toggle toggle-sm toggle-accent" />
                         </label>
+                        <button type="button" class="btn btn-ghost btn-xs" data-fullscreen-target="prev-day-analysis">Full</button>
                     </div>
-                    <div id="prev-day-wrapper" class="overflow-x-auto h-48 hidden">
+                    <div id="prev-day-wrapper" class="overflow-x-auto hidden dashboard-content-wrapper">
                         <table class="table table-zebra table-pin-rows w-full table-sm">
                             <thead>
                                 <tr>
@@ -407,6 +457,7 @@
                 </div>
             </div>
         </div>
+        <div id="dashboard-fullscreen-backdrop" class="hidden"></div>
     </div>
 </div>
 
@@ -475,6 +526,11 @@ document.addEventListener('DOMContentLoaded', function() {
     const current_atm_strike_el = document.getElementById('current-atm-strike');
     const ce_count_el = document.getElementById('ce-count');
     const pe_count_el = document.getElementById('pe-count');
+    const dashboardLayout = document.getElementById('dashboard-layout');
+    const dashboardLayoutStorageKey = 'madhan_dashboard_layout_v1';
+    const fullscreenBackdrop = document.getElementById('dashboard-fullscreen-backdrop');
+    let draggedDashboardSectionId = null;
+    let currentFullscreenSection = null;
 
     function updateCePeStrikeOptions() {
         if (!cePeStrikeSelection) {
@@ -507,6 +563,212 @@ document.addEventListener('DOMContentLoaded', function() {
             cePeStrikeSelection.appendChild(option);
         }
     }
+
+    function saveDashboardLayout() {
+        if (!dashboardLayout) {
+            return;
+        }
+        const sections = Array.from(dashboardLayout.querySelectorAll('.dashboard-section'));
+        const layout = sections.filter(function (section) {
+            return !section.classList.contains('dashboard-fullscreen');
+        }).map(function (section, index) {
+            const rect = section.getBoundingClientRect();
+            return {
+                id: section.dataset.sectionId || String(index),
+                order: index,
+                width: rect.width,
+                height: rect.height
+            };
+        });
+        try {
+            localStorage.setItem(dashboardLayoutStorageKey, JSON.stringify(layout));
+        } catch (e) {
+        }
+    }
+
+    function loadDashboardLayout() {
+        if (!dashboardLayout) {
+            return;
+        }
+        let saved;
+        try {
+            saved = localStorage.getItem(dashboardLayoutStorageKey);
+        } catch (e) {
+            return;
+        }
+        if (!saved) {
+            return;
+        }
+        let layout;
+        try {
+            layout = JSON.parse(saved);
+        } catch (e) {
+            return;
+        }
+        if (!Array.isArray(layout)) {
+            return;
+        }
+        const sectionsById = {};
+        const currentSections = Array.from(dashboardLayout.querySelectorAll('.dashboard-section'));
+        currentSections.forEach(function (section) {
+            if (section.dataset.sectionId) {
+                sectionsById[section.dataset.sectionId] = section;
+            }
+        });
+        layout.sort(function (a, b) {
+            return a.order - b.order;
+        });
+        layout.forEach(function (item) {
+            const section = sectionsById[item.id];
+            if (!section) {
+                return;
+            }
+            if (item.width) {
+                section.style.width = item.width + 'px';
+            }
+            if (item.height) {
+                section.style.height = item.height + 'px';
+            }
+            dashboardLayout.appendChild(section);
+        });
+    }
+
+    function handleDashboardDragStart(event) {
+        const section = event.currentTarget;
+        draggedDashboardSectionId = section.dataset.sectionId || '';
+        if (event.dataTransfer) {
+            event.dataTransfer.effectAllowed = 'move';
+            event.dataTransfer.setData('text/plain', draggedDashboardSectionId);
+        }
+    }
+
+    function handleDashboardDragOver(event) {
+        event.preventDefault();
+        if (!dashboardLayout || !draggedDashboardSectionId) {
+            return;
+        }
+        const target = event.currentTarget;
+        const dragged = dashboardLayout.querySelector('[data-section-id="' + draggedDashboardSectionId + '"]');
+        if (!dragged || dragged === target) {
+            return;
+        }
+        const rect = target.getBoundingClientRect();
+        const offset = event.clientY - rect.top;
+        if (offset > rect.height / 2) {
+            dashboardLayout.insertBefore(dragged, target.nextSibling);
+        } else {
+            dashboardLayout.insertBefore(dragged, target);
+        }
+    }
+
+    function handleDashboardDrop(event) {
+        event.preventDefault();
+        saveDashboardLayout();
+    }
+
+    function handleDashboardDragEnd() {
+        draggedDashboardSectionId = null;
+    }
+
+    function setupDashboardDragAndResize() {
+        if (!dashboardLayout) {
+            return;
+        }
+        const sections = Array.from(dashboardLayout.querySelectorAll('.dashboard-section'));
+        sections.forEach(function (section) {
+            section.setAttribute('draggable', 'true');
+            section.addEventListener('dragstart', handleDashboardDragStart);
+            section.addEventListener('dragover', handleDashboardDragOver);
+            section.addEventListener('drop', handleDashboardDrop);
+            section.addEventListener('dragend', handleDashboardDragEnd);
+        });
+        if (typeof ResizeObserver !== 'undefined') {
+            const resizeObserver = new ResizeObserver(function (entries) {
+                let changed = false;
+                for (const entry of entries) {
+                    const target = entry.target;
+                    if (!target.classList.contains('dashboard-section')) {
+                        continue;
+                    }
+                    changed = true;
+                }
+                if (changed) {
+                    saveDashboardLayout();
+                }
+            });
+            sections.forEach(function (section) {
+                resizeObserver.observe(section);
+            });
+        }
+    }
+
+    function initializeDashboardLayout() {
+        loadDashboardLayout();
+        setupDashboardDragAndResize();
+        setupDashboardFullscreen();
+    }
+
+    function enterDashboardFullscreen(section) {
+        if (!section) {
+            return;
+        }
+        if (currentFullscreenSection && currentFullscreenSection !== section) {
+            currentFullscreenSection.classList.remove('dashboard-fullscreen');
+        }
+        currentFullscreenSection = section;
+        section.classList.add('dashboard-fullscreen');
+        if (fullscreenBackdrop) {
+            fullscreenBackdrop.classList.remove('hidden');
+        }
+    }
+
+    function exitDashboardFullscreen() {
+        if (!currentFullscreenSection) {
+            if (fullscreenBackdrop) {
+                fullscreenBackdrop.classList.add('hidden');
+            }
+            return;
+        }
+        currentFullscreenSection.classList.remove('dashboard-fullscreen');
+        currentFullscreenSection = null;
+        if (fullscreenBackdrop) {
+            fullscreenBackdrop.classList.add('hidden');
+        }
+    }
+
+    function handleDashboardFullscreenClick(event) {
+        const button = event.currentTarget;
+        const targetId = button.getAttribute('data-fullscreen-target');
+        if (!dashboardLayout || !targetId) {
+            return;
+        }
+        const section = dashboardLayout.querySelector('[data-section-id="' + targetId + '"]');
+        if (!section) {
+            return;
+        }
+        if (currentFullscreenSection === section) {
+            exitDashboardFullscreen();
+        } else {
+            enterDashboardFullscreen(section);
+        }
+    }
+
+    function setupDashboardFullscreen() {
+        const buttons = document.querySelectorAll('[data-fullscreen-target]');
+        buttons.forEach(function (button) {
+            button.addEventListener('click', handleDashboardFullscreenClick);
+        });
+        if (fullscreenBackdrop) {
+            fullscreenBackdrop.addEventListener('click', exitDashboardFullscreen);
+        }
+        document.addEventListener('keydown', function (event) {
+            if (event.key === 'Escape') {
+                exitDashboardFullscreen();
+            }
+        });
+    }
+
+    initializeDashboardLayout();
 
     async function updateSupportResistanceChart() {
         try {
@@ -1490,6 +1752,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
             if (result.status === 'success') {
                 renderCePeChart(result.data, spotData);
+                
             } else {
                 console.log('CE/PE changes data not ready:', result.message);
                 renderCePeChart(null, spotData);
@@ -1929,40 +2192,62 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
 
-    // Initial checks and start intervals
-    checkStatus();
-    fetchPrevDayOiData();
-    updateCombinedTable();
-    updateCoiTrendChart();
-    updateCePeChart();
-    updateCePeStrikeChart();
-    updateSupportResistanceChart();
+    const unifiedOiSection = oiChainContainer ? oiChainContainer.closest('.dashboard-section') : null;
+    const coiTrendSection = coiTrendChartWrapper ? coiTrendChartWrapper.closest('.dashboard-section') : null;
+    const cePeSection = cePeChartWrapper ? cePeChartWrapper.closest('.dashboard-section') : null;
+    const cePeStrikeSection = cePeStrikeChartWrapper ? cePeStrikeChartWrapper.closest('.dashboard-section') : null;
+    const supportResistanceSection = supportResistanceChartWrapper ? supportResistanceChartWrapper.closest('.dashboard-section') : null;
+    const liveDataSection = liveDataWrapper ? liveDataWrapper.closest('.dashboard-section') : null;
+    const prevDaySection = prevDayWrapper ? prevDayWrapper.closest('.dashboard-section') : null;
 
+    function syncSectionVisibilityWithToggles() {
+        if (toggleOiChainVisibility && unifiedOiSection) {
+            unifiedOiSection.classList.toggle('hidden', !toggleOiChainVisibility.checked);
+        }
+        if (toggleCoiChartVisibility && coiTrendSection) {
+            coiTrendSection.classList.toggle('hidden', !toggleCoiChartVisibility.checked);
+        }
+        if (toggleCePeChartVisibility && cePeSection) {
+            cePeSection.classList.toggle('hidden', !toggleCePeChartVisibility.checked);
+        }
+        if (toggleCePeStrikeChartVisibility && cePeStrikeSection) {
+            cePeStrikeSection.classList.toggle('hidden', !toggleCePeStrikeChartVisibility.checked);
+        }
+        if (toggleSupportResistanceVisibility && supportResistanceSection) {
+            supportResistanceSection.classList.toggle('hidden', !toggleSupportResistanceVisibility.checked);
+        }
+        if (toggleLiveDataVisibility && liveDataSection) {
+            liveDataSection.classList.toggle('hidden', !toggleLiveDataVisibility.checked);
+        }
+        if (toggleLiveDataVisibility && liveDataWrapper) {
+            liveDataWrapper.classList.toggle('hidden', !toggleLiveDataVisibility.checked);
+        }
+        if (togglePrevDayVisibility && prevDaySection) {
+            prevDaySection.classList.toggle('hidden', !togglePrevDayVisibility.checked);
+        }
+        if (togglePrevDayVisibility && prevDayWrapper) {
+            prevDayWrapper.classList.toggle('hidden', !togglePrevDayVisibility.checked);
+        }
+    }
 
-    // Add event listeners for OI Chain toggles
-    [toggleSession, toggle3Min, toggle6Min, toggleOiView].forEach(toggle => {
-        toggle.addEventListener('change', () => updateUnifiedOiChain(lastOiData));
-    });
-
-    // Add event listener for the new visibility toggle
     toggleOiChainVisibility.addEventListener('change', function() {
-        oiChainContainer.classList.toggle('hidden', !this.checked);
+        syncSectionVisibilityWithToggles();
     });
 
     toggleCoiChartVisibility.addEventListener('change', function() {
-        coiTrendChartWrapper.classList.toggle('hidden', !this.checked);
+        syncSectionVisibilityWithToggles();
     });
 
     toggleCePeChartVisibility.addEventListener('change', function() {
-        cePeChartWrapper.classList.toggle('hidden', !this.checked);
+        syncSectionVisibilityWithToggles();
     });
 
     toggleCePeStrikeChartVisibility.addEventListener('change', function() {
-        cePeStrikeChartWrapper.classList.toggle('hidden', !this.checked);
+        syncSectionVisibilityWithToggles();
     });
 
     toggleSupportResistanceVisibility.addEventListener('change', function() {
-        supportResistanceChartWrapper.classList.toggle('hidden', !this.checked);
+        syncSectionVisibilityWithToggles();
     });
 
     if (supportResistanceOiToggle) {
@@ -1986,11 +2271,25 @@ document.addEventListener('DOMContentLoaded', function() {
 
 
     toggleLiveDataVisibility.addEventListener('change', function() {
-        liveDataWrapper.classList.toggle('hidden', !this.checked);
+        syncSectionVisibilityWithToggles();
     });
 
     togglePrevDayVisibility.addEventListener('change', function() {
-        prevDayWrapper.classList.toggle('hidden', !this.checked);
+        syncSectionVisibilityWithToggles();
+    });
+
+    syncSectionVisibilityWithToggles();
+
+    checkStatus();
+    fetchPrevDayOiData();
+    updateCombinedTable();
+    updateCoiTrendChart();
+    updateCePeChart();
+    updateCePeStrikeChart();
+    updateSupportResistanceChart();
+
+    [toggleSession, toggle3Min, toggle6Min, toggleOiView].forEach(toggle => {
+        toggle.addEventListener('change', () => updateUnifiedOiChain(lastOiData));
     });
 
     // Add event listeners for strike selection mode toggles
@@ -2020,12 +2319,12 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 
     setInterval(checkStatus, 5000); // Check status every 5 seconds
-    setInterval(updateCombinedTable, 10000); // Refresh combined data every 10 seconds
-    setInterval(fetchPrevDayOiData, 30000); // Refresh prev day analysis every 30 seconds
-    setInterval(updateCoiTrendChart, 30000); // Refresh COI chart every 30 seconds
-    setInterval(updateCePeChart, 30000); // Refresh CE/PE chart every 30 seconds
-    setInterval(updateCePeStrikeChart, 30000); // Refresh CE/PE strike chart every 30 seconds
-    setInterval(updateSupportResistanceChart, 30000); // Refresh Support/Resistance chart every 30 seconds
+    setInterval(updateCombinedTable, 20000); // Refresh combined data every 10 seconds
+    setInterval(fetchPrevDayOiData, 20000); // Refresh prev day analysis every 30 seconds
+    setInterval(updateCoiTrendChart, 20000); // Refresh COI chart every 30 seconds
+    setInterval(updateCePeChart, 20000); // Refresh CE/PE chart every 10 seconds
+    setInterval(updateCePeStrikeChart, 20000); // Refresh CE/PE strike chart every 10 seconds
+    setInterval(updateSupportResistanceChart, 20000); // Refresh Support/Resistance chart every 10 seconds
 });
 </script>
 {% endblock %}

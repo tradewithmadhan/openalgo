@@ -3,13 +3,39 @@ Database setup and utility functions for MadhaN's custom data.
 """
 import os
 import pandas as pd
-from datetime import datetime, time
+from datetime import datetime, time, date, timedelta
 from sqlalchemy import create_engine, Column, Integer, Float, String, Index, text, func, select, literal_column
 from sqlalchemy.inspection import inspect
 from sqlalchemy.orm import sessionmaker, declarative_base
 from sqlalchemy.dialects.sqlite import insert
 from sqlalchemy.exc import SQLAlchemyError
 from utils.logging import get_logger
+
+from database.market_calendar_db import is_market_holiday
+from typing import Optional
+
+
+def get_valid_trading_day(
+    input_date: Optional[date] = None,
+    exchange: Optional[str] = None
+) -> date:
+    trading_date = input_date or date.today()
+
+    while True:
+        if trading_date.weekday() >= 5:
+            trading_date -= timedelta(days=1)
+            continue
+
+        if is_market_holiday(trading_date, exchange):
+            trading_date -= timedelta(days=1)
+            continue
+
+        return trading_date
+
+
+# ✅ This single line is enough
+today_trade_date = get_valid_trading_day(exchange="NSE")
+print(today_trade_date)
 
 logger = get_logger(__name__)
 
@@ -359,7 +385,7 @@ def get_nth_candle_oi_for_all_symbols(n: int):
     """
     session = SessionLocal()
     try:
-        today = datetime.now().date()
+        today = get_valid_trading_day(exchange="NSE")
         start_of_day = datetime.combine(today, time.min)
         start_of_day_ts = int(start_of_day.timestamp())
 
@@ -410,7 +436,7 @@ def get_current_day_historical_data():
     """Fetches all 1-minute candle data for the current day for Nifty and Options."""
     session = SessionLocal()
     try:
-        today = datetime.now().date()
+        today = get_valid_trading_day(exchange="NSE")
         start_of_day = datetime.combine(today, time.min)
         start_of_day_ts = int(start_of_day.timestamp())
 
@@ -441,7 +467,7 @@ def get_current_day_instrument_data(symbol: str):
     """Fetches all 1-minute candle data for the current day for a specific instrument/symbol."""
     session = SessionLocal()
     try:
-        today = datetime.now().date()
+        today = get_valid_trading_day(exchange="NSE")
         start_of_day = datetime.combine(today, time.min)
         start_of_day_ts = int(start_of_day.timestamp())
 

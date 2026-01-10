@@ -12,13 +12,17 @@ import pytz
 from utils.logging import get_logger
 from services.history_service import get_history
 from services.expiry_service import get_expiry_dates
-from database.madhan_db import store_nifty_data, store_option_data, store_previous_day_oi, NiftyData, OptionData, SessionLocal, get_tracked_symbols, save_tracked_symbols, save_fetcher_state, get_fetcher_state
+from database.madhan_db import store_nifty_data, store_option_data, store_previous_day_oi, NiftyData, OptionData, SessionLocal, get_tracked_symbols, save_tracked_symbols, save_fetcher_state, get_fetcher_state,get_valid_trading_day
 
 logger = get_logger(__name__)
 
+
+
+
+
 def get_trading_days():
     try:
-        today = datetime.now().date()
+        today = get_valid_trading_day(exchange="NSE")
         prev_day = today - timedelta(days=1)
         market_holidays = {
             datetime(2025, 2, 26).date(): "Mahashivratri",
@@ -91,6 +95,7 @@ class NiftyDataFetcher:
             self.open_atm_strike = int(get_fetcher_state('open_atm_strike') or 0)
             self.current_atm_strike = int(get_fetcher_state('current_atm_strike') or 0)
             self.expiry_date = get_fetcher_state('expiry_date')
+            self.trading_date = get_valid_trading_day(exchange="NSE")
             if self.open_atm_strike > 0:
                 logger.info(f"Loaded persisted Open ATM strike: {self.open_atm_strike}")
             if self.current_atm_strike > 0:
@@ -202,7 +207,7 @@ class NiftyDataFetcher:
         """Calculates Open ATM strike and generates a list of option symbols to track."""
         try:
             # 1. Find the open price for the current day
-            today_str = datetime.now().strftime('%Y-%m-%d')
+            today_str = get_valid_trading_day(exchange="NSE").strftime('%Y-%m-%d') 
             today_df = df[pd.to_datetime(df['timestamp'], unit='s').dt.strftime('%Y-%m-%d') == today_str]
             
             last_candle_timestamp = 0
@@ -231,7 +236,7 @@ class NiftyDataFetcher:
                 logger.error(f"Could not fetch expiry dates: {expiry_data.get('message')}")
                 return
             
-            current_date_dt = datetime.now().date()
+            current_date_dt = get_valid_trading_day(exchange="NSE")
             self.expiry_date = expiry_data['data'][0]
             expiry_date_dt = datetime.strptime(self.expiry_date, "%d-%b-%y").date()
             
