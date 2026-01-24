@@ -73,6 +73,9 @@ const FlowIndex = lazy(() => import('@/pages/flow/FlowIndex'))
 const FlowEditor = lazy(() => import('@/pages/flow/FlowEditor'))
 const FlowKeyboardShortcuts = lazy(() => import('@/pages/flow/FlowKeyboardShortcuts'))
 
+// Madhan pages
+const Madhan01 = lazy(() => import('@/pages/madhan/Madhan01'))
+
 // Admin pages
 const AdminIndex = lazy(() => import('@/pages/admin/AdminIndex'))
 const FreezeQty = lazy(() => import('@/pages/admin/FreezeQty'))
@@ -183,6 +186,8 @@ function App() {
 
               {/* Full-width protected routes */}
               <Route element={<FullWidthLayout />}>
+                {/* Madhan custom dashboards */}
+                <Route path="/madhan/madhan01" element={<Madhan01 />} />
                 <Route path="/playground" element={<Playground />} />
                 <Route path="/historify" element={<Historify />} />
                 <Route path="/historify/charts" element={<HistorifyCharts />} />
