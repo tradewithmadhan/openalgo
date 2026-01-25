@@ -73,7 +73,7 @@ frontend/.cache/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-
+#frontend/dist
 # npm cache
 .npm/
 npm-debug.log*
