@@ -1,5 +1,0 @@
-<<<<<<<< HEAD:frontend/dist/assets/label-BIw7rO2d.js
-import{j as o}from"./vendor-react--vsXx8_n.js";import{j as a}from"./vendor-radix-DIebA-qg.js";import{c as r}from"./index-DhUWy5_O.js";function d({className:e,...t}){return o.jsx(a,{"data-slot":"label",className:r("flex items-center gap-2 text-sm leading-none font-medium select-none group-data-[disabled=true]:pointer-events-none group-data-[disabled=true]:opacity-50 peer-disabled:cursor-not-allowed peer-disabled:opacity-50",e),...t})}export{d as L};
-========
-import{j as o}from"./vendor-react--vsXx8_n.js";import{j as a}from"./vendor-radix-DIebA-qg.js";import{c as r}from"./index-BpQMuhin.js";function d({className:e,...t}){return o.jsx(a,{"data-slot":"label",className:r("flex items-center gap-2 text-sm leading-none font-medium select-none group-data-[disabled=true]:pointer-events-none group-data-[disabled=true]:opacity-50 peer-disabled:cursor-not-allowed peer-disabled:opacity-50",e),...t})}export{d as L};
->>>>>>>> 29e73c82468645ab8ba292549838c6c5822645d0:frontend/dist/assets/label-DPa1YTx1.js
