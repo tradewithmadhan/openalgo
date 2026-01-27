@@ -100,6 +100,7 @@ export default function Madhan01() {
   const [fullView, setFullView] = useState(false)
   const [showOiChain, setShowOiChain] = useState(true)
   const [_refreshTrigger, setRefreshTrigger] = useState(0)
+  const [isRefreshing, setIsRefreshing] = useState(false)
 
   const fetchStatus = useCallback(async () => {
     try {
@@ -577,10 +578,13 @@ export default function Madhan01() {
                         variant="ghost"
                         size="icon"
                         className="h-6 w-6"
-                        onClick={() => fetchPrevDayOi()}
+                        onClick={() => {
+                            setIsRefreshing(true)
+                            fetchPrevDayOi().finally(() => setIsRefreshing(false))
+                        }}
                         title="Refresh Data"
                     >
-                        <RefreshCw className="h-3 w-3" />
+                        <RefreshCw className={`h-3 w-3 ${isRefreshing ? 'animate-spin' : ''}`} />
                     </Button>
                 </div>
                 </CardHeader>

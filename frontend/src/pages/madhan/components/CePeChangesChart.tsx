@@ -56,7 +56,7 @@ export function CePeChangesChart({ refreshTrigger }: CePeChangesChartProps) {
     const [data, setData] = useState<CePeChangesData | null>(null);
     const [spotData, setSpotData] = useState<SpotData | null>(null);
     const [isLoading, setIsLoading] = useState(false);
-    const [strikeMode, setStrikeMode] = useState<'option1' | 'option2'>('option1'); // option1 (All Strikes) default
+    const [strikeMode, setStrikeMode] = useState<'option1' | 'option2'>('option2'); // option2 (Writers View) default
     const [showDivergence, setShowDivergence] = useState(false);
     const [showSpot, setShowSpot] = useState(false);
 
@@ -327,8 +327,17 @@ export function CePeChangesChart({ refreshTrigger }: CePeChangesChartProps) {
              const alignedSpotPrices = [];
              const segmentColors: string[] = [];
              
+             const lastSpotTimestamp = spotData.timestamps[spotData.timestamps.length - 1];
+
              for (let i = 0; i < filledTimestamps.length; i++) {
                 const cepeTimestamp = filledTimestamps[i];
+                
+                // If timestamp is ahead of last known spot data by more than 5 minutes, stop plotting
+                if (cepeTimestamp > lastSpotTimestamp + 5 * 60 * 1000) {
+                    alignedSpotPrices.push(null);
+                    continue;
+                }
+
                 let closestIndex = 0;
                 let minDiff = Math.abs(spotData.timestamps[0] - cepeTimestamp);
 
@@ -345,6 +354,12 @@ export function CePeChangesChart({ refreshTrigger }: CePeChangesChartProps) {
              for (let i = 1; i < alignedSpotPrices.length; i++) {
                 const current = alignedSpotPrices[i];
                 const previous = alignedSpotPrices[i - 1];
+                
+                if (current === null || previous === null || current === undefined || previous === undefined) {
+                    segmentColors.push('rgba(156, 163, 175, 1)'); // Default/Gap
+                    continue;
+                }
+
                 if (current > previous) {
                     segmentColors.push('rgba(34, 197, 94, 1)'); // Green
                 } else {

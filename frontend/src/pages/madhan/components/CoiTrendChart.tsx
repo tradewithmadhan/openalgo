@@ -142,6 +142,15 @@ export function CoiTrendChart({ refreshTrigger }: CoiTrendChartProps) {
             priceScaleId: 'right',
         }) as ISeriesApi<"Baseline">;
 
+        coiSeries.createPriceLine({
+            price: 0,
+            color: 'rgba(255, 255, 255, 0.5)',
+            lineWidth: 1,
+            lineStyle: LineStyle.Dashed,
+            axisLabelVisible: false,
+            title: '',
+        });
+
         const oiTrendSeries = chart.addSeries(LineSeries, {
             color: '#FF6D00',
             lineWidth: 2,

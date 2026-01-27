@@ -71,6 +71,8 @@ export function CePeStrikeChangesChart({ refreshTrigger, atmStrike }: CePeStrike
             for (let i = -10; i <= 10; i++) {
                 newStrikes.push(atmStrike + (i * 50));
             }
+            // Sort strikes descending (higher strikes on top)
+            newStrikes.sort((a, b) => b - a);
             setStrikes(newStrikes);
             
             // If no strike is selected, or if the current selected strike is not in the new list (optional, but good for safety), select ATM
