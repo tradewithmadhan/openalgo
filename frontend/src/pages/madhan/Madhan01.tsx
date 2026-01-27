@@ -573,6 +573,15 @@ export default function Madhan01() {
                             className="scale-75 origin-right"
                         />
                     </div>
+                    <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-6 w-6"
+                        onClick={() => fetchPrevDayOi()}
+                        title="Refresh Data"
+                    >
+                        <RefreshCw className="h-3 w-3" />
+                    </Button>
                 </div>
                 </CardHeader>
                 <CardContent className="space-y-2">

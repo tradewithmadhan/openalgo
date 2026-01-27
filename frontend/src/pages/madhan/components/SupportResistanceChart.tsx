@@ -33,6 +33,7 @@ export function SupportResistanceChart({ refreshTrigger }: SupportResistanceChar
     const coiSupportSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
     const coiResistanceSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
     const spotSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+    const lastSpotTimeRef = useRef<number | null>(null);
     const prevWidthRef = useRef(0);
     const shouldFitContent = useRef(true);
     const wsRef = useRef<WebSocket | null>(null);
@@ -40,7 +41,7 @@ export function SupportResistanceChart({ refreshTrigger }: SupportResistanceChar
     const [data, setData] = useState<SupportResistanceData | null>(null);
     const [spotData, setSpotData] = useState<any>(null);
     const [isLoading, setIsLoading] = useState(false);
-    const [isLive, setIsLive] = useState(false);
+    const [isLive, setIsLive] = useState(true);
     
     // Toggles
     const [showOi, setShowOi] = useState(true);
@@ -122,6 +123,7 @@ export function SupportResistanceChart({ refreshTrigger }: SupportResistanceChar
                         const type = message.type || message.status;
                         
                         if (type === 'auth' && message.status === 'success') {
+                            console.log('[WS] Auth success, subscribing...');
                             toast.success('Live connection established');
                             // Subscribe to NIFTY
                             socket.send(JSON.stringify({ 
@@ -131,16 +133,47 @@ export function SupportResistanceChart({ refreshTrigger }: SupportResistanceChar
                             }));
                         } else if (type === 'market_data' && message.data) {
                             const { symbol, exchange, data } = message;
+                            // console.log('[WS] Data received:', symbol, data.ltp, data.timestamp);
                             if (symbol === 'NIFTY' && exchange === 'NSE_INDEX' && data.ltp && spotSeriesRef.current) {
                                 // Update chart
-                                const time = data.timestamp 
-                                    ? (new Date(data.timestamp).getTime() / 1000) 
-                                    : (Date.now() / 1000);
+                                let rawTime: number;
+                                if (data.timestamp) {
+                                    if (typeof data.timestamp === 'number') {
+                                        // Heuristic: If timestamp is less than 100 billion, it's likely seconds (valid until year 5138)
+                                        // Current ms timestamp is ~1.7 trillion
+                                        if (data.timestamp < 100000000000) {
+                                            rawTime = data.timestamp;
+                                        } else {
+                                            rawTime = data.timestamp / 1000;
+                                        }
+                                    } else {
+                                        // String or other format
+                                        rawTime = new Date(data.timestamp).getTime() / 1000;
+                                    }
+                                } else {
+                                    rawTime = Date.now() / 1000;
+                                }
                                 
-                                spotSeriesRef.current.update({
-                                    time: time as any,
-                                    value: data.ltp
-                                });
+                                // Round to nearest minute to aggregate updates
+                                const time = Math.floor(rawTime / 60) * 60;
+
+                                console.log(`[WS] Update: LTP=${data.ltp}, RawTime=${rawTime}, AggTime=${time}, LastRef=${lastSpotTimeRef.current}`);
+
+                                // Prevent updating with older timestamps
+                                if (lastSpotTimeRef.current !== null && time < lastSpotTimeRef.current) {
+                                    console.warn(`[WS] Skipping update: Time ${time} < Last ${lastSpotTimeRef.current}`);
+                                    return;
+                                }
+
+                                try {
+                                    spotSeriesRef.current.update({
+                                        time: time as any,
+                                        value: data.ltp
+                                    });
+                                    lastSpotTimeRef.current = time;
+                                } catch (err) {
+                                    console.error('[WS] Chart update failed:', err, { time, ltp: data.ltp, last: lastSpotTimeRef.current });
+                                }
                             }
                         }
                     } catch (e) {
@@ -226,6 +259,12 @@ export function SupportResistanceChart({ refreshTrigger }: SupportResistanceChar
             },
             width: chartContainerRef.current.clientWidth,
             height: 500,
+            localization: {
+                timeFormatter: (time: number) => {
+                    const date = new Date(time * 1000);
+                    return date.toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: false });
+                },
+            },
             timeScale: {
                 timeVisible: true,
                 secondsVisible: false,
@@ -370,11 +409,26 @@ export function SupportResistanceChart({ refreshTrigger }: SupportResistanceChar
         }
 
         if (showSpot && spotData && spotData.timestamps && spotData.prices) {
-            const spotSeriesData = spotData.timestamps.map((ts: number, i: number) => ({
-                time: ts / 1000 as any,
-                value: spotData.prices[i],
-            }));
-            spotSeriesData.sort((a: any, b: any) => (a.time as number) - (b.time as number));
+            // Aggregate spot data to 1-minute intervals to match WebSocket updates
+            const spotMap = new Map<number, number>();
+            spotData.timestamps.forEach((ts: number, i: number) => {
+                const time = Math.floor((ts / 1000) / 60) * 60;
+                spotMap.set(time, spotData.prices[i]); // Keep latest price for the minute
+            });
+
+            const spotSeriesData = Array.from(spotMap.entries())
+                .map(([time, value]) => ({
+                    time: time as any,
+                    value: value,
+                }))
+                .sort((a: any, b: any) => (a.time as number) - (b.time as number));
+
+                if (spotSeriesData.length > 0) {
+                lastSpotTimeRef.current = spotSeriesData[spotSeriesData.length - 1].time as number;
+            } else {
+                lastSpotTimeRef.current = null;
+            }
+
             spotSeriesRef.current.setData(spotSeriesData);
             spotSeriesRef.current.applyOptions({ visible: true });
         } else {
