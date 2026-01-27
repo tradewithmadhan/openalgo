@@ -13,9 +13,9 @@ from utils.logging import get_logger
 from services.history_service import get_history
 from services.expiry_service import get_expiry_dates
 from database.madhan_db import store_nifty_data, store_option_data, store_previous_day_oi, NiftyData, OptionData, SessionLocal, get_tracked_symbols, save_tracked_symbols, save_fetcher_state, get_fetcher_state,get_valid_trading_day
+from database.market_calendar_db import is_market_holiday
 
 logger = get_logger(__name__)
-
 
 
 
@@ -24,26 +24,11 @@ def get_trading_days():
     try:
         today = get_valid_trading_day(exchange="NSE")
         prev_day = today - timedelta(days=1)
-        market_holidays = {
-            datetime(2025, 2, 26).date(): "Mahashivratri",
-            datetime(2025, 3, 14).date(): "Holi",
-            datetime(2025, 3, 31).date(): "Id-Ul-Fitr (Ramadan Eid)",
-            datetime(2025, 4, 10).date(): "Shri Mahavir Jayanti",
-            datetime(2025, 4, 14).date(): "Dr. Baba Saheb Ambedkar Jayanti",
-            datetime(2025, 4, 18).date(): "Good Friday",
-            datetime(2025, 5, 1).date(): "Maharashtra Day",
-            datetime(2025, 8, 15).date(): "Independence Day / Parsi New Year",
-            datetime(2025, 8, 27).date(): "Shri Ganesh Chaturthi",
-            datetime(2025, 10, 2).date(): "Mahatma Gandhi Jayanti/Dussehra",
-            datetime(2025, 10, 21).date(): "Diwali Laxmi Pujan",
-            datetime(2025, 10, 22).date(): "Balipratipada",
-            datetime(2025, 11, 5).date(): "Prakash Gurpurb Sri Guru Nanak Dev",
-            datetime(2025, 12, 25).date(): "Christmas"
-        }
-
-        # Skip weekends and market holidays
-        while prev_day.weekday() >= 5 or prev_day in market_holidays.keys():  # Monday is 0 and Sunday is 6
+        
+        # Use centralized holiday logic
+        while prev_day.weekday() >= 5 or is_market_holiday(prev_day, exchange="NSE"):
             prev_day -= timedelta(days=1)
+            
         return today, prev_day
     except Exception as e:
         logger.exception(f"Error calculating trading days: {e}")

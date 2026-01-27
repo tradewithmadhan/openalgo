@@ -33,16 +33,22 @@ def get_valid_trading_day(
         return trading_date
 
 
-# ✅ This single line is enough
-today_trade_date = get_valid_trading_day(exchange="NSE")
-print(today_trade_date)
+
 
 logger = get_logger(__name__)
 
 # Database setup
 DATABASE_URL = os.getenv('DATABASE_URL', 'sqlite:///openalgo.db')
+
+# Heuristic: If we are using the default URL (root), but db/openalgo.db exists,
+# it implies we are likely running in a context where env vars weren't loaded yet
+# but the project structure uses db/ folder.
+if DATABASE_URL == 'sqlite:///openalgo.db' and os.path.exists(os.path.join('db', 'openalgo.db')):
+     DATABASE_URL = 'sqlite:///db/openalgo.db'
+
 # Create a new DB file in the same directory as the main DB
 MADHAN_DB_PATH = os.path.join(os.path.dirname(DATABASE_URL.replace('sqlite:///', '')), 'madhan.db')
+logger.info(f"Madhan DB initialized at: {MADHAN_DB_PATH} (DATABASE_URL: {DATABASE_URL})")
 engine = create_engine(f'sqlite:///{MADHAN_DB_PATH}')
 Base = declarative_base()
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -353,10 +359,43 @@ def get_option_data():
         session.close()
 
 def get_previous_day_oi():
-    """Retrieves all previous day OI records from the database."""
+    """
+    Retrieves previous day OI records from the database.
+    Filters for data belonging to the valid trading day immediately preceding the current trading day.
+    """
     session = SessionLocal()
     try:
+        # Determine the previous trading day
+        current_trading_day = get_valid_trading_day(exchange="NSE")
+        prev_trading_day = get_valid_trading_day(current_trading_day - timedelta(days=1), exchange="NSE")
+        
+        # Create timestamp range for that day
+        start_of_day = datetime.combine(prev_trading_day, time.min)
+        end_of_day = datetime.combine(prev_trading_day, time.max)
+        
+        start_ts = int(start_of_day.timestamp())
+        end_ts = int(end_of_day.timestamp())
+
+        logger.info(f"Fetching previous day OI for date: {prev_trading_day} (TS: {start_ts} to {end_ts})")
+
+        # First, try to get data for the exact previous trading day
+        results = session.query(PreviousDayOI).filter(
+            PreviousDayOI.timestamp >= start_ts,
+            PreviousDayOI.timestamp <= end_ts
+        ).order_by(PreviousDayOI.symbol).all()
+
+        if results:
+            logger.info(f"Found {len(results)} records for the correct date.")
+            return [
+                {'symbol': r.symbol, 'oi': r.oi, 'close': r.close, 'timestamp': r.timestamp}
+                for r in results
+            ]
+        
+        # Fallback: If no data for the exact date, return whatever is in the table (likely stale data)
+        # This prevents the UI from breaking if the fetcher missed a day or calculated the wrong date.
+        logger.warning(f"No data found for {prev_trading_day}. Falling back to latest available data in table.")
         results = session.query(PreviousDayOI).order_by(PreviousDayOI.symbol).all()
+        
         return [
             {'symbol': r.symbol, 'oi': r.oi, 'close': r.close, 'timestamp': r.timestamp}
             for r in results
