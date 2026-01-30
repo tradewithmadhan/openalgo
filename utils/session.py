@@ -165,7 +165,6 @@ def check_session_validity(f):
             # Revoke tokens before clearing session
             revoke_user_tokens()
             session.clear()
-            clear_madhan_db()
 
             # Check if this is an AJAX/fetch request
             from flask import jsonify, request

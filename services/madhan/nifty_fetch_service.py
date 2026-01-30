@@ -12,7 +12,7 @@ import pytz
 from utils.logging import get_logger
 from services.history_service import get_history
 from services.expiry_service import get_expiry_dates
-from database.madhan_db import store_nifty_data, store_option_data, store_previous_day_oi, NiftyData, OptionData, SessionLocal, get_tracked_symbols, save_tracked_symbols, save_fetcher_state, get_fetcher_state,get_valid_trading_day
+from database.madhan_db import store_nifty_data, store_option_data, store_previous_day_oi, NiftyData, OptionData, SessionLocal, get_tracked_symbols, save_tracked_symbols, save_fetcher_state, get_fetcher_state,get_valid_trading_day,clear_madhan_db
 from database.market_calendar_db import is_market_holiday
 
 logger = get_logger(__name__)
@@ -102,7 +102,8 @@ class NiftyDataFetcher:
         if self.is_running:
             logger.warning("Nifty fetcher is already running.")
             return False
-        
+            
+        clear_madhan_db()
         self.api_key = api_key
         self.stop_event.clear()
         self.thread = threading.Thread(target=self._run, daemon=True)

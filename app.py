@@ -101,6 +101,12 @@ from utils.version import get_version  # Import version management
 # Import WebSocket proxy server - using relative import to avoid @ symbol issues
 from websocket_proxy.app_integration import start_websocket_proxy
 
+#madhan entrys
+from blueprints.madhan import madhan_bp # Import the madhan blueprint
+from database.madhan_db import init_db as ensure_madhan_tables_exist
+
+
+
 # Initialize logger
 logger = get_logger(__name__)
 
@@ -239,9 +245,20 @@ def create_app():
     app.register_blueprint(flow_bp)  # Register Flow blueprint
     app.register_blueprint(broker_credentials_bp)  # Register Broker credentials blueprint
     app.register_blueprint(system_permissions_bp)  # Register System permissions blueprint
+    app.register_blueprint(madhan_bp)  # Register Madhan blueprint
 
     # Exempt webhook endpoints from CSRF protection after app initialization
     with app.app_context():
+        # Exempt Nifty data fetching endpoints from CSRF protection (they use API key auth)
+        csrf.exempt(app.view_functions['madhan_bp.start_nifty_fetch'])
+        csrf.exempt(app.view_functions['madhan_bp.stop_nifty_fetch'])
+        csrf.exempt(app.view_functions['madhan_bp.nifty_status'])
+        csrf.exempt(app.view_functions['madhan_bp.nifty_data'])
+        csrf.exempt(app.view_functions['madhan_bp.nifty_option_data'])
+        csrf.exempt(app.view_functions['madhan_bp.nifty_previous_day_oi'])
+        csrf.exempt(app.view_functions['madhan_bp.nifty_coi_trend'])
+        csrf.exempt(app.view_functions['madhan_bp.nifty_chart_data'])
+        
         # Exempt webhook endpoints from CSRF protection
         csrf.exempt(app.view_functions["chartink_bp.webhook"])
         csrf.exempt(app.view_functions["strategy_bp.webhook"])
@@ -490,6 +507,7 @@ def setup_environment(app):
             ("Qty Freeze DB", ensure_qty_freeze_tables_exists),
             ("Historify DB", ensure_historify_tables_exists),
             ("Flow DB", ensure_flow_tables_exists),
+            ('Madhan DB', ensure_madhan_tables_exist)
         ]
 
         db_init_start = time.time()
