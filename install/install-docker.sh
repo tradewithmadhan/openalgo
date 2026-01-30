@@ -272,14 +272,39 @@ $SUDO sed -i "s|WEBSOCKET_URL='.*'|WEBSOCKET_URL='wss://$DOMAIN/ws'|g" .env
 $SUDO sed -i "s|WEBSOCKET_HOST='127.0.0.1'|WEBSOCKET_HOST='0.0.0.0'|g" .env
 $SUDO sed -i "s|ZMQ_HOST='127.0.0.1'|ZMQ_HOST='0.0.0.0'|g" .env
 $SUDO sed -i "s|FLASK_HOST_IP='127.0.0.1'|FLASK_HOST_IP='0.0.0.0'|g" .env
-$SUDO sed -i "s|CORS_ALLOWED_ORIGINS = '.*'|CORS_ALLOWED_ORIGINS = 'https://$DOMAIN'|g" .env
-$SUDO sed -i "s|CSP_CONNECT_SRC = \"'self'.*\"|CSP_CONNECT_SRC = \"'self' wss://$DOMAIN https://$DOMAIN wss: ws: https://cdn.socket.io\"|g" .env
+# CORS: Add domain if not already present (preserves custom domains)
+# NOTE: Flask-CORS expects comma-separated origins (see cors.py line 25)
+if ! grep "CORS_ALLOWED_ORIGINS" .env | grep -q "https://$DOMAIN"; then
+    CURRENT_CORS=$(grep "CORS_ALLOWED_ORIGINS" .env | sed "s/.*= '\\(.*\\)'/\\1/")
+    if [ -n "$CURRENT_CORS" ]; then
+        NEW_CORS="$CURRENT_CORS,https://$DOMAIN"
+        NEW_CORS=$(echo "$NEW_CORS" | tr ',' '\n' | sort -u | tr '\n' ',' | sed 's/,$//')
+        $SUDO sed -i "s|CORS_ALLOWED_ORIGINS = '.*'|CORS_ALLOWED_ORIGINS = '$NEW_CORS'|g" .env
+    fi
+fi
+
+# CSP: Add domain if not already present (preserves custom domains)
+if ! grep "CSP_CONNECT_SRC" .env | grep -q "https://$DOMAIN"; then
+    CURRENT_CSP=$(grep "CSP_CONNECT_SRC" .env | sed 's/.*= "\\(.*\\)"/\\1/')
+    if [ -n "$CURRENT_CSP" ] && ! echo "$CURRENT_CSP" | grep -q "https://$DOMAIN"; then
+        NEW_CSP="$CURRENT_CSP https://$DOMAIN wss://$DOMAIN"
+        $SUDO sed -i "s|CSP_CONNECT_SRC = \".*\"|CSP_CONNECT_SRC = \"$NEW_CSP\"|g" .env
+    fi
+fi
 
 check_status "Environment configuration failed"
 
+# Calculate dynamic shm_size based on available RAM (25% of total, min 256m, max 2g)
+TOTAL_RAM_MB=$(($(grep MemTotal /proc/meminfo | awk '{print $2}') / 1024))
+SHM_SIZE_MB=$((TOTAL_RAM_MB / 4))
+# Clamp between 256MB and 2048MB
+[ $SHM_SIZE_MB -lt 256 ] && SHM_SIZE_MB=256
+[ $SHM_SIZE_MB -gt 2048 ] && SHM_SIZE_MB=2048
+log "System RAM: ${TOTAL_RAM_MB}MB, SHM size: ${SHM_SIZE_MB}MB" "$BLUE"
+
 # Create docker-compose.yaml
 log "\n=== Creating Docker Compose Configuration ===" "$BLUE"
-$SUDO tee docker-compose.yaml > /dev/null << 'EOF'
+$SUDO tee docker-compose.yaml > /dev/null << EOF
 services:
   openalgo:
     image: openalgo:latest
@@ -296,10 +321,10 @@ services:
     # Use named volumes to avoid permission issues with non-root container user
     volumes:
       - openalgo_db:/app/db
-      - openalgo_logs:/app/logs
       - openalgo_log:/app/log
       - openalgo_strategies:/app/strategies
       - openalgo_keys:/app/keys
+      - openalgo_tmp:/app/tmp
       - ./.env:/app/.env:ro
 
     environment:
@@ -307,8 +332,11 @@ services:
       - FLASK_DEBUG=0
       - APP_MODE=standalone
 
+    # Shared memory for scipy/numba operations (dynamic: 25% of RAM, min 256m, max 2g)
+    shm_size: '${SHM_SIZE_MB}m'
+
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5000/"]
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:5000/auth/check-setup"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -320,13 +348,13 @@ services:
 volumes:
   openalgo_db:
     driver: local
-  openalgo_logs:
-    driver: local
   openalgo_log:
     driver: local
   openalgo_strategies:
     driver: local
   openalgo_keys:
+    driver: local
+  openalgo_tmp:
     driver: local
 EOF
 
@@ -547,6 +575,12 @@ server {
         proxy_connect_timeout 300s;
         proxy_send_timeout 300s;
         proxy_buffering off;
+
+        # Increased buffer sizes for large headers (auth tokens, session cookies)
+        proxy_buffer_size 128k;
+        proxy_buffers 4 256k;
+        proxy_busy_buffers_size 256k;
+
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection "upgrade";
         proxy_set_header Host \$host;
@@ -585,7 +619,7 @@ check_status "Nginx reload failed"
 
 # Build and start Docker container
 log "\n=== Building Docker Image ===" "$BLUE"
-log "This may take several minutes..." "$YELLOW"
+log "Includes automated frontend build. This may take 2-5 minutes depending on your server..." "$YELLOW"
 sudo docker compose build
 check_status "Docker build failed"
 

@@ -456,7 +456,8 @@ case "$OS_TYPE" in
     ubuntu | debian | raspbian)
         # Wait for any running package manager operations to complete
         wait_for_dpkg_lock
-        sudo apt-get install -y python3 python3-venv python3-pip nginx git software-properties-common
+        sudo apt-get install -y python3 python3-venv python3-pip nginx git software-properties-common \
+            libopenblas0 libgomp1 libgfortran5
         # Try to install python3-full if available (Ubuntu 23.04+)
         sudo apt-get install -y python3-full 2>/dev/null || log_message "python3-full not available, skipping" "$YELLOW"
         # Try to install snapd, but don't fail if unavailable
@@ -465,7 +466,8 @@ case "$OS_TYPE" in
         ;;
     centos | fedora | rhel | amzn)
         if ! command -v dnf >/dev/null 2>&1; then
-            sudo yum install -y python3 python3-pip nginx git epel-release
+            sudo yum install -y python3 python3-pip nginx git epel-release \
+                openblas-devel gcc-gfortran libgomp
             # Install SELinux management tools for RHEL-based systems
             sudo yum install -y policycoreutils-python-utils 2>/dev/null || log_message "SELinux tools already installed" "$YELLOW"
             # Try to install snapd, but don't fail if unavailable (we use pip for uv anyway)
@@ -473,7 +475,8 @@ case "$OS_TYPE" in
         else
             # Install EPEL repository first for access to additional packages
             sudo dnf install -y epel-release 2>/dev/null || log_message "EPEL repository already installed or not available" "$YELLOW"
-            sudo dnf install -y python3 python3-pip nginx git
+            sudo dnf install -y python3 python3-pip nginx git \
+                openblas-devel gcc-gfortran libgomp
             # Install SELinux management tools for RHEL-based systems
             sudo dnf install -y policycoreutils-python-utils 2>/dev/null || log_message "SELinux tools already installed" "$YELLOW"
             # Try to install snapd, but don't fail if unavailable (we use pip for uv anyway)
@@ -486,7 +489,8 @@ case "$OS_TYPE" in
         fi
         ;;
     arch)
-        sudo pacman -Sy --noconfirm --needed python python-pip nginx git
+        sudo pacman -Sy --noconfirm --needed python python-pip nginx git \
+            openblas gcc-fortran
         # Try to install snapd, but don't fail if unavailable (we use pip for uv anyway)
         sudo pacman -Sy --noconfirm --needed snapd 2>/dev/null || log_message "snapd not available, will use pip for uv installation" "$YELLOW"
         check_status "Failed to install required packages"
@@ -924,6 +928,11 @@ server {
         proxy_connect_timeout 300s;
         proxy_send_timeout 300s;
 
+        # Increased buffer sizes for large headers (auth tokens, session cookies)
+        proxy_buffer_size 128k;
+        proxy_buffers 4 256k;
+        proxy_busy_buffers_size 256k;
+
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection "upgrade";
         proxy_set_header Host \$host;
@@ -960,17 +969,23 @@ After=network.target
 User=$WEB_USER
 Group=$WEB_GROUP
 WorkingDirectory=$OPENALGO_PATH
+# Environment variables for numba/scipy support
+Environment="TMPDIR=$OPENALGO_PATH/tmp"
+Environment="NUMBA_CACHE_DIR=$OPENALGO_PATH/tmp/numba_cache"
+Environment="LLVMLITE_TMPDIR=$OPENALGO_PATH/tmp"
+Environment="MPLCONFIGDIR=$OPENALGO_PATH/tmp/matplotlib"
 # Simplified approach to ensure Python environment is properly loaded
 ExecStart=/bin/bash -c 'source $VENV_PATH/bin/activate && $VENV_PATH/bin/gunicorn \
     --worker-class eventlet \
     -w 1 \
     --bind unix:$SOCKET_FILE \
+    --timeout 300 \
     --log-level info \
     app:app'
 # Restart settings
 Restart=always
 RestartSec=5
-TimeoutSec=60
+TimeoutSec=300
 
 [Install]
 WantedBy=multi-user.target
@@ -986,7 +1001,8 @@ sudo chmod -R 755 $BASE_PATH
 
 # Create and set permissions for required directories
 sudo mkdir -p $OPENALGO_PATH/db
-sudo mkdir -p $OPENALGO_PATH/tmp
+sudo mkdir -p $OPENALGO_PATH/tmp/numba_cache
+sudo mkdir -p $OPENALGO_PATH/tmp/matplotlib
 # Create directories for Python strategy feature
 sudo mkdir -p $OPENALGO_PATH/strategies/scripts
 sudo mkdir -p $OPENALGO_PATH/strategies/examples
