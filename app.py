@@ -488,6 +488,7 @@ def setup_environment(app):
         from database.chart_prefs_db import ensure_chart_prefs_tables_exists
         from database.market_calendar_db import ensure_market_calendar_tables_exists
         from database.qty_freeze_db import ensure_qty_freeze_tables_exists
+        from database.madhan_db import init_db as ensure_madhan_tables_exist
 
         db_init_functions = [
             ("Auth DB", ensure_auth_tables_exists),

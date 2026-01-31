@@ -72,36 +72,44 @@ class NiftyDataFetcher:
         self.stop_event = threading.Event()
         self.status = "Idle"
         self.api_key = None
-        self.option_symbols = get_tracked_symbols()
+        self.option_symbols = [] # Initialize empty, load later
         self.last_update = None
         
-        # Load persisted state to provide values even when idle
+        # Initialize state variables with defaults
+        self.open_atm_strike = 0
+        self.current_atm_strike = 0
+        self.expiry_date = None
+        self.trading_date = None
+        
+        self.request_delay = self._get_request_delay()
+
+    def _load_state(self):
+        """Loads persisted state from database. Safe to call only after DB init."""
         try:
+            self.option_symbols = get_tracked_symbols()
             self.open_atm_strike = int(get_fetcher_state('open_atm_strike') or 0)
             self.current_atm_strike = int(get_fetcher_state('current_atm_strike') or 0)
             self.expiry_date = get_fetcher_state('expiry_date')
             self.trading_date = get_valid_trading_day(exchange="NSE")
+            
             if self.open_atm_strike > 0:
                 logger.info(f"Loaded persisted Open ATM strike: {self.open_atm_strike}")
             if self.current_atm_strike > 0:
                 logger.info(f"Loaded persisted Current ATM strike: {self.current_atm_strike}")
             if self.expiry_date:
                 logger.info(f"Loaded persisted Expiry Date: {self.expiry_date}")
-        except (ValueError, TypeError) as e:
+        except Exception as e:
             logger.error(f"Could not load persisted fetcher state: {e}")
-            self.open_atm_strike = 0
-            self.current_atm_strike = 0
-            self.expiry_date = None
-
-        self.request_delay = self._get_request_delay()
-
-
+            # Keep defaults
 
     def start(self, api_key: str):
         """Starts the data fetching thread."""
         if self.is_running:
             logger.warning("Nifty fetcher is already running.")
             return False
+            
+        # Ensure state is loaded before starting
+        self._load_state()
             
         clear_madhan_db()
         self.api_key = api_key
