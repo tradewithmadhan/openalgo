@@ -1,0 +1,9 @@
+<<<<<<< HEAD:frontend/dist/assets/label-BxI9DuWr.js
+<<<<<<<< HEAD:frontend/dist/assets/label-CPHw1Po_.js
+import{j as o}from"./vendor-react--vsXx8_n.js";import{n as a}from"./vendor-radix-DnptSSCf.js";import{c as r}from"./index-DZEhEl8u.js";function d({className:e,...t}){return o.jsx(a,{"data-slot":"label",className:r("flex items-center gap-2 text-sm leading-none font-medium select-none group-data-[disabled=true]:pointer-events-none group-data-[disabled=true]:opacity-50 peer-disabled:cursor-not-allowed peer-disabled:opacity-50",e),...t})}export{d as L};
+========
+import{j as o}from"./vendor-react--vsXx8_n.js";import{s as a}from"./vendor-radix-CodNzUU3.js";import{c as r}from"./index-B4Y48dxY.js";function d({className:e,...t}){return o.jsx(a,{"data-slot":"label",className:r("flex items-center gap-2 text-sm leading-none font-medium select-none group-data-[disabled=true]:pointer-events-none group-data-[disabled=true]:opacity-50 peer-disabled:cursor-not-allowed peer-disabled:opacity-50",e),...t})}export{d as L};
+>>>>>>>> 0e83c47a20f1add5b7559e8c06ff4dcf04a7e624:frontend/dist/assets/label-BxI9DuWr.js
+=======
+import{j as o}from"./vendor-react--vsXx8_n.js";import{s as a}from"./vendor-radix-DkDlinVE.js";import{c as r}from"./index-C8IcCeuN.js";function d({className:e,...t}){return o.jsx(a,{"data-slot":"label",className:r("flex items-center gap-2 text-sm leading-none font-medium select-none group-data-[disabled=true]:pointer-events-none group-data-[disabled=true]:opacity-50 peer-disabled:cursor-not-allowed peer-disabled:opacity-50",e),...t})}export{d as L};
+>>>>>>> 5f11c25965e781310f5ca93f0d526f4e5c941760:frontend/dist/assets/label-D_BTwjHd.js
