@@ -64,11 +64,8 @@ export const profileMenuItems: NavItem[] = [
   { href: '/python', label: 'Python Strategies', icon: Code2 },
   { href: '/pnl-tracker', label: 'PnL Tracker', icon: BarChart3 },
   { href: '/historify', label: 'Historify', icon: Database },
-<<<<<<< HEAD
   { href: '/madhan/madhan01', label: 'Madhan Nifty Dashboard', icon: BarChart3 },
-=======
   { href: '/optionchain', label: 'Option Chain', icon: TrendingUp },
->>>>>>> 0e83c47a20f1add5b7559e8c06ff4dcf04a7e624
   { href: '/search/token', label: 'Search', icon: Search },
   { href: '/sandbox', label: 'Sandbox', icon: FlaskConical },
   { href: '/admin', label: 'Admin', icon: Settings },
