@@ -27,6 +27,18 @@ const tools = [
     href: '/maxpain',
     color: 'bg-amber-500',
   },
+  {
+    title: 'Straddle Chart',
+    description: 'Dynamic ATM Straddle chart with rolling strike, Spot, and Synthetic Futures overlay',
+    href: '/straddle',
+    color: 'bg-teal-500',
+  },
+  {
+    title: 'Vol Surface',
+    description: '3D Implied Volatility surface across strikes and expiries using live option chain data',
+    href: '/volsurface',
+    color: 'bg-rose-500',
+  },
 ]
 
 export default function Tools() {
