@@ -49,6 +49,8 @@ export interface UseLivePriceResult<T extends PriceableItem> {
   isConnected: boolean
   /** Whether WebSocket is paused due to tab being hidden */
   isPaused: boolean
+  /** Whether using REST API fallback instead of WebSocket */
+  isFallbackMode: boolean
   /** Whether any market is currently open */
   isAnyMarketOpen: boolean
   /** Map of MultiQuotes data for external access if needed */
@@ -83,7 +85,6 @@ export function useLivePrice<T extends PriceableItem>(
     useMultiQuotesFallback = true,
     multiQuotesRefreshInterval = 30000,
     pauseWhenHidden = true,
-    pauseDelay = 5000,
   } = options
 
   const { apiKey } = useAuthStore()
@@ -108,12 +109,10 @@ export function useLivePrice<T extends PriceableItem>(
   )
 
   // WebSocket market data - connect when enabled, with visibility awareness
-  const { data: marketData, isConnected: wsConnected, isPaused: wsPaused } = useMarketData({
+  const { data: marketData, isConnected: wsConnected, isPaused: wsPaused, isFallbackMode } = useMarketData({
     symbols,
     mode: 'LTP',
     enabled: enabled && items.length > 0,
-    pauseWhenHidden,
-    pauseDelay,
   })
 
   // Effective live status
@@ -279,6 +278,7 @@ export function useLivePrice<T extends PriceableItem>(
     isLive,
     isConnected: wsConnected,
     isPaused: wsPaused,
+    isFallbackMode,
     isAnyMarketOpen: anyMarketOpen,
     multiQuotes,
     refreshMultiQuotes: fetchMultiQuotes,

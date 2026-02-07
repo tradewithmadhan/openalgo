@@ -32,6 +32,7 @@ const Token = lazy(() => import('@/pages/Token'))
 const Search = lazy(() => import('@/pages/Search'))
 const ApiKey = lazy(() => import('@/pages/ApiKey'))
 const Profile = lazy(() => import('@/pages/Profile'))
+const MasterContract = lazy(() => import('@/pages/MasterContract'))
 const ActionCenter = lazy(() => import('@/pages/ActionCenter'))
 
 // Platform pages
@@ -49,8 +50,12 @@ const Playground = lazy(() => import('@/pages/Playground'))
 const Historify = lazy(() => import('@/pages/Historify'))
 const HistorifyCharts = lazy(() => import('@/pages/HistorifyCharts'))
 
-// Option Chain
+// Tools & Option Chain
+const Tools = lazy(() => import('@/pages/Tools'))
 const OptionChain = lazy(() => import('@/pages/OptionChain'))
+const IVChart = lazy(() => import('@/pages/IVChart'))
+const OITracker = lazy(() => import('@/pages/OITracker'))
+const MaxPain = lazy(() => import('@/pages/MaxPain'))
 
 // Strategy pages
 const StrategyIndex = lazy(() => import('@/pages/strategy/StrategyIndex'))
@@ -144,7 +149,11 @@ function App() {
                 <Route path="/sandbox" element={<Sandbox />} />
                 <Route path="/sandbox/mypnl" element={<SandboxPnL />} />
                 <Route path="/analyzer" element={<Analyzer />} />
+                <Route path="/tools" element={<Tools />} />
                 <Route path="/optionchain" element={<OptionChain />} />
+                <Route path="/ivchart" element={<IVChart />} />
+                <Route path="/oitracker" element={<OITracker />} />
+                <Route path="/maxpain" element={<MaxPain />} />
                 <Route path="/websocket/test" element={<WebSocketTest />} />
                 <Route path="/websocket/test/20" element={<WebSocketTest depthLevel={20} />} />
                 <Route path="/websocket/test/30" element={<WebSocketTest depthLevel={30} />} />
@@ -192,6 +201,7 @@ function App() {
                 <Route path="/health" element={<HealthMonitor />} />
                 {/* Phase 7: Settings & Action Center */}
                 <Route path="/profile" element={<Profile />} />
+                <Route path="/master-contract" element={<MasterContract />} />
                 <Route path="/action-center" element={<ActionCenter />} />
               </Route>
 

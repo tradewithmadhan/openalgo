@@ -66,6 +66,8 @@ export interface UseLiveQuoteResult {
   isLoading: boolean
   /** Whether WebSocket is paused due to tab being hidden */
   isPaused: boolean
+  /** Whether using REST API fallback instead of WebSocket */
+  isFallbackMode: boolean
   /** Data source: 'websocket', 'rest', or 'none' */
   dataSource: 'websocket' | 'rest' | 'none'
   /** Manually refresh REST data */
@@ -105,7 +107,6 @@ export function useLiveQuote(
     useDepthFallback = true,
     staleThreshold = 5000,
     refreshInterval = 30000,
-    pauseWhenHidden = true,
   } = options
 
   const { apiKey } = useAuthStore()
@@ -128,11 +129,10 @@ export function useLiveQuote(
     [symbol, exchange, hasSymbol]
   )
 
-  const { data: marketData, isConnected: wsConnected, isPaused: wsPaused } = useMarketData({
+  const { data: marketData, isConnected: wsConnected, isPaused: wsPaused, isFallbackMode } = useMarketData({
     symbols,
     mode,
     enabled: enabled && hasSymbol,
-    pauseWhenHidden,
   })
 
   const wsData = marketData.get(`${exchange}:${symbol}`)?.data
@@ -312,6 +312,7 @@ export function useLiveQuote(
     isConnected: wsConnected,
     isLoading: isLoadingRest && !restQuotes && !restDepth,
     isPaused: wsPaused,
+    isFallbackMode,
     dataSource,
     refresh: fetchRestData,
   }
