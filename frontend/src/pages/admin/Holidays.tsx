@@ -91,7 +91,6 @@ export default function HolidaysPage() {
       setYears(response.years)
       setExchanges(response.exchanges)
     } catch (error) {
-      console.error('Error fetching holidays:', error)
       showToast.error('Failed to load holidays', 'admin')
     } finally {
       setIsLoading(false)
@@ -334,6 +333,8 @@ export default function HolidaysPage() {
                 size="icon"
                 onClick={() => setCurrentYear((y) => y - 1)}
                 disabled={!years.includes(currentYear - 1)}
+                title="Previous year"
+                aria-label="Previous year"
               >
                 <ChevronLeft className="h-4 w-4" />
               </Button>
@@ -357,6 +358,8 @@ export default function HolidaysPage() {
                 size="icon"
                 onClick={() => setCurrentYear((y) => y + 1)}
                 disabled={!years.includes(currentYear + 1)}
+                title="Next year"
+                aria-label="Next year"
               >
                 <ChevronRight className="h-4 w-4" />
               </Button>
@@ -413,6 +416,8 @@ export default function HolidaysPage() {
                           variant="ghost"
                           className="h-8 w-8 text-destructive hover:text-destructive"
                           onClick={() => setDeleteHoliday(holiday)}
+                          title="Delete holiday"
+                          aria-label={`Delete holiday ${holiday.description}`}
                         >
                           <Trash2 className="h-4 w-4" />
                         </Button>
@@ -553,6 +558,7 @@ export default function HolidaysPage() {
                             updateSpecialSessionTime(ex.exchange, 'start_time', e.target.value)
                           }
                           className="w-[110px]"
+                          aria-label={`Start time for ${ex.exchange}`}
                         />
                         <span className="text-muted-foreground">to</span>
                         <Input
@@ -562,12 +568,15 @@ export default function HolidaysPage() {
                             updateSpecialSessionTime(ex.exchange, 'end_time', e.target.value)
                           }
                           className="w-[110px]"
+                          aria-label={`End time for ${ex.exchange}`}
                         />
                         <Button
                           variant="ghost"
                           size="icon"
                           className="h-8 w-8 text-destructive hover:text-destructive"
                           onClick={() => removeSpecialSessionExchange(ex.exchange)}
+                          title="Remove exchange"
+                          aria-label={`Remove ${ex.exchange} from special session`}
                         >
                           <Trash2 className="h-4 w-4" />
                         </Button>

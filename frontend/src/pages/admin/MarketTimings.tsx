@@ -46,7 +46,6 @@ export default function MarketTimingsPage() {
       setTodayTimings(response.today_timings)
       setToday(response.today)
     } catch (error) {
-      console.error('Error fetching timings:', error)
       showToast.error('Failed to load market timings', 'admin')
     } finally {
       setIsLoading(false)
@@ -184,6 +183,7 @@ export default function MarketTimingsPage() {
                             value={editStartTime}
                             onChange={(e) => setEditStartTime(e.target.value)}
                             className="w-28 h-8"
+                            aria-label={`Start time for ${timing.exchange}`}
                           />
                         ) : (
                           <span className="font-mono">{timing.start_time}</span>
@@ -196,6 +196,7 @@ export default function MarketTimingsPage() {
                             value={editEndTime}
                             onChange={(e) => setEditEndTime(e.target.value)}
                             className="w-28 h-8"
+                            aria-label={`End time for ${timing.exchange}`}
                           />
                         ) : (
                           <span className="font-mono">{timing.end_time}</span>
@@ -210,6 +211,8 @@ export default function MarketTimingsPage() {
                               className="h-8 w-8"
                               onClick={() => handleSaveEdit(timing.exchange)}
                               disabled={isSaving}
+                              title="Save changes"
+                              aria-label={`Save timing changes for ${timing.exchange}`}
                             >
                               <Save className="h-4 w-4" />
                             </Button>
@@ -218,6 +221,8 @@ export default function MarketTimingsPage() {
                               variant="ghost"
                               className="h-8 w-8"
                               onClick={() => setEditingExchange(null)}
+                              title="Cancel editing"
+                              aria-label={`Cancel editing ${timing.exchange}`}
                             >
                               <X className="h-4 w-4" />
                             </Button>
@@ -228,6 +233,8 @@ export default function MarketTimingsPage() {
                             variant="ghost"
                             className="h-8 w-8"
                             onClick={() => handleEdit(timing)}
+                            title="Edit timing"
+                            aria-label={`Edit timing for ${timing.exchange}`}
                           >
                             <Pencil className="h-4 w-4" />
                           </Button>

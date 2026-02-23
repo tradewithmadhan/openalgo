@@ -53,13 +53,16 @@ export default function GoCharting() {
   // JSON output
   const [generatedJson, setGeneratedJson] = useState<string>('')
 
+  // API key state
+  const [apiKey, setApiKey] = useState<string>('')
+
   // Host config state for webhook URL
   const [hostConfig, setHostConfig] = useState<{ host_server: string; is_localhost: boolean } | null>(null)
 
   // Refs
   const inputWrapperRef = useRef<HTMLDivElement>(null)
 
-  // Fetch host configuration on mount
+  // Fetch host configuration and API key on mount
   useEffect(() => {
     const fetchHostConfig = async () => {
       try {
@@ -67,7 +70,6 @@ export default function GoCharting() {
         const data = await response.json()
         setHostConfig(data)
       } catch (error) {
-        console.error('Failed to fetch host config:', error)
         // Fallback to window.location.origin if config fetch fails
         setHostConfig({
           host_server: window.location.origin,
@@ -75,7 +77,19 @@ export default function GoCharting() {
         })
       }
     }
+    const fetchApiKey = async () => {
+      try {
+        const response = await fetch('/playground/api-key', { credentials: 'include' })
+        if (response.ok) {
+          const data = await response.json()
+          setApiKey(data.api_key || '')
+        }
+      } catch {
+        // Silently fail - API key may not exist yet
+      }
+    }
     fetchHostConfig()
+    fetchApiKey()
   }, [])
 
   // Get webhook URL from host config or fallback to window.location.origin
@@ -102,7 +116,6 @@ export default function GoCharting() {
         setSearchResults((data.results || []).slice(0, 10))
         setShowResults(true)
       } catch (error) {
-        console.error('Search error:', error)
         setSearchResults([])
       } finally {
         setIsLoading(false)
@@ -147,7 +160,7 @@ export default function GoCharting() {
     }
 
     const json = {
-      apikey: 'YOUR_API_KEY',
+      apikey: apiKey || 'YOUR_API_KEY',
       strategy: 'GoCharting Alert',
       symbol: symbol,
       exchange: exchange,

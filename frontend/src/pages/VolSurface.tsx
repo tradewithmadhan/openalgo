@@ -1,11 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Check, ChevronsUpDown } from 'lucide-react'
 import type * as PlotlyTypes from 'plotly.js'
 import Plot from 'react-plotly.js'
-import { useAuthStore } from '@/stores/authStore'
 import { useThemeStore } from '@/stores/themeStore'
-import { optionChainApi } from '@/api/option-chain'
+import { oiProfileApi } from '@/api/oi-profile'
 import { volSurfaceApi, type VolSurfaceData } from '@/api/vol-surface'
 import { Card, CardContent } from '@/components/ui/card'
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from '@/components/ui/command'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import {
   Select,
   SelectContent,
@@ -17,13 +26,15 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { showToast } from '@/utils/toast'
 
-const UNDERLYINGS = [
-  { value: 'NIFTY', label: 'NIFTY', exchange: 'NFO', brokerExchange: 'NSE_INDEX' },
-  { value: 'BANKNIFTY', label: 'BANKNIFTY', exchange: 'NFO', brokerExchange: 'NSE_INDEX' },
-  { value: 'SENSEX', label: 'SENSEX', exchange: 'BFO', brokerExchange: 'BSE_INDEX' },
-  { value: 'FINNIFTY', label: 'FINNIFTY', exchange: 'NFO', brokerExchange: 'NSE_INDEX' },
-  { value: 'MIDCPNIFTY', label: 'MIDCPNIFTY', exchange: 'NFO', brokerExchange: 'NSE_INDEX' },
+const FNO_EXCHANGES = [
+  { value: 'NFO', label: 'NFO' },
+  { value: 'BFO', label: 'BFO' },
 ]
+
+const DEFAULT_UNDERLYINGS: Record<string, string[]> = {
+  NFO: ['NIFTY', 'BANKNIFTY', 'FINNIFTY', 'MIDCPNIFTY'],
+  BFO: ['SENSEX', 'BANKEX'],
+}
 
 const STRIKE_COUNTS = [
   { value: '10', label: '10' },
@@ -48,9 +59,11 @@ export default function VolSurface() {
   const { mode, appMode } = useThemeStore()
   const isAnalyzer = appMode === 'analyzer'
   const isDark = mode === 'dark' || isAnalyzer
-  const { apiKey } = useAuthStore()
 
-  const [selectedUnderlying, setSelectedUnderlying] = useState(UNDERLYINGS[0].value)
+  const [selectedExchange, setSelectedExchange] = useState('NFO')
+  const [underlyings, setUnderlyings] = useState<string[]>(DEFAULT_UNDERLYINGS.NFO)
+  const [underlyingOpen, setUnderlyingOpen] = useState(false)
+  const [selectedUnderlying, setSelectedUnderlying] = useState('NIFTY')
   const [expiries, setExpiries] = useState<string[]>([])
   const [selectedExpiries, setSelectedExpiries] = useState<string[]>([])
   const [strikeCount, setStrikeCount] = useState('40')
@@ -58,8 +71,7 @@ export default function VolSurface() {
   const [isLoading, setIsLoading] = useState(false)
   const requestIdRef = useRef(0)
 
-  const underlyingConfig =
-    UNDERLYINGS.find((u) => u.value === selectedUnderlying) || UNDERLYINGS[0]
+  // Send NFO/BFO directly — backend resolves correct exchange for index vs stock
 
   // Theme colors
   const themeColors = useMemo(
@@ -78,9 +90,39 @@ export default function VolSurface() {
     [isDark, isAnalyzer]
   )
 
-  // Fetch expiries when underlying changes — clear state to prevent race condition
+  // Fetch underlyings when exchange changes
   useEffect(() => {
-    if (!apiKey) return
+    const defaults = DEFAULT_UNDERLYINGS[selectedExchange] || []
+    setUnderlyings(defaults)
+    setSelectedUnderlying(defaults[0] || '')
+    setExpiries([])
+    setSelectedExpiries([])
+    setSurfaceData(null)
+
+    let cancelled = false
+    const fetchUnderlyings = async () => {
+      try {
+        const response = await oiProfileApi.getUnderlyings(selectedExchange)
+        if (cancelled) return
+        if (response.status === 'success' && response.underlyings.length > 0) {
+          setUnderlyings(response.underlyings)
+          if (!response.underlyings.includes(defaults[0])) {
+            setSelectedUnderlying(response.underlyings[0])
+          }
+        }
+      } catch {
+        // Keep defaults
+      }
+    }
+    fetchUnderlyings()
+    return () => {
+      cancelled = true
+    }
+  }, [selectedExchange])
+
+  // Fetch expiries when underlying changes
+  useEffect(() => {
+    if (!selectedUnderlying) return
     setExpiries([])
     setSelectedExpiries([])
     setSurfaceData(null)
@@ -88,17 +130,12 @@ export default function VolSurface() {
     let cancelled = false
     const fetchExpiries = async () => {
       try {
-        const res = await optionChainApi.getExpiries(
-          apiKey,
-          underlyingConfig.value,
-          underlyingConfig.exchange,
-          'options'
-        )
+        const response = await oiProfileApi.getExpiries(selectedExchange, selectedUnderlying)
         if (cancelled) return
-        if (res.status === 'success' && res.data && res.data.length > 0) {
-          setExpiries(res.data)
+        if (response.status === 'success' && response.expiries.length > 0) {
+          setExpiries(response.expiries)
           // Auto-select first 4 expiries
-          setSelectedExpiries(res.data.slice(0, 4))
+          setSelectedExpiries(response.expiries.slice(0, 4))
         }
       } catch {
         if (cancelled) return
@@ -109,7 +146,8 @@ export default function VolSurface() {
     return () => {
       cancelled = true
     }
-  }, [apiKey, underlyingConfig.value, underlyingConfig.exchange])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedUnderlying])
 
   // Toggle an expiry selection
   const toggleExpiry = useCallback(
@@ -132,8 +170,8 @@ export default function VolSurface() {
     setIsLoading(true)
     try {
       const res = await volSurfaceApi.getSurfaceData({
-        underlying: underlyingConfig.value,
-        exchange: underlyingConfig.brokerExchange,
+        underlying: selectedUnderlying,
+        exchange: selectedExchange,
         expiry_dates: selectedExpiries.map(convertExpiryForAPI),
         strike_count: parseInt(strikeCount),
       })
@@ -149,7 +187,7 @@ export default function VolSurface() {
     } finally {
       if (requestIdRef.current === requestId) setIsLoading(false)
     }
-  }, [selectedExpiries, strikeCount, underlyingConfig])
+  }, [selectedExpiries, strikeCount, selectedUnderlying, selectedExchange])
 
   // Build Plotly data
   const plotData = useMemo(() => {
@@ -254,26 +292,50 @@ export default function VolSurface() {
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <h1 className="text-2xl font-bold">Vol Surface</h1>
         <div className="flex items-center gap-3">
-          <Select
-            value={selectedUnderlying}
-            onValueChange={(v) => {
-              setSelectedUnderlying(v)
-              setSelectedExpiries([])
-              setExpiries([])
-              setSurfaceData(null)
-            }}
-          >
-            <SelectTrigger className="w-[140px]">
-              <SelectValue placeholder="Underlying" />
+          <Select value={selectedExchange} onValueChange={setSelectedExchange}>
+            <SelectTrigger className="w-[100px]">
+              <SelectValue placeholder="Exchange" />
             </SelectTrigger>
             <SelectContent>
-              {UNDERLYINGS.map((u) => (
-                <SelectItem key={u.value} value={u.value}>
-                  {u.label}
+              {FNO_EXCHANGES.map((ex) => (
+                <SelectItem key={ex.value} value={ex.value}>
+                  {ex.label}
                 </SelectItem>
               ))}
             </SelectContent>
           </Select>
+
+          <Popover open={underlyingOpen} onOpenChange={setUnderlyingOpen}>
+            <PopoverTrigger asChild>
+              <Button variant="outline" role="combobox" aria-expanded={underlyingOpen} className="w-[140px] justify-between">
+                {selectedUnderlying || 'Underlying'}
+                <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-48 p-0" align="start">
+              <Command>
+                <CommandInput placeholder="Search underlying..." />
+                <CommandList>
+                  <CommandEmpty>No underlying found</CommandEmpty>
+                  <CommandGroup>
+                    {underlyings.map((u) => (
+                      <CommandItem
+                        key={u}
+                        value={u}
+                        onSelect={() => {
+                          setSelectedUnderlying(u)
+                          setUnderlyingOpen(false)
+                        }}
+                      >
+                        <Check className={`mr-2 h-4 w-4 ${selectedUnderlying === u ? 'opacity-100' : 'opacity-0'}`} />
+                        {u}
+                      </CommandItem>
+                    ))}
+                  </CommandGroup>
+                </CommandList>
+              </Command>
+            </PopoverContent>
+          </Popover>
 
           <Select value={strikeCount} onValueChange={setStrikeCount}>
             <SelectTrigger className="w-[100px]">
