@@ -60,8 +60,8 @@ export function CePeStrikeChangesChart({ refreshTrigger, atmStrike }: CePeStrike
     const [isLoading, setIsLoading] = useState(false);
     const [selectedStrike, setSelectedStrike] = useState<string>("");
     const [strikes, setStrikes] = useState<number[]>([]);
-    const [showDivergence, setShowDivergence] = useState(false);
-    const [showSpot, setShowSpot] = useState(false);
+    const [showDivergence, setShowDivergence] = useState(true);
+    const [showSpot, setShowSpot] = useState(true);
 
     useEffect(() => {
         console.log('CePeStrikeChangesChart atmStrike:', atmStrike);

@@ -57,8 +57,8 @@ export function CePeChangesChart({ refreshTrigger }: CePeChangesChartProps) {
     const [spotData, setSpotData] = useState<SpotData | null>(null);
     const [isLoading, setIsLoading] = useState(false);
     const [strikeMode, setStrikeMode] = useState<'option1' | 'option2'>('option2'); // option2 (Writers View) default
-    const [showDivergence, setShowDivergence] = useState(false);
-    const [showSpot, setShowSpot] = useState(false);
+    const [showDivergence, setShowDivergence] = useState(true);
+    const [showSpot, setShowSpot] = useState(true);
 
     const fetchData = async () => {
         setIsLoading(true);
