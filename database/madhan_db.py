@@ -298,12 +298,17 @@ def get_fetcher_state(key: str):
     session = SessionLocal()
     try:
         result = session.query(FetcherState.value).filter(FetcherState.key == key).scalar()
+        if result:
+            logger.info(f"Retrieved fetcher state: {key} = {result}")
+        else:
+            logger.info(f"Fetcher state not found for key: {key}")
         return result
-    except Exception as e:
-        logger.error(f"Error fetching fetcher state for key {key}: {e}")
+    except SQLAlchemyError as e:
+        logger.error(f"Database error retrieving fetcher state for key {key}: {e}")
         return None
     finally:
         session.close()
+
 
 def get_nifty_data(limit: int = 500):
     """Retrieves the latest Nifty data records from the database."""

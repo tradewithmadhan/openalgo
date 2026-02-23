@@ -34,6 +34,7 @@ import { CoiTrendChart } from './components/CoiTrendChart'
 import { CePeChangesChart } from './components/CePeChangesChart'
 import { CePeStrikeChangesChart } from './components/CePeStrikeChangesChart'
 import { SupportResistanceChart } from './components/SupportResistanceChart'
+import { MultiOptionsChart } from './components/MultiOptionsChart'
 
 interface NiftyStatus {
   status: 'success' | 'error' | 'info'
@@ -112,17 +113,21 @@ export default function Madhan01() {
 
       if (!response.ok) {
         setError('Failed to fetch Nifty status')
-        return
+        return null
       }
 
       const data = await response.json()
       if (data.status === 'success') {
-        setStatus(data as NiftyStatus)
+        const statusData = data as NiftyStatus
+        setStatus(statusData)
+        return statusData
       } else {
         setError(data.message || 'Failed to fetch Nifty status')
+        return null
       }
     } catch (_e) {
       setError('Failed to fetch Nifty status')
+      return null
     }
   }, [])
 
@@ -176,12 +181,7 @@ export default function Madhan01() {
   }, [fetchStatus])
 
   useEffect(() => {
-    fetchStatus()
-    const interval = setInterval(() => {
-        fetchStatus()
-        setRefreshTrigger(prev => prev + 1)
-    }, 5000)
-    return () => clearInterval(interval)
+    // This effect is now managed by the smart loop in the main useEffect
   }, [fetchStatus])
 
 
@@ -203,7 +203,7 @@ export default function Madhan01() {
     }
   }, [])
 
-  const fetchLiveData = useCallback(async () => {
+  const fetchLiveData = useCallback(async (): Promise<number | null> => {
     try {
       const [niftyResponse, optionResponse] = await Promise.all([
         fetch('/madhan/api/nifty/data', {
@@ -217,12 +217,14 @@ export default function Madhan01() {
       ])
 
       const rows: Array<NiftyCandle | OptionCandle> = []
+      let lastTimestamp: number | null = null
 
       if (niftyResponse.ok) {
         const niftyJson = await niftyResponse.json()
         if (niftyJson.status === 'success' && Array.isArray(niftyJson.data) && niftyJson.data.length > 0) {
           const latest = niftyJson.data[niftyJson.data.length - 1] as NiftyCandle
           rows.push(latest)
+          lastTimestamp = latest.timestamp
         }
       }
 
@@ -232,23 +234,72 @@ export default function Madhan01() {
           const sorted = [...optionJson.data] as OptionCandle[]
           sorted.sort((a, b) => a.symbol.localeCompare(b.symbol))
           rows.push(...sorted)
+          // If nifty data didn't provide timestamp, check option data? 
+          // Usually Nifty data is the reference.
+          if (!lastTimestamp && sorted.length > 0) {
+              lastTimestamp = sorted[0].timestamp
+          }
         }
       }
 
       setLiveRows(rows)
+      return lastTimestamp
     } catch {
+        return null
     }
   }, [])
 
   useEffect(() => {
-    fetchPrevDayOi()
-    fetchLiveData()
-    const interval = setInterval(() => {
-      fetchPrevDayOi()
-      fetchLiveData()
-    }, 15000)
-    return () => clearInterval(interval)
-  }, [fetchPrevDayOi, fetchLiveData])
+    let timeoutId: ReturnType<typeof setTimeout>
+
+    const runSmartLoop = async () => {
+        try {
+            const statusData = await fetchStatus()
+            await fetchPrevDayOi()
+            const lastTs = await fetchLiveData()
+            
+            // Notify chart to refresh
+            setRefreshTrigger(prev => prev + 1)
+
+            // Only schedule next run if is_running is true
+            if (statusData?.is_running) {
+                // Determine next run time
+                const now = Date.now()
+                const period = 60000 // 1 min
+                const currentMinuteStart = Math.floor(now / period) * period
+                const expectedTs = currentMinuteStart - period 
+
+                let delay = 5000 // default retry
+
+                if (lastTs && lastTs >= expectedTs) {
+                    // We are up to date. Wait for next minute boundary.
+                    const nextMinuteStart = currentMinuteStart + period
+                    // Add 2 seconds buffer to allow DB update
+                    delay = Math.max(5000, nextMinuteStart - now + 2000) 
+                }
+                
+                timeoutId = setTimeout(runSmartLoop, delay)
+            }
+        } catch (e) {
+            // On error, if we think we should be running, retry in 5s
+            // But checking status failed? 
+            // If fetchStatus failed, statusData is null. We stop loop.
+            // But maybe network glitch? 
+            // Let's rely on status state for fallback retry?
+            // If fetchStatus failed, we don't know if running.
+            // Safer to stop or retry? 
+            // Given user request "if false no refresh", safer to stop if we can't confirm true.
+            // But let's check current state as fallback
+            if (status?.is_running) {
+                 timeoutId = setTimeout(runSmartLoop, 5000)
+            }
+        }
+    }
+
+    runSmartLoop()
+
+    return () => clearTimeout(timeoutId)
+  }, [fetchStatus, fetchPrevDayOi, fetchLiveData, status?.is_running])
 
   const buildUnifiedStrikes = (): UnifiedStrikeRow[] => {
     if (!prevDayOi.length) return []
@@ -518,10 +569,11 @@ export default function Madhan01() {
       )}
 
       <Tabs defaultValue="unified-oi-chain" className="w-full">
-        <TabsList className="grid w-full grid-cols-2 md:grid-cols-5">
+        <TabsList className="grid w-full grid-cols-2 md:grid-cols-6">
           <TabsTrigger value="unified-oi-chain">Unified OI Chain</TabsTrigger>
           <TabsTrigger value="ce-pe-analysis">CE/PE Analysis</TabsTrigger>
           <TabsTrigger value="coi-trend">COI Trend</TabsTrigger>
+          <TabsTrigger value="multi-options">Multi-Options</TabsTrigger>
           <TabsTrigger value="support-resistance">Support & Resistance</TabsTrigger>
           <TabsTrigger value="data-check">Data Check</TabsTrigger>
         </TabsList>
@@ -894,6 +946,14 @@ export default function Madhan01() {
 
         <TabsContent value="coi-trend">
           <CoiTrendChart refreshTrigger={_refreshTrigger} />
+        </TabsContent>
+
+        <TabsContent value="multi-options">
+            <MultiOptionsChart 
+                refreshTrigger={_refreshTrigger} 
+                atmStrike={status?.open_atm_strike}
+                expiryDate={status?.expiry_date}
+            />
         </TabsContent>
 
         <TabsContent value="support-resistance">

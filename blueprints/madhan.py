@@ -142,6 +142,39 @@ def nifty_option_data():
     data = get_option_data()
     return jsonify({'status': 'success', 'data': data})
 
+@madhan_bp.route('/api/nifty/option-ohlc')
+@check_session_validity
+def nifty_option_ohlc():
+    """Gets OHLC data for a specific option symbol for the current day."""
+    symbol = request.args.get('symbol')
+    if not symbol:
+        return jsonify({'status': 'error', 'message': 'Symbol is required'}), 400
+
+    try:
+        # Use get_current_day_instrument_data to match spot data (current day only)
+        data = get_current_day_instrument_data(symbol)
+        
+        if not data:
+            return jsonify({'status': 'success', 'data': {
+                'timestamps': [], 'open': [], 'high': [], 'low': [], 'close': [], 'volume': [], 'oi': []
+            }})
+
+        # Transform list of dicts to dict of lists (Columnar format)
+        optimized_data = {
+            'timestamps': [row['timestamp'] for row in data],
+            'open': [row['open'] for row in data],
+            'high': [row['high'] for row in data],
+            'low': [row['low'] for row in data],
+            'close': [row['close'] for row in data],
+            'volume': [row['volume'] for row in data],
+            'oi': [row['oi'] for row in data]
+        }
+        
+        return jsonify({'status': 'success', 'data': optimized_data})
+    except Exception as e:
+        logger.error(f"Error fetching option OHLC for {symbol}: {str(e)}")
+        return jsonify({'status': 'error', 'message': f'Error fetching option OHLC: {str(e)}'}), 500
+
 @madhan_bp.route('/api/nifty/previous-day-oi')
 @check_session_validity
 def nifty_previous_day_oi():
@@ -316,6 +349,19 @@ def nifty_coi_trend():
         oi_trend_percent_res.append(oi_trend_percent)
 
     return jsonify({'status': 'success', 'data': {'timestamps': timestamps_res, 'coi_percent': coi_percent_res, 'oi_trend_percent': oi_trend_percent_res}})
+
+@madhan_bp.route('/api/nifty/spot-data')
+@check_session_validity
+def nifty_spot_data():
+    """Gets historical spot data for Nifty."""
+    data = get_current_day_instrument_data('NIFTY')
+    if not data:
+        return jsonify({'status': 'success', 'data': {'timestamps': [], 'prices': []}})
+    
+    timestamps = [d['timestamp'] * 1000 for d in data]
+    prices = [d['close'] for d in data]
+    
+    return jsonify({'status': 'success', 'data': {'timestamps': timestamps, 'prices': prices}})
 
 @madhan_bp.route('/api/nifty/instrument-data')
 @check_session_validity
@@ -949,38 +995,6 @@ def get_strikes():
         logger.error(f"Error fetching strikes: {str(e)}")
         return jsonify({'status': 'error', 'message': f'Error fetching strikes: {str(e)}'}), 500
 
-@madhan_bp.route('/api/nifty/spot-data')
-@check_session_validity
-def nifty_spot_data():
-    """Gets current day's Nifty spot data for line chart overlay."""
-    try:
-        # Get current day's historical data for NIFTY spot
-        historical_data = get_current_day_historical_data()
-        if not historical_data:
-            return jsonify({'status': 'success', 'data': {'timestamps': [], 'prices': []}, 'message': 'No spot data for today.'})
-
-        # Filter only NIFTY spot data and sort by timestamp
-        nifty_data = [row for row in historical_data if row['symbol'] == 'NIFTY']
-        nifty_data.sort(key=lambda x: x['timestamp'])
-
-        timestamps = []
-        prices = []
-        
-        for item in nifty_data:
-            # Convert timestamp to milliseconds for Chart.js
-            timestamps.append(item['timestamp'] * 1000)
-            prices.append(item['close'])  # Use close price for the line chart
-
-        return jsonify({
-            'status': 'success', 
-            'data': {
-                'timestamps': timestamps,
-                'prices': prices
-            }
-        })
-    except Exception as e:
-        logger.error(f"Error fetching spot data: {str(e)}")
-        return jsonify({'status': 'error', 'message': f'Error fetching spot data: {str(e)}'})
 
 
 @madhan_bp.route('/api/nifty/support-resistance')

@@ -332,8 +332,10 @@ export function CePeChangesChart({ refreshTrigger }: CePeChangesChartProps) {
              for (let i = 0; i < filledTimestamps.length; i++) {
                 const cepeTimestamp = filledTimestamps[i];
                 
-                // If timestamp is ahead of last known spot data by more than 5 minutes, stop plotting
-                if (cepeTimestamp > lastSpotTimestamp + 5 * 60 * 1000) {
+                // If timestamp is ahead of last known spot data, stop plotting
+                // Using a small buffer (e.g. 1 min) to account for slight clock differences, 
+                // but we want to avoid extending the line into the future or empty space.
+                if (cepeTimestamp > lastSpotTimestamp + 60 * 1000) {
                     alignedSpotPrices.push(null);
                     continue;
                 }
