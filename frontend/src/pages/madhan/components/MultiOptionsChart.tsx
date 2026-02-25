@@ -1,9 +1,13 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { createChart, ColorType, type IChartApi, type ISeriesApi, AreaSeries, LineSeries, CandlestickSeries, LineStyle } from 'lightweight-charts';
 import { useThemeStore } from '@/stores/themeStore';
+import { useMarketData } from '@/hooks/useMarketData';
+import { Switch } from '@/components/ui/switch';
+import { Label } from '@/components/ui/label';
+import { Zap, ZapOff } from 'lucide-react';
 
 interface MultiOptionsChartProps {
     refreshTrigger: number;
@@ -114,48 +118,6 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
     const { mode } = useThemeStore();
     const chartContainerRef = useRef<HTMLDivElement>(null);
     const chartRef = useRef<IChartApi | null>(null);
-    
-    // Series refs
-    const spotSeriesRef = useRef<ISeriesApi<"Area"> | null>(null);
-    const optionSeriesRefs = useRef<Map<string, ISeriesApi<"Line" | "Candlestick">>>(new Map());
-    const optionSeriesTypes = useRef<Map<string, "Line" | "Candlestick">>(new Map());
-
-    const [strikes, setStrikes] = useState<number[]>([]);
-    const [selectedStrikes, setSelectedStrikes] = useState<Set<number>>(new Set());
-    const [spotData, setSpotData] = useState<SpotData | null>(null);
-    const [optionsData, setOptionsData] = useState<Map<string, OptionOHLC[]>>(new Map());
-    const [showSpot, setShowSpot] = useState(false);
-    const [timeframe, setTimeframe] = useState<1 | 3 | 5 | 15>(1);
-
-    // Generate strikes around ATM
-    useEffect(() => {
-        if (atmStrike) {
-            const newStrikes = [];
-            for (let i = -5; i <= 5; i++) {
-                newStrikes.push(atmStrike + (i * 50));
-            }
-            newStrikes.sort((a, b) => b - a); // Higher strikes on top
-            setStrikes(newStrikes);
-            // Default select ATM
-            setSelectedStrikes(new Set([atmStrike]));
-        }
-    }, [atmStrike]);
-
-    // Fetch Spot Data
-    useEffect(() => {
-        const fetchSpotData = async () => {
-            try {
-                const response = await fetch('/madhan/api/nifty/spot-data');
-                const json = await response.json();
-                if (json.status === 'success') {
-                    setSpotData(json.data);
-                }
-            } catch (error) {
-                console.error("Failed to fetch Spot data", error);
-            }
-        };
-        fetchSpotData();
-    }, [refreshTrigger]);
 
     // Helper to format date for symbol
     const getSymbol = (strike: number, type: 'CE' | 'PE') => {
@@ -199,6 +161,78 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
             return null;
         }
     };
+    
+    // Series refs
+    const spotSeriesRef = useRef<ISeriesApi<"Area"> | null>(null);
+    const optionSeriesRefs = useRef<Map<string, ISeriesApi<"Line" | "Candlestick">>>(new Map());
+    const optionSeriesTypes = useRef<Map<string, "Line" | "Candlestick">>(new Map());
+
+    const [strikes, setStrikes] = useState<number[]>([]);
+    const [selectedStrikes, setSelectedStrikes] = useState<Set<number>>(new Set());
+    const [spotData, setSpotData] = useState<SpotData | null>(null);
+    const [optionsData, setOptionsData] = useState<Map<string, OptionOHLC[]>>(new Map());
+    const [showSpot, setShowSpot] = useState(false);
+    const [timeframe, setTimeframe] = useState<1 | 3 | 5 | 15>(1);
+    const [isLive, setIsLive] = useState(true);
+
+    // Symbols for WebSocket subscription
+    const wsSymbols = useMemo(() => {
+        const syms: Array<{ symbol: string; exchange: string }> = [
+            { symbol: 'NIFTY', exchange: 'NSE_INDEX' }
+        ];
+
+        if (expiryDate && strikes.length > 0) {
+            strikes.forEach(strike => {
+                const ce = getSymbol(strike, 'CE');
+                const pe = getSymbol(strike, 'PE');
+                if (ce) syms.push({ symbol: ce, exchange: 'NFO' });
+                if (pe) syms.push({ symbol: pe, exchange: 'NFO' });
+            });
+        }
+        return syms;
+    }, [strikes, expiryDate]);
+
+    // WebSocket Hook
+    const { data: wsData } = useMarketData({
+        symbols: wsSymbols,
+        mode: 'LTP',
+        enabled: isLive
+    });
+
+    // Refs to track current OHLC state for real-time candlestick updates
+    const currentOHLCRef = useRef<Map<string, OptionOHLC>>(new Map());
+    // Refs to track last updated time for each series to aggregate real-time updates
+    const lastUpdateTimeRef = useRef<Map<string, number>>(new Map());
+
+    // Generate strikes around ATM
+    useEffect(() => {
+        if (atmStrike) {
+            const newStrikes = [];
+            for (let i = -5; i <= 5; i++) {
+                newStrikes.push(atmStrike + (i * 50));
+            }
+            newStrikes.sort((a, b) => b - a); // Higher strikes on top
+            setStrikes(newStrikes);
+            // Default select ATM
+            setSelectedStrikes(new Set([atmStrike]));
+        }
+    }, [atmStrike]);
+
+    // Fetch Spot Data
+    useEffect(() => {
+        const fetchSpotData = async () => {
+            try {
+                const response = await fetch('/madhan/api/nifty/spot-data');
+                const json = await response.json();
+                if (json.status === 'success') {
+                    setSpotData(json.data);
+                }
+            } catch (error) {
+                console.error("Failed to fetch Spot data", error);
+            }
+        };
+        fetchSpotData();
+    }, [refreshTrigger]);
 
     // Fetch data for specific symbol
     const fetchSymbolData = async (symbol: string) => {
@@ -337,6 +371,10 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
         if (spotData) {
             const spotChartData = aggregateSpotData(spotData, timeframe);
             spotSeriesRef.current.setData(spotChartData);
+            if (spotChartData.length > 0) {
+                const last = spotChartData[spotChartData.length - 1];
+                lastUpdateTimeRef.current.set('NIFTY', last.time as number);
+            }
         }
         
         const resizeObserver = new ResizeObserver((entries) => {
@@ -371,6 +409,10 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
         if (spotData && spotSeriesRef.current) {
             const spotChartData = aggregateSpotData(spotData, timeframe);
             spotSeriesRef.current.setData(spotChartData);
+            if (spotChartData.length > 0) {
+                const last = spotChartData[spotChartData.length - 1];
+                lastUpdateTimeRef.current.set('NIFTY', last.time as number);
+            }
         }
 
         // Update Options Data
@@ -405,7 +447,9 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
                         wickUpColor: '#22c55e', 
                         wickDownColor: '#ef4444',
                         priceScaleId: 'right', 
-                        title: `${strike} CE`
+                        title: `${strike} CE`,
+                        lastValueVisible: true,
+                        priceLineVisible: true,
                     });
                 } else {
                     ceSeries = chartRef.current!.addSeries(LineSeries, {
@@ -414,6 +458,8 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
                         lineStyle: LineStyle.Dotted,
                         priceScaleId: 'right', // Options on Right Scale
                         title: `${strike} CE`,
+                        lastValueVisible: false,
+                        priceLineVisible: false,
                     });
                 }
                 optionSeriesRefs.current.set(ceKey, ceSeries);
@@ -438,13 +484,41 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
                         low: d.low, 
                         close: d.close
                     }));
+
+                    // Keep real-time candle during refresh if it's newer than historical data
+                    const currentRealtime = currentOHLCRef.current.get(ceKey);
+                    if (currentRealtime && (chartData.length === 0 || currentRealtime.timestamp > chartData[chartData.length - 1].time)) {
+                        chartData.push({
+                            time: currentRealtime.timestamp as any,
+                            open: currentRealtime.open,
+                            high: currentRealtime.high,
+                            low: currentRealtime.low,
+                            close: currentRealtime.close
+                        });
+                    }
+
                     (ceSeries as ISeriesApi<"Candlestick">).setData(chartData);
+                    if (chartData.length > 0) {
+                        const last = chartData[chartData.length - 1];
+                        lastUpdateTimeRef.current.set(ceKey, last.time as number);
+                        if (currentRealtime && last.time === currentRealtime.timestamp) {
+                            // Already in currentOHLCRef
+                        } else {
+                            // Seed from historical last
+                            const lastHistorical = ceData[ceData.length - 1];
+                            currentOHLCRef.current.set(ceKey, { ...lastHistorical });
+                        }
+                    }
                 } else {
                      const chartData = ceData.map(d => ({
                         time: d.timestamp as any,
                         value: d.close
                     }));
                     (ceSeries as ISeriesApi<"Line">).setData(chartData);
+                    if (chartData.length > 0) {
+                        const lastPoint = chartData[chartData.length - 1];
+                        lastUpdateTimeRef.current.set(ceKey, lastPoint.time as number);
+                    }
                 }
             }
 
@@ -469,7 +543,9 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
                         wickUpColor: '#3b82f6', 
                         wickDownColor: '#f97316',
                         priceScaleId: 'right', 
-                        title: `${strike} PE`
+                        title: `${strike} PE`,
+                        lastValueVisible: true,
+                        priceLineVisible: true,
                     });
                 } else {
                     peSeries = chartRef.current!.addSeries(LineSeries, {
@@ -478,6 +554,8 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
                         lineStyle: LineStyle.Dotted,
                         priceScaleId: 'right', // Options on Right Scale
                         title: `${strike} PE`,
+                        lastValueVisible: false,
+                        priceLineVisible: false,
                     });
                 }
                 optionSeriesRefs.current.set(peKey, peSeries);
@@ -502,13 +580,41 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
                         low: d.low, 
                         close: d.close
                     }));
+
+                    // Keep real-time candle during refresh if it's newer than historical data
+                    const currentRealtime = currentOHLCRef.current.get(peKey);
+                    if (currentRealtime && (chartData.length === 0 || currentRealtime.timestamp > chartData[chartData.length - 1].time)) {
+                        chartData.push({
+                            time: currentRealtime.timestamp as any,
+                            open: currentRealtime.open,
+                            high: currentRealtime.high,
+                            low: currentRealtime.low,
+                            close: currentRealtime.close
+                        });
+                    }
+
                     (peSeries as ISeriesApi<"Candlestick">).setData(chartData);
+                    if (chartData.length > 0) {
+                        const last = chartData[chartData.length - 1];
+                        lastUpdateTimeRef.current.set(peKey, last.time as number);
+                        if (currentRealtime && last.time === currentRealtime.timestamp) {
+                            // Already in currentOHLCRef
+                        } else {
+                            // Seed from historical last
+                            const lastHistorical = peData[peData.length - 1];
+                            currentOHLCRef.current.set(peKey, { ...lastHistorical });
+                        }
+                    }
                 } else {
                      const chartData = peData.map(d => ({
                         time: d.timestamp as any,
                         value: d.close
                     }));
                     (peSeries as ISeriesApi<"Line">).setData(chartData);
+                    if (chartData.length > 0) {
+                        const lastPoint = chartData[chartData.length - 1];
+                        lastUpdateTimeRef.current.set(peKey, lastPoint.time as number);
+                    }
                 }
             }
             
@@ -527,6 +633,139 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
         });
 
     }, [spotData, optionsData, selectedStrikes, strikes, mode, showSpot, timeframe]); 
+
+    // WebSocket Real-time Updates Effect
+    useEffect(() => {
+        if (!wsData || wsData.size === 0 || !chartRef.current) return;
+
+        // Process Spot update
+        const spotWs = wsData.get('NSE_INDEX:NIFTY');
+        if (spotWs?.data?.ltp && spotSeriesRef.current) {
+            const ltp = spotWs.data.ltp;
+            const rawTime = (spotWs.lastUpdate || Date.now()) / 1000;
+            const time = Math.floor(rawTime / (timeframe * 60)) * (timeframe * 60);
+
+            const lastTime = lastUpdateTimeRef.current.get('NIFTY');
+            if (lastTime === undefined || time >= lastTime) {
+                spotSeriesRef.current.update({
+                    time: time as any,
+                    value: ltp
+                });
+                lastUpdateTimeRef.current.set('NIFTY', time);
+            }
+        }
+
+        // Process Options updates
+        strikes.forEach(strike => {
+            const ceSymbol = getSymbol(strike, 'CE');
+            const peSymbol = getSymbol(strike, 'PE');
+
+            if (ceSymbol) {
+                const ceWs = wsData.get(`NFO:${ceSymbol}`);
+                const ceSeries = optionSeriesRefs.current.get(ceSymbol);
+                const ceType = optionSeriesTypes.current.get(ceSymbol);
+
+                if (ceWs?.data?.ltp && ceSeries) {
+                    const ltp = ceWs.data.ltp;
+                    const rawTime = (ceWs.lastUpdate || Date.now()) / 1000;
+                    const time = Math.floor(rawTime / (timeframe * 60)) * (timeframe * 60);
+                    const lastTime = lastUpdateTimeRef.current.get(ceSymbol);
+
+                    if (lastTime === undefined || time >= lastTime) {
+                        if (ceType === 'Candlestick') {
+                            const series = ceSeries as ISeriesApi<"Candlestick">;
+                            let currentCandle = currentOHLCRef.current.get(ceSymbol);
+                            
+                            if (currentCandle && time === currentCandle.timestamp) {
+                                // Update existing candle
+                                currentCandle.high = Math.max(currentCandle.high, ltp);
+                                currentCandle.low = Math.min(currentCandle.low, ltp);
+                                currentCandle.close = ltp;
+                            } else {
+                                // New candle boundary or first update
+                                currentCandle = {
+                                    timestamp: time,
+                                    open: ltp,
+                                    high: ltp,
+                                    low: ltp,
+                                    close: ltp,
+                                    volume: 0,
+                                    oi: 0
+                                };
+                                currentOHLCRef.current.set(ceSymbol, currentCandle);
+                            }
+
+                            series.update({
+                                time: time as any,
+                                open: currentCandle.open,
+                                high: currentCandle.high,
+                                low: currentCandle.low,
+                                close: currentCandle.close
+                            });
+                        } else {
+                            (ceSeries as ISeriesApi<"Line">).update({
+                                time: time as any,
+                                value: ltp
+                            });
+                        }
+                        lastUpdateTimeRef.current.set(ceSymbol, time);
+                    }
+                }
+            }
+
+            if (peSymbol) {
+                const peWs = wsData.get(`NFO:${peSymbol}`);
+                const peSeries = optionSeriesRefs.current.get(peSymbol);
+                const peType = optionSeriesTypes.current.get(peSymbol);
+
+                if (peWs?.data?.ltp && peSeries) {
+                    const ltp = peWs.data.ltp;
+                    const rawTime = (peWs.lastUpdate || Date.now()) / 1000;
+                    const timeframeSecs = timeframe * 60;
+                    const time = Math.floor(rawTime / timeframeSecs) * timeframeSecs;
+                    const lastTime = lastUpdateTimeRef.current.get(peSymbol);
+
+                    if (lastTime === undefined || time >= lastTime) {
+                        if (peType === 'Candlestick') {
+                            const series = peSeries as ISeriesApi<"Candlestick">;
+                            let currentCandle = currentOHLCRef.current.get(peSymbol);
+
+                            if (currentCandle && time === currentCandle.timestamp) {
+                                currentCandle.high = Math.max(currentCandle.high, ltp);
+                                currentCandle.low = Math.min(currentCandle.low, ltp);
+                                currentCandle.close = ltp;
+                            } else {
+                                currentCandle = {
+                                    timestamp: time,
+                                    open: ltp,
+                                    high: ltp,
+                                    low: ltp,
+                                    close: ltp,
+                                    volume: 0,
+                                    oi: 0
+                                };
+                                currentOHLCRef.current.set(peSymbol, currentCandle);
+                            }
+
+                            series.update({
+                                time: time as any,
+                                open: currentCandle.open,
+                                high: currentCandle.high,
+                                low: currentCandle.low,
+                                close: currentCandle.close
+                            });
+                        } else {
+                            (peSeries as ISeriesApi<"Line">).update({
+                                time: time as any,
+                                value: ltp
+                            });
+                        }
+                        lastUpdateTimeRef.current.set(peSymbol, time);
+                    }
+                }
+            }
+        });
+    }, [wsData, strikes, timeframe]);
 
     return (
         <div className="flex h-[calc(100vh-140px)] w-full gap-2">
@@ -562,6 +801,18 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
                 <CardHeader className="p-1 flex flex-row items-center justify-between">
                     <CardTitle className="text-xs">Multi-Option Analysis</CardTitle>
                     <div className="flex items-center space-x-4">
+                        <div className="flex items-center space-x-2 mr-2">
+                            <Label htmlFor="live-mode-multi" className="text-[10px] font-semibold flex items-center gap-1 cursor-pointer">
+                                {isLive ? <Zap className="h-3 w-3 text-yellow-500 fill-yellow-500" /> : <ZapOff className="h-3 w-3" />}
+                                Live
+                            </Label>
+                            <Switch 
+                                id="live-mode-multi" 
+                                checked={isLive}
+                                onCheckedChange={setIsLive}
+                                className="scale-75"
+                            />
+                        </div>
                         <div className="flex items-center space-x-1 border rounded p-0.5">
                             {[1, 3, 5, 15].map(tf => (
                                 <button

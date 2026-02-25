@@ -113,6 +113,17 @@ export function CoiTrendChart({ refreshTrigger }: CoiTrendChartProps) {
             },
             width: chartContainerRef.current.clientWidth,
             height: chartContainerRef.current.clientHeight,
+            localization: {
+                timeFormatter: (time: number) => {
+                    const date = new Date(time * 1000);
+                    return date.toLocaleTimeString('en-IN', { 
+                        timeZone: 'Asia/Kolkata', 
+                        hour: '2-digit', 
+                        minute: '2-digit', 
+                        hour12: false 
+                    });
+                },
+            },
             timeScale: {
                 timeVisible: true,
                 secondsVisible: false,

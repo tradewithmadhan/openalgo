@@ -192,7 +192,7 @@ export function CePeChangesChart({ refreshTrigger }: CePeChangesChartProps) {
         }
 
         const labels = filledTimestamps.map(ts => 
-            new Date(ts).toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' })
+            new Date(ts).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false, hour: '2-digit', minute: '2-digit' })
         );
 
         const ceBgColors: string[] = [];

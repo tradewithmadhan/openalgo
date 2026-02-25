@@ -160,7 +160,7 @@ export function CePeStrikeChangesChart({ refreshTrigger, atmStrike }: CePeStrike
         }
 
         const labels = filledTimestamps.map(ts => 
-            new Date(ts).toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' })
+            new Date(ts).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false, hour: '2-digit', minute: '2-digit' })
         );
 
         const ceData = filledCeData;
