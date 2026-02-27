@@ -658,7 +658,7 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
                 position: (s.type.includes('CALL') ? 'belowBar' : 'aboveBar') as any,
                 color: s.type.includes('CALL') ? '#22c55e' : '#ef4444',
                 shape: (s.type.includes('CALL') ? 'arrowUp' : 'arrowDown') as any,
-                text: s.type,
+                text: `${s.type} (${s.count})`,
                 size: 1
             }));
 

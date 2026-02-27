@@ -1089,8 +1089,8 @@ def nifty_signals_cross():
         curr = bucket_data[i]
         prev = bucket_data[i-1]
         
-        call_signal = False
-        put_signal = False
+        call_cross_count = 0
+        put_cross_count = 0
         
         # Check every CE strike vs every PE strike
         for ce_sym, ce_close in curr['ce_closes'].items():
@@ -1103,20 +1103,22 @@ def nifty_signals_cross():
                 
                 # CALL: CE crosses above PE
                 if ce_close > pe_close and prev_ce_close <= prev_pe_close:
-                    call_signal = True
+                    call_cross_count += 1
                 # PUT: PE crosses above CE
                 if pe_close > ce_close and prev_pe_close <= prev_ce_close:
-                    put_signal = True
+                    put_cross_count += 1
                     
-        if call_signal:
+        if call_cross_count > 0:
             signals.append({
                 'time': curr['timestamp'] * 1000,
-                'type': 'CALL CROSS'
+                'type': 'CALLx',
+                'count': call_cross_count
             })
-        elif put_signal:
+        elif put_cross_count > 0:
             signals.append({
                 'time': curr['timestamp'] * 1000,
-                'type': 'PUT CROSS'
+                'type': 'PUTx',
+                'count': put_cross_count
             })
             
     return jsonify({'status': 'success', 'data': signals})
