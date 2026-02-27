@@ -494,7 +494,8 @@ def get_current_day_historical_data():
         option_data = session.query(
             OptionData.symbol, 
             OptionData.timestamp, 
-            func.coalesce(OptionData.oi, 0).label('oi')
+            func.coalesce(OptionData.oi, 0).label('oi'),
+            OptionData.close
         ).filter(OptionData.timestamp >= start_of_day_ts).all()
 
         combined_data = [row._asdict() for row in nifty_data] + [row._asdict() for row in option_data]

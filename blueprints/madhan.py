@@ -996,6 +996,132 @@ def get_strikes():
         return jsonify({'status': 'error', 'message': f'Error fetching strikes: {str(e)}'}), 500
 
 
+@madhan_bp.route('/api/nifty/signals-cross')
+@check_session_validity
+def nifty_signals_cross():
+    """Calculates CALL and PUT crossover signals for the current day."""
+    timeframe = int(request.args.get('timeframe', '1'))
+    
+    # 1. Get ATM and Expiry from fetcher
+    atm_strike = nifty_fetcher.open_atm_strike or nifty_fetcher.current_atm_strike
+    expiry_date = nifty_fetcher.expiry_date
+    
+    if not atm_strike or not expiry_date:
+        return jsonify({'status': 'success', 'data': [], 'message': 'ATM or Expiry not available.'})
+
+    # 2. Generate the 11 strikes around ATM
+    strikes = [atm_strike + (i * 50) for i in range(-5, 6)]
+    
+    # 3. Helper to get symbol names (same logic as frontend)
+    def get_symbol_py(strike, type_):
+        try:
+            # expiry_date is usually "DD-MMM-YY"
+            date_obj = datetime.strptime(expiry_date, "%d-%b-%y")
+            day = date_obj.strftime("%d")
+            month = date_obj.strftime("%b").upper()
+            year = date_obj.strftime("%y")
+            return f"NIFTY{day}{month}{year}{strike}{type_}"
+        except:
+            return None
+
+    tracked_ce = {}
+    tracked_pe = {}
+    for s in strikes:
+        ce = get_symbol_py(s, 'CE')
+        pe = get_symbol_py(s, 'PE')
+        if ce: tracked_ce[ce] = s
+        if pe: tracked_pe[pe] = s
+        
+    all_tracked = set(tracked_ce.keys()) | set(tracked_pe.keys())
+
+    # 4. Fetch historical data for today
+    historical_data = get_current_day_historical_data()
+    if not historical_data:
+        return jsonify({'status': 'success', 'data': []})
+
+    # 5. Group by timestamp and strike
+    data_by_ts = defaultdict(dict)
+    for row in historical_data:
+        symbol = row['symbol']
+        if symbol in all_tracked:
+            ts = row['timestamp']
+            data_by_ts[ts][symbol] = row['close']
+
+    sorted_ts = sorted(data_by_ts.keys())
+    if not sorted_ts:
+        return jsonify({'status': 'success', 'data': []})
+
+    # 6. Aggregate to requested timeframe (buckets)
+    bucket_data = []
+    period_secs = timeframe * 60
+    
+    current_bucket = None
+    bucket_start_time = 0
+    
+    for ts in sorted_ts:
+        bucket_start = (ts // period_secs) * period_secs
+        
+        if current_bucket and bucket_start != bucket_start_time:
+            bucket_data.append(current_bucket)
+            current_bucket = None
+            
+        if not current_bucket:
+            bucket_start_time = bucket_start
+            current_bucket = {
+                'timestamp': bucket_start,
+                'ce_closes': {},
+                'pe_closes': {}
+            }
+            
+        # Update closes in the current bucket (last one wins for the bucket close)
+        for sym, close in data_by_ts[ts].items():
+            if sym in tracked_ce:
+                current_bucket['ce_closes'][sym] = close
+            elif sym in tracked_pe:
+                current_bucket['pe_closes'][sym] = close
+                
+    if current_bucket:
+        bucket_data.append(current_bucket)
+
+    # 7. Detect Crossovers
+    signals = []
+    for i in range(1, len(bucket_data)):
+        curr = bucket_data[i]
+        prev = bucket_data[i-1]
+        
+        call_signal = False
+        put_signal = False
+        
+        # Check every CE strike vs every PE strike
+        for ce_sym, ce_close in curr['ce_closes'].items():
+            prev_ce_close = prev['ce_closes'].get(ce_sym)
+            if prev_ce_close is None: continue
+            
+            for pe_sym, pe_close in curr['pe_closes'].items():
+                prev_pe_close = prev['pe_closes'].get(pe_sym)
+                if prev_pe_close is None: continue
+                
+                # CALL: CE crosses above PE
+                if ce_close > pe_close and prev_ce_close <= prev_pe_close:
+                    call_signal = True
+                # PUT: PE crosses above CE
+                if pe_close > ce_close and prev_pe_close <= prev_ce_close:
+                    put_signal = True
+                    
+        if call_signal:
+            signals.append({
+                'time': curr['timestamp'] * 1000,
+                'type': 'CALL CROSS'
+            })
+        elif put_signal:
+            signals.append({
+                'time': curr['timestamp'] * 1000,
+                'type': 'PUT CROSS'
+            })
+            
+    return jsonify({'status': 'success', 'data': signals})
+
+
 
 @madhan_bp.route('/api/nifty/support-resistance')
 @check_session_validity

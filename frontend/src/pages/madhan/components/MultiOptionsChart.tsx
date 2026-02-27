@@ -172,6 +172,7 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
     const [selectedStrikes, setSelectedStrikes] = useState<Set<number>>(new Set());
     const [spotData, setSpotData] = useState<SpotData | null>(null);
     const [optionsData, setOptionsData] = useState<Map<string, OptionOHLC[]>>(new Map());
+    const [backendSignals, setBackendSignals] = useState<any[]>([]);
     const [showSpot, setShowSpot] = useState(false);
     const [showOptions, setShowOptions] = useState(true);
     const [timeframe, setTimeframe] = useState<1 | 3 | 5 | 15>(1);
@@ -220,6 +221,22 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
             setSelectedStrikes(new Set([atmStrike]));
         }
     }, [atmStrike]);
+
+    // Fetch signals from backend
+    useEffect(() => {
+        const fetchSignals = async () => {
+            try {
+                const response = await fetch(`/madhan/api/nifty/signals-cross?timeframe=${timeframe}`);
+                const json = await response.json();
+                if (json.status === 'success') {
+                    setBackendSignals(json.data);
+                }
+            } catch (error) {
+                console.error("Failed to fetch signals", error);
+            }
+        };
+        if (showSignals) fetchSignals();
+    }, [refreshTrigger, timeframe, showSignals]);
 
     // Fetch Spot Data
     useEffect(() => {
@@ -635,109 +652,27 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
         });
 
         // Calculate Signals if enabled
-        if (showSignals && spotSeriesRef.current && spotData) {
-            const allTimestamps = new Set<number>();
-            const ceClosesByTime = new Map<number, Map<number, number>>(); // time -> {strike -> close}
-            const peClosesByTime = new Map<number, Map<number, number>>(); // time -> {strike -> close}
-
-            // Aggregate CE/PE Closes for each strike
-            strikes.forEach(strike => {
-                const ceSymbol = getSymbol(strike, 'CE');
-                const peSymbol = getSymbol(strike, 'PE');
-                
-                if (ceSymbol) {
-                    const ceDataRaw = optionsData.get(ceSymbol);
-                    if (ceDataRaw) {
-                        const ceData = aggregateData(ceDataRaw, timeframe);
-                        ceData.forEach(d => {
-                            allTimestamps.add(d.timestamp);
-                            if (!ceClosesByTime.has(d.timestamp)) ceClosesByTime.set(d.timestamp, new Map());
-                            ceClosesByTime.get(d.timestamp)!.set(strike, d.close);
-                        });
-                    }
-                }
-
-                if (peSymbol) {
-                    const peDataRaw = optionsData.get(peSymbol);
-                    if (peDataRaw) {
-                        const peData = aggregateData(peDataRaw, timeframe);
-                        peData.forEach(d => {
-                            allTimestamps.add(d.timestamp);
-                            if (!peClosesByTime.has(d.timestamp)) peClosesByTime.set(d.timestamp, new Map());
-                            peClosesByTime.get(d.timestamp)!.set(strike, d.close);
-                        });
-                    }
-                }
-            });
-
-            const sortedTimestamps = Array.from(allTimestamps).sort((a, b) => a - b);
-            const markers: any[] = [];
-            
-            for (let i = 1; i < sortedTimestamps.length; i++) {
-                const t = sortedTimestamps[i];
-                const prevT = sortedTimestamps[i-1];
-                
-                const ceCloses = ceClosesByTime.get(t);
-                const peCloses = peClosesByTime.get(t);
-                const prevCeCloses = ceClosesByTime.get(prevT);
-                const prevPeCloses = peClosesByTime.get(prevT);
-
-                if (!ceCloses || !peCloses || !prevCeCloses || !prevPeCloses) continue;
-
-                let callSignal = false;
-                let putSignal = false;
-
-                // Check EVERY combination of CE and PE strikes for crossovers
-                for (const [ceStrike, ceClose] of ceCloses.entries()) {
-                    const prevCeClose = prevCeCloses.get(ceStrike);
-                    if (prevCeClose === undefined) continue;
-
-                    for (const [peStrike, peClose] of peCloses.entries()) {
-                        const prevPeClose = prevPeCloses.get(peStrike);
-                        if (prevPeClose === undefined) continue;
-
-                        // Condition: ANY Call strike crosses above ANY Put strike
-                        if (ceClose > peClose && prevCeClose <= prevPeClose) {
-                            callSignal = true;
-                        }
-                        // Condition: ANY Put strike crosses above ANY Call strike
-                        if (peClose > ceClose && prevPeClose <= prevCeClose) {
-                            putSignal = true;
-                        }
-                    }
-                }
-
-                if (callSignal) {
-                    markers.push({
-                        time: t as any,
-                        position: 'belowBar',
-                        color: '#22c55e',
-                        shape: 'arrowUp',
-                        text: 'CALL',
-                        size: 1
-                    });
-                } else if (putSignal) {
-                    markers.push({
-                        time: t as any,
-                        position: 'aboveBar',
-                        color: '#ef4444',
-                        shape: 'arrowDown',
-                        text: 'PUT',
-                        size: 1
-                    });
-                }
-            }
+        if (showSignals && spotSeriesRef.current && backendSignals.length > 0) {
+            const markers = backendSignals.map(s => ({
+                time: (s.time / 1000) as any,
+                position: (s.type.includes('CALL') ? 'belowBar' : 'aboveBar') as any,
+                color: s.type.includes('CALL') ? '#22c55e' : '#ef4444',
+                shape: (s.type.includes('CALL') ? 'arrowUp' : 'arrowDown') as any,
+                text: s.type,
+                size: 1
+            }));
 
             if (markersPluginRef.current) {
                 markersPluginRef.current.setMarkers(markers);
             } else if (spotSeriesRef.current) {
-                markersPluginRef.current = createSeriesMarkers(spotSeriesRef.current, markers);
+                // Type casting to avoid build error with lightweight-charts v5 markers
+                markersPluginRef.current = (createSeriesMarkers as any)(spotSeriesRef.current, markers);
             }
         } else if (markersPluginRef.current) {
             markersPluginRef.current.setMarkers([]);
         }
 
-    }, [spotData, optionsData, selectedStrikes, strikes, mode, showSpot, showOptions, timeframe, showSignals]); 
+    }, [spotData, optionsData, selectedStrikes, strikes, mode, showSpot, showOptions, timeframe, showSignals, backendSignals]); 
 
     // WebSocket Real-time Updates Effect
     useEffect(() => {
