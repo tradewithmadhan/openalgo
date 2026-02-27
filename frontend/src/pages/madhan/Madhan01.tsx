@@ -951,7 +951,7 @@ export default function Madhan01() {
         <TabsContent value="multi-options">
             <MultiOptionsChart 
                 refreshTrigger={_refreshTrigger} 
-                atmStrike={status?.open_atm_strike}
+                atmStrike={status?.open_atm_strike || status?.current_atm_strike}
                 expiryDate={status?.expiry_date}
             />
         </TabsContent>
