@@ -35,6 +35,7 @@ import { CePeChangesChart } from './components/CePeChangesChart'
 import { CePeStrikeChangesChart } from './components/CePeStrikeChangesChart'
 import { SupportResistanceChart } from './components/SupportResistanceChart'
 import { MultiOptionsChart } from './components/MultiOptionsChart'
+import { Dash } from './components/Dash'
 
 interface NiftyStatus {
   status: 'success' | 'error' | 'info'
@@ -568,8 +569,9 @@ export default function Madhan01() {
         </Alert>
       )}
 
-      <Tabs defaultValue="unified-oi-chain" className="w-full">
-        <TabsList className="grid w-full grid-cols-2 md:grid-cols-6">
+      <Tabs defaultValue="dash" className="w-full">
+        <TabsList className="grid w-full grid-cols-2 md:grid-cols-7">
+          <TabsTrigger value="dash">Dash</TabsTrigger>
           <TabsTrigger value="unified-oi-chain">Unified OI Chain</TabsTrigger>
           <TabsTrigger value="ce-pe-analysis">CE/PE Analysis</TabsTrigger>
           <TabsTrigger value="coi-trend">COI Trend</TabsTrigger>
@@ -578,6 +580,10 @@ export default function Madhan01() {
           <TabsTrigger value="data-check">Data Check</TabsTrigger>
         </TabsList>
         
+        <TabsContent value="dash">
+          <Dash refreshTrigger={_refreshTrigger} />
+        </TabsContent>
+
         <TabsContent value="unified-oi-chain">
             <Card>
                 <CardHeader className="flex flex-row items-center justify-between space-y-0">
