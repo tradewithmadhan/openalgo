@@ -329,12 +329,17 @@ def get_nifty_data(limit: int = 500):
         session.close()
 
 def get_option_data():
-    """Retrieves the latest record and total count for each tracked option symbol."""
+    """Retrieves the latest record, total count, and cumulative day volume for each tracked option symbol."""
     session = SessionLocal()
     try:
         from sqlalchemy.orm import aliased
 
-        # Subquery to rank records and get count for each symbol
+        # Determine the start of the current trading day
+        today = get_valid_trading_day(exchange="NSE")
+        start_of_day = datetime.combine(today, time.min)
+        start_ts = int(start_of_day.timestamp())
+
+        # Subquery to rank records, get count, and calculate cumulative volume for each symbol
         subq = (
             select(
                 OptionData,
@@ -344,18 +349,32 @@ def get_option_data():
                 ).label('rn'),
                 func.count(OptionData.id).over(
                     partition_by=OptionData.symbol
-                ).label('candle_count')
-            )
+                ).label('candle_count'),
+                func.sum(OptionData.volume).over(
+                    partition_by=OptionData.symbol
+                ).label('total_day_volume')
+            ).filter(OptionData.timestamp >= start_ts)
         ).subquery()
 
         option_data_alias = aliased(OptionData, subq)
         
         # Query for the latest record (rn=1) for each symbol
-        results = session.query(option_data_alias, subq.c.candle_count).filter(subq.c.rn == 1).order_by(option_data_alias.symbol).all()
+        results = session.query(option_data_alias, subq.c.candle_count, subq.c.total_day_volume).filter(subq.c.rn == 1).order_by(option_data_alias.symbol).all()
 
         return [
-            {'timestamp': r.timestamp, 'symbol': r.symbol, 'open': r.open, 'high': r.high, 'low': r.low, 'close': r.close, 'volume': r.volume, 'oi': r.oi, 'candle_count': candle_count}
-            for r, candle_count in results
+            {
+                'timestamp': r.timestamp, 
+                'symbol': r.symbol, 
+                'open': r.open, 
+                'high': r.high, 
+                'low': r.low, 
+                'close': r.close, 
+                'volume': r.volume, # Reverted to last candle volume
+                'day_volume': int(total_day_volume) if total_day_volume is not None else 0, # New separate field for cumulative volume
+                'oi': r.oi, 
+                'candle_count': candle_count
+            }
+            for r, candle_count, total_day_volume in results
         ]
     except Exception as e:
         logger.error(f"Error fetching Option data: {e}")

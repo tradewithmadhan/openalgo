@@ -1000,11 +1000,31 @@ def get_strikes():
 @check_session_validity
 def nifty_dash_data():
     """Calculates Unified OI and COI data for the Dash tab."""
+    mode = request.args.get('mode', 'writer_open') # Default to writer_open
+    
     # 1. Get latest option data and previous day OI
     current_option_data = get_option_data()
     prev_day_data = get_previous_day_oi()
     prev_oi_map = {item['symbol']: item.get('oi', 0) for item in prev_day_data}
     
+    open_atm = nifty_fetcher.open_atm_strike
+    current_atm = nifty_fetcher.current_atm_strike or open_atm
+    
+    def is_included(sym, strike):
+        if mode == 'total': return True
+        base_atm = open_atm if mode == 'writer_open' else current_atm
+        if not base_atm: return True
+        
+        # Symmetric ATM +/- 5 strikes (total 11 strikes) for Writer Views
+        # NIFTY strike interval is 50, so 5 strikes = 250 points
+        if strike > base_atm + 250 or strike < base_atm - 250:
+            return False
+            
+        # One-sided filtering to focus on "Writing Zone" (OTM + ATM + 2 ITM)
+        if sym.endswith('PE') and strike > base_atm + 100: return False
+        if sym.endswith('CE') and strike < base_atm - 100: return False
+        return True
+
     total_call_oi = 0
     total_put_oi = 0
     total_call_coi = 0
@@ -1026,27 +1046,35 @@ def nifty_dash_data():
         if strike is None: continue
         
         current_oi = item.get('oi', 0)
-        current_vol = item.get('volume', 0)
+        current_vol = item.get('day_volume', 0) # Use day_volume for Dash summary
         prev_oi = prev_oi_map.get(symbol, 0)
         coi = current_oi - prev_oi
         
         strikes_map[strike]['strike'] = strike
+        
+        # Determine if strike should be included in totals
+        include_in_totals = is_included(symbol, strike)
+
         if symbol.endswith('CE'):
-            total_call_oi += current_oi
-            total_call_coi += coi
-            total_call_vol += current_vol
+            if include_in_totals:
+                total_call_oi += current_oi
+                total_call_coi += coi
+                total_call_vol += current_vol
+            
             strikes_map[strike]['ce_oi'] = current_oi
             strikes_map[strike]['ce_coi'] = coi
-            strikes_map[strike]['ce_vol'] = current_vol
+            strikes_map[strike]['ce_vol'] = current_vol # Store day_volume per strike
             if current_oi > highest_call_oi['oi']:
                 highest_call_oi = {'strike': strike, 'oi': current_oi, 'coi': coi}
         elif symbol.endswith('PE'):
-            total_put_oi += current_oi
-            total_put_coi += coi
-            total_put_vol += current_vol
+            if include_in_totals:
+                total_put_oi += current_oi
+                total_put_coi += coi
+                total_put_vol += current_vol
+                
             strikes_map[strike]['pe_oi'] = current_oi
             strikes_map[strike]['pe_coi'] = coi
-            strikes_map[strike]['pe_vol'] = current_vol
+            strikes_map[strike]['pe_vol'] = current_vol # Store day_volume per strike
             if current_oi > highest_put_oi['oi']:
                 highest_put_oi = {'strike': strike, 'oi': current_oi, 'coi': coi}
                 
@@ -1095,6 +1123,8 @@ def nifty_dash_data():
 @check_session_validity
 def nifty_dash_time_analysis():
     """Provides 3-minute interval analysis for all tracked strikes."""
+    mode = request.args.get('mode', 'writer_open') # Default to writer_open
+    
     # 1. Get all tracked symbols
     tracked_symbols = nifty_fetcher.option_symbols
     if not tracked_symbols:
@@ -1119,12 +1149,31 @@ def nifty_dash_time_analysis():
     prev_oi_map = {item['symbol']: item.get('oi', 0) for item in prev_day_data}
     prev_price_map = {item['symbol']: item.get('close', 0) for item in prev_day_data}
 
-    # Consolidated Previous Day Values
-    total_prev_ce_oi = sum(prev_oi_map.get(s, 0) for s in tracked_symbols if s.endswith('CE'))
-    total_prev_pe_oi = sum(prev_oi_map.get(s, 0) for s in tracked_symbols if s.endswith('PE'))
+    open_atm = nifty_fetcher.open_atm_strike
+    current_atm = nifty_fetcher.current_atm_strike or open_atm
+    
+    def is_included(sym, strike):
+        if mode == 'total': return True
+        base_atm = open_atm if mode == 'writer_open' else current_atm
+        if not base_atm: return True
+        
+        # Symmetric ATM +/- 5 strikes (total 11 strikes) for Writer Views
+        # NIFTY strike interval is 50, so 5 strikes = 250 points
+        if strike > base_atm + 250 or strike < base_atm - 250:
+            return False
+            
+        # One-sided filtering to focus on "Writing Zone" (OTM + ATM + 2 ITM)
+        if sym.endswith('PE') and strike > base_atm + 100: return False
+        if sym.endswith('CE') and strike < base_atm - 100: return False
+        return True
+
+    filtered_tracked_symbols = [s for s in tracked_symbols if is_included(s, extract_strike(s))]
+    
+    total_prev_ce_oi = sum(prev_oi_map.get(s, 0) for s in filtered_tracked_symbols if s.endswith('CE'))
+    total_prev_pe_oi = sum(prev_oi_map.get(s, 0) for s in filtered_tracked_symbols if s.endswith('PE'))
     # Average price for consolidated LTP
-    ce_symbols = [s for s in tracked_symbols if s.endswith('CE')]
-    pe_symbols = [s for s in tracked_symbols if s.endswith('PE')]
+    ce_symbols = [s for s in filtered_tracked_symbols if s.endswith('CE')]
+    pe_symbols = [s for s in filtered_tracked_symbols if s.endswith('PE')]
     avg_prev_ce_price = sum(prev_price_map.get(s, 0) for s in ce_symbols) / len(ce_symbols) if ce_symbols else 0
     avg_prev_pe_price = sum(prev_price_map.get(s, 0) for s in pe_symbols) / len(pe_symbols) if pe_symbols else 0
 
@@ -1162,9 +1211,14 @@ def nifty_dash_time_analysis():
                 'last_ts': ts
             }
             
-        # Sum up for this candle across all symbols
+        # Sum up for this candle across selective symbols
         for item in data_by_ts[ts]:
             sym = item['symbol']
+            strike = extract_strike(sym)
+            if strike is None: continue
+            
+            if not is_included(sym, strike): continue
+
             if sym.endswith('CE'):
                 current_bucket['ce_oi'] += item.get('oi', 0)
                 current_bucket['ce_price_sum'] += item.get('close', 0)
@@ -1189,37 +1243,60 @@ def nifty_dash_time_analysis():
     atm = nifty_fetcher.current_atm_strike or nifty_fetcher.open_atm_strike
 
     for i, b in enumerate(bucket_data):
-        ce_oi = b['ce_oi'] / max(1, b['ce_count'] // (period_secs // 60)) # Average OI per 1-min slice in bucket
-        # Actually we want the LAST OI in the bucket
-        # Let's find the last timestamp data for this bucket
+        # Find the last timestamp data for this bucket and filter by mode
         last_ts = b['last_ts']
         last_items = data_by_ts[last_ts]
         
-        total_ce_oi = sum(item.get('oi', 0) for item in last_items if item['symbol'].endswith('CE'))
-        total_pe_oi = sum(item.get('oi', 0) for item in last_items if item['symbol'].endswith('PE'))
+        total_ce_oi = 0
+        total_pe_oi = 0
+        ce_prices = []
+        pe_prices = []
         
-        avg_ce_price = sum(item.get('close', 0) for item in last_items if item['symbol'].endswith('CE')) / \
-                       sum(1 for item in last_items if item['symbol'].endswith('CE')) if any(item['symbol'].endswith('CE') for item in last_items) else 0
-        avg_pe_price = sum(item.get('close', 0) for item in last_items if item['symbol'].endswith('PE')) / \
-                       sum(1 for item in last_items if item['symbol'].endswith('PE')) if any(item['symbol'].endswith('PE') for item in last_items) else 0
+        for item in last_items:
+            sym = item['symbol']
+            strike = extract_strike(sym)
+            if not strike or not is_included(sym, strike): continue
+            
+            if sym.endswith('CE'):
+                total_ce_oi += item.get('oi', 0)
+                ce_prices.append(item.get('close', 0))
+            elif sym.endswith('PE'):
+                total_pe_oi += item.get('oi', 0)
+                pe_prices.append(item.get('close', 0))
+        
+        avg_ce_price = sum(ce_prices) / len(ce_prices) if ce_prices else 0
+        avg_pe_price = sum(pe_prices) / len(pe_prices) if pe_prices else 0
 
         if i == 0:
-            # Compare with Previous Day
+            # Compare with Previous Day (which was already filtered above)
             ce_oi_change = total_ce_oi - total_prev_ce_oi
             pe_oi_change = total_pe_oi - total_prev_pe_oi
             ce_price_change = avg_ce_price - avg_prev_ce_price
             pe_price_change = avg_pe_price - avg_prev_pe_price
         else:
-            # Compare with previous bucket
+            # Compare with previous bucket (we need to calculate its filtered values)
             prev_b = bucket_data[i-1]
             prev_items = data_by_ts[prev_b['last_ts']]
             
-            prev_total_ce_oi = sum(item.get('oi', 0) for item in prev_items if item['symbol'].endswith('CE'))
-            prev_total_pe_oi = sum(item.get('oi', 0) for item in prev_items if item['symbol'].endswith('PE'))
-            prev_avg_ce_price = sum(item.get('close', 0) for item in prev_items if item['symbol'].endswith('CE')) / \
-                                sum(1 for item in prev_items if item['symbol'].endswith('CE')) if any(item['symbol'].endswith('CE') for item in prev_items) else 0
-            prev_avg_pe_price = sum(item.get('close', 0) for item in prev_items if item['symbol'].endswith('PE')) / \
-                                sum(1 for item in prev_items if item['symbol'].endswith('PE')) if any(item['symbol'].endswith('PE') for item in prev_items) else 0
+            prev_total_ce_oi = 0
+            prev_total_pe_oi = 0
+            prev_ce_prices = []
+            prev_pe_prices = []
+            
+            for item in prev_items:
+                sym = item['symbol']
+                strike = extract_strike(sym)
+                if not strike or not is_included(sym, strike): continue
+                
+                if sym.endswith('CE'):
+                    prev_total_ce_oi += item.get('oi', 0)
+                    prev_ce_prices.append(item.get('close', 0))
+                elif sym.endswith('PE'):
+                    prev_total_pe_oi += item.get('oi', 0)
+                    prev_pe_prices.append(item.get('close', 0))
+            
+            prev_avg_ce_price = sum(prev_ce_prices) / len(prev_ce_prices) if prev_ce_prices else 0
+            prev_avg_pe_price = sum(prev_pe_prices) / len(prev_pe_prices) if prev_pe_prices else 0
             
             ce_oi_change = total_ce_oi - prev_total_ce_oi
             pe_oi_change = total_pe_oi - prev_total_pe_oi

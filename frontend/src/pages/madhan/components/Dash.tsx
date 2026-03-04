@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { MarketSummary } from './MarketSummary';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
 interface DashData {
     summary: {
@@ -53,13 +54,14 @@ interface TimeAnalysisRow {
 export function Dash({ refreshTrigger }: { refreshTrigger: number }) {
     const [data, setData] = useState<DashData | null>(null);
     const [timeAnalysis, setTimeAnalysis] = useState<TimeAnalysisRow[]>([]);
+    const [mode, setMode] = useState<string>('writer_open');
 
     useEffect(() => {
         const fetchData = async () => {
             try {
                 const [dashRes, timeRes] = await Promise.all([
-                    fetch('/madhan/api/nifty/dash-data'),
-                    fetch('/madhan/api/nifty/dash-time-analysis')
+                    fetch(`/madhan/api/nifty/dash-data?mode=${mode}`),
+                    fetch(`/madhan/api/nifty/dash-time-analysis?mode=${mode}`)
                 ]);
                 
                 const dashJson = await dashRes.json();
@@ -72,7 +74,7 @@ export function Dash({ refreshTrigger }: { refreshTrigger: number }) {
             }
         };
         fetchData();
-    }, [refreshTrigger]);
+    }, [refreshTrigger, mode]);
 
     const formatValue = (val: number) => {
         if (val === undefined || val === null) return '0';
@@ -100,13 +102,30 @@ export function Dash({ refreshTrigger }: { refreshTrigger: number }) {
 
     return (
         <div className="flex flex-col h-[calc(100vh-140px)] gap-2 p-1 overflow-hidden bg-background">
+            {/* Control Bar */}
+            <div className="flex justify-end px-1 -mb-1">
+                <Select value={mode} onValueChange={setMode}>
+                    <SelectTrigger className="w-[180px] h-7 text-[10px] font-bold uppercase bg-card">
+                        <SelectValue placeholder="Select View" />
+                    </SelectTrigger>
+                    <SelectContent>
+                        <SelectItem value="total" className="text-[10px] font-bold">Total Strikes</SelectItem>
+                        <SelectItem value="writer_open" className="text-[10px] font-bold">Writer View (Open ATM)</SelectItem>
+                        <SelectItem value="writer_current" className="text-[10px] font-bold">Writer View (Current ATM)</SelectItem>
+                    </SelectContent>
+                </Select>
+            </div>
+
             {/* Summary Row */}
             <MarketSummary summary={data.summary} />
 
             {/* Interpretation Table (Image style) */}
             <Card className="flex-1 flex flex-col">
-                <CardHeader className="p-2 border-b flex-shrink-0">
-                    <CardTitle className="text-xs uppercase font-bold text-muted-foreground">Market Time Interval Interpretation (All Strikes)</CardTitle>
+                <CardHeader className="p-2 border-b flex-shrink-0 flex flex-row items-center justify-between">
+                    <CardTitle className="text-xs uppercase font-bold text-muted-foreground">Market Time Interval Interpretation</CardTitle>
+                    <span className="text-[10px] font-black text-blue-500 italic bg-blue-500/5 px-2 py-0.5 rounded border border-blue-500/10">
+                        MODE: {mode === 'total' ? 'TOTAL' : mode === 'writer_open' ? 'WRITER (OPEN ATM)' : 'WRITER (CURRENT ATM)'}
+                    </span>
                 </CardHeader>
                 <CardContent className="p-0 flex-1 overflow-hidden">
                     <ScrollArea className="h-full">
