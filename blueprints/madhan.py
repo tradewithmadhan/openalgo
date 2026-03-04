@@ -1001,14 +1001,30 @@ def get_strikes():
 def nifty_dash_data():
     """Calculates Unified OI and COI data for the Dash tab."""
     mode = request.args.get('mode', 'writer_open') # Default to writer_open
+    end_ts = request.args.get('end_ts')
+    if end_ts:
+        try:
+            end_ts = int(end_ts)
+        except ValueError:
+            end_ts = None
     
-    # 1. Get latest option data and previous day OI
-    current_option_data = get_option_data()
+    # 1. Get option data (latest or at specific time) and previous day OI
+    current_option_data = get_option_data(end_ts=end_ts)
     prev_day_data = get_previous_day_oi()
     prev_oi_map = {item['symbol']: item.get('oi', 0) for item in prev_day_data}
     
     open_atm = nifty_fetcher.open_atm_strike
-    current_atm = nifty_fetcher.current_atm_strike or open_atm
+    
+    # In replay mode, current_atm should be based on the data at end_ts
+    if end_ts:
+        latest_nifty = get_nifty_data(limit=1, end_ts=end_ts)
+        if latest_nifty:
+            spot_price = latest_nifty[0]['close']
+            current_atm = round(spot_price / 50) * 50
+        else:
+            current_atm = nifty_fetcher.current_atm_strike or open_atm
+    else:
+        current_atm = nifty_fetcher.current_atm_strike or open_atm
     
     def is_included(sym, strike):
         if mode == 'total': return True
@@ -1111,7 +1127,7 @@ def nifty_dash_data():
             'highest_call_oi': highest_call_oi,
             'highest_put_oi': highest_put_oi,
             'max_pain': max_pain_strike,
-            'current_atm': nifty_fetcher.current_atm_strike or nifty_fetcher.open_atm_strike or 0,
+            'current_atm': current_atm,
             'pcr_oi': round(total_put_oi / total_call_oi, 2) if total_call_oi > 0 else 0,
             'pcr_vol': round(total_put_vol / total_call_vol, 2) if total_call_vol > 0 else 0
         },
@@ -1124,6 +1140,12 @@ def nifty_dash_data():
 def nifty_dash_time_analysis():
     """Provides 3-minute interval analysis for all tracked strikes."""
     mode = request.args.get('mode', 'writer_open') # Default to writer_open
+    end_ts = request.args.get('end_ts')
+    if end_ts:
+        try:
+            end_ts = int(end_ts)
+        except ValueError:
+            end_ts = None
     
     # 1. Get all tracked symbols
     tracked_symbols = nifty_fetcher.option_symbols
@@ -1131,7 +1153,7 @@ def nifty_dash_time_analysis():
         return jsonify({'status': 'success', 'data': []})
 
     # 2. Get 1-min data for all symbols
-    historical_data = get_current_day_historical_data()
+    historical_data = get_current_day_historical_data(end_ts=end_ts)
     if not historical_data:
         return jsonify({'status': 'success', 'data': []})
 
@@ -1150,7 +1172,17 @@ def nifty_dash_time_analysis():
     prev_price_map = {item['symbol']: item.get('close', 0) for item in prev_day_data}
 
     open_atm = nifty_fetcher.open_atm_strike
-    current_atm = nifty_fetcher.current_atm_strike or open_atm
+    
+    # Calculate ATM based on the data up to end_ts
+    if end_ts:
+        latest_nifty = get_nifty_data(limit=1, end_ts=end_ts)
+        if latest_nifty:
+            spot_price = latest_nifty[0]['close']
+            current_atm = round(spot_price / 50) * 50
+        else:
+            current_atm = nifty_fetcher.current_atm_strike or open_atm
+    else:
+        current_atm = nifty_fetcher.current_atm_strike or open_atm
     
     def is_included(sym, strike):
         if mode == 'total': return True
@@ -1240,7 +1272,6 @@ def nifty_dash_time_analysis():
         return 'Neutral'
 
     results = []
-    atm = nifty_fetcher.current_atm_strike or nifty_fetcher.open_atm_strike
 
     for i, b in enumerate(bucket_data):
         # Find the last timestamp data for this bucket and filter by mode
@@ -1305,7 +1336,7 @@ def nifty_dash_time_analysis():
 
         results.append({
             'time_range': f"{datetime.fromtimestamp(b['start_ts']).strftime('%H:%M')}-{datetime.fromtimestamp(b['end_ts'] + 60).strftime('%H:%M')}",
-            'strike': atm,
+            'strike': current_atm,
             'ce': {
                 'oi': total_ce_oi,
                 'ltp': round(avg_ce_price, 2),

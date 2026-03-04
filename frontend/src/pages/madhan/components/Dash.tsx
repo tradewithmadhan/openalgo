@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { MarketSummary } from './MarketSummary';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Play, RotateCcw } from 'lucide-react';
 
 interface DashData {
     summary: {
@@ -55,26 +56,92 @@ export function Dash({ refreshTrigger }: { refreshTrigger: number }) {
     const [data, setData] = useState<DashData | null>(null);
     const [timeAnalysis, setTimeAnalysis] = useState<TimeAnalysisRow[]>([]);
     const [mode, setMode] = useState<string>('writer_open');
+    
+    // Replay State
+    const [isReplayMode, setIsReplayMode] = useState(false);
+    const [replayTimestamp, setReplayTimestamp] = useState<number | null>(null);
+    const [latestDataTimestamp, setLatestDataTimestamp] = useState<number | null>(null);
+    const [isFetching, setIsFetching] = useState(false);
 
-    useEffect(() => {
-        const fetchData = async () => {
-            try {
-                const [dashRes, timeRes] = await Promise.all([
-                    fetch(`/madhan/api/nifty/dash-data?mode=${mode}`),
-                    fetch(`/madhan/api/nifty/dash-time-analysis?mode=${mode}`)
-                ]);
-                
-                const dashJson = await dashRes.json();
-                const timeJson = await timeRes.json();
-                
-                if (dashJson.status === 'success') setData(dashJson);
-                if (timeJson.status === 'success') setTimeAnalysis(timeJson.data);
-            } catch (error) {
-                console.error("Failed to fetch Dash data", error);
+    const marketStartTime = useMemo(() => {
+        const d = new Date();
+        d.setHours(9, 15, 0, 0);
+        return Math.floor(d.getTime() / 1000);
+    }, []);
+
+    const marketEndTime = useMemo(() => {
+        const d = new Date();
+        d.setHours(15, 30, 0, 0);
+        return Math.floor(d.getTime() / 1000);
+    }, []);
+
+    const fetchData = async (isManual = false) => {
+        if (isFetching && !isManual) return;
+        setIsFetching(true);
+        try {
+            const endTsParam = isReplayMode && replayTimestamp ? `&end_ts=${replayTimestamp}` : '';
+            const [dashRes, timeRes] = await Promise.all([
+                fetch(`/madhan/api/nifty/dash-data?mode=${mode}${endTsParam}`),
+                fetch(`/madhan/api/nifty/dash-time-analysis?mode=${mode}${endTsParam}`)
+            ]);
+            
+            const dashJson = await dashRes.json();
+            const timeJson = await timeRes.json();
+            
+            if (dashJson.status === 'success') {
+                setData(dashJson);
+                // Update latest timestamp from data if not in replay mode
+                if (!isReplayMode && dashJson.chain_data.length > 0) {
+                    const timestamps = dashJson.chain_data
+                        .map((d: any) => d.timestamp || 0)
+                        .filter((ts: number) => ts > 0);
+                    
+                    if (timestamps.length > 0) {
+                        const maxTs = Math.max(...timestamps);
+                        const cappedMaxTs = Math.min(maxTs, marketEndTime);
+                        setLatestDataTimestamp(cappedMaxTs);
+                        if (!replayTimestamp) setReplayTimestamp(cappedMaxTs);
+                    }
+                }
             }
+            if (timeJson.status === 'success') setTimeAnalysis(timeJson.data);
+        } catch (error) {
+            console.error("Failed to fetch Dash data", error);
+        } finally {
+            setIsFetching(false);
+        }
+    };
+
+    // Initial fetch and on dependencies change
+    useEffect(() => {
+        fetchData(true);
+    }, [refreshTrigger, mode, isReplayMode, replayTimestamp]);
+
+    // Custom 1-minute aligned refresh logic
+    useEffect(() => {
+        if (isReplayMode) return;
+
+        const getMsUntilNextMinute = () => {
+            const now = new Date();
+            return (60 - now.getSeconds()) * 1000 - now.getMilliseconds() + 2000; // Aligned + 2s buffer
         };
-        fetchData();
-    }, [refreshTrigger, mode]);
+
+        let timeoutId: any;
+        const scheduleNextRefresh = () => {
+            timeoutId = setTimeout(() => {
+                fetchData();
+                scheduleNextRefresh();
+            }, getMsUntilNextMinute());
+        };
+
+        scheduleNextRefresh();
+        return () => clearTimeout(timeoutId);
+    }, [isReplayMode, mode]);
+
+    const formatTime = (ts: number | null) => {
+        if (!ts) return "--:--";
+        return new Date(ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    };
 
     const formatValue = (val: number) => {
         if (val === undefined || val === null) return '0';
@@ -103,17 +170,67 @@ export function Dash({ refreshTrigger }: { refreshTrigger: number }) {
     return (
         <div className="flex flex-col h-[calc(100vh-140px)] gap-2 p-1 overflow-hidden bg-background">
             {/* Control Bar */}
-            <div className="flex justify-end px-1 -mb-1">
-                <Select value={mode} onValueChange={setMode}>
-                    <SelectTrigger className="w-[180px] h-7 text-[10px] font-bold uppercase bg-card">
-                        <SelectValue placeholder="Select View" />
-                    </SelectTrigger>
-                    <SelectContent>
-                        <SelectItem value="total" className="text-[10px] font-bold">Total Strikes</SelectItem>
-                        <SelectItem value="writer_open" className="text-[10px] font-bold">Writer View (Open ATM)</SelectItem>
-                        <SelectItem value="writer_current" className="text-[10px] font-bold">Writer View (Current ATM)</SelectItem>
-                    </SelectContent>
-                </Select>
+            <div className="flex items-center justify-between px-2 py-1 bg-card border rounded-lg shadow-sm">
+                <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-2">
+                        <div className={`w-2 h-2 rounded-full animate-pulse ${isReplayMode ? 'bg-amber-500' : 'bg-green-500'}`} />
+                        <span className="text-[10px] font-black uppercase tracking-tighter">
+                            {isReplayMode ? 'Replay Mode' : 'Live Market'}
+                        </span>
+                    </div>
+                    
+                    <button 
+                        onClick={() => {
+                            setIsReplayMode(!isReplayMode);
+                            if (isReplayMode) setReplayTimestamp(latestDataTimestamp);
+                        }}
+                        className={`flex items-center gap-1.5 px-2 py-1 rounded border transition-all text-[9px] font-bold uppercase ${
+                            isReplayMode 
+                            ? 'bg-amber-500/10 border-amber-500/50 text-amber-600' 
+                            : 'bg-slate-100 border-slate-200 text-slate-600 hover:bg-slate-200'
+                        }`}
+                    >
+                        {isReplayMode ? <RotateCcw size={12} /> : <Play size={12} />}
+                        {isReplayMode ? 'Back to Live' : 'Start Replay'}
+                    </button>
+                </div>
+
+                <div className="flex-1 px-4 flex items-center gap-3">
+                    <span className="text-[9px] font-bold text-muted-foreground w-10">09:15</span>
+                    <input 
+                        type="range" 
+                        min={marketStartTime}
+                        max={Math.min(latestDataTimestamp || Math.floor(Date.now() / 1000), marketEndTime)}
+                        step={60}
+                        value={replayTimestamp || Math.min(latestDataTimestamp || Math.floor(Date.now() / 1000), marketEndTime)}
+                        onChange={(e) => {
+                            setReplayTimestamp(parseInt(e.target.value));
+                            setIsReplayMode(true);
+                        }}
+                        className="flex-1 h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
+                    />
+                    <div className="flex flex-col items-center min-w-[60px]">
+                        <span className="text-[11px] font-black text-blue-600 leading-none">
+                            {formatTime(replayTimestamp || Math.min(latestDataTimestamp || Math.floor(Date.now() / 1000), marketEndTime))}
+                        </span>
+                        <span className="text-[9px] font-bold text-muted-foreground w-10 ml-2">
+                            {formatTime(Math.min(latestDataTimestamp || Math.floor(Date.now() / 1000), marketEndTime))}
+                        </span>
+                    </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                    <Select value={mode} onValueChange={setMode}>
+                        <SelectTrigger className="w-[160px] h-7 text-[10px] font-bold uppercase bg-background">
+                            <SelectValue placeholder="Select View" />
+                        </SelectTrigger>
+                        <SelectContent>
+                            <SelectItem value="total" className="text-[10px] font-bold">Total Strikes</SelectItem>
+                            <SelectItem value="writer_open" className="text-[10px] font-bold">Writer View (Open ATM)</SelectItem>
+                            <SelectItem value="writer_current" className="text-[10px] font-bold">Writer View (Current ATM)</SelectItem>
+                        </SelectContent>
+                    </Select>
+                </div>
             </div>
 
             {/* Summary Row */}
@@ -123,9 +240,16 @@ export function Dash({ refreshTrigger }: { refreshTrigger: number }) {
             <Card className="flex-1 flex flex-col">
                 <CardHeader className="p-2 border-b flex-shrink-0 flex flex-row items-center justify-between">
                     <CardTitle className="text-xs uppercase font-bold text-muted-foreground">Market Time Interval Interpretation</CardTitle>
-                    <span className="text-[10px] font-black text-blue-500 italic bg-blue-500/5 px-2 py-0.5 rounded border border-blue-500/10">
-                        MODE: {mode === 'total' ? 'TOTAL' : mode === 'writer_open' ? 'WRITER (OPEN ATM)' : 'WRITER (CURRENT ATM)'}
-                    </span>
+                    <div className="flex gap-2">
+                        {isReplayMode && (
+                            <span className="text-[10px] font-black text-amber-500 italic bg-amber-500/5 px-2 py-0.5 rounded border border-amber-500/10">
+                                REPLAY: {formatTime(replayTimestamp)}
+                            </span>
+                        )}
+                        <span className="text-[10px] font-black text-blue-500 italic bg-blue-500/5 px-2 py-0.5 rounded border border-blue-500/10">
+                            MODE: {mode === 'total' ? 'TOTAL' : mode === 'writer_open' ? 'WRITER (OPEN ATM)' : 'WRITER (CURRENT ATM)'}
+                        </span>
+                    </div>
                 </CardHeader>
                 <CardContent className="p-0 flex-1 overflow-hidden">
                     <ScrollArea className="h-full">

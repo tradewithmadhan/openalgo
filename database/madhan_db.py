@@ -4,7 +4,7 @@ Database setup and utility functions for MadhaN's custom data.
 import os
 import pandas as pd
 from datetime import datetime, time, date, timedelta
-from sqlalchemy import create_engine, Column, Integer, Float, String, Index, text, func, select, literal_column
+from sqlalchemy import create_engine, Column, Integer, Float, String, Index, text, func, select, literal_column, and_, case
 from sqlalchemy.inspection import inspect
 from sqlalchemy.orm import sessionmaker, declarative_base
 from sqlalchemy.dialects.sqlite import insert
@@ -310,12 +310,16 @@ def get_fetcher_state(key: str):
         session.close()
 
 
-def get_nifty_data(limit: int = 500):
-    """Retrieves the latest Nifty data records from the database."""
+def get_nifty_data(limit: int = 500, end_ts: int = None):
+    """Retrieves Nifty data records, optionally up to end_ts."""
     session = SessionLocal()
     try:
+        query = session.query(NiftyData)
+        if end_ts:
+            query = query.filter(NiftyData.timestamp <= end_ts)
+        
         # Query and order by timestamp descending, then limit
-        results = session.query(NiftyData).order_by(NiftyData.timestamp.desc()).limit(limit).all()
+        results = query.order_by(NiftyData.timestamp.desc()).limit(limit).all()
         # Reverse the results to get ascending order for display
         results.reverse()
         return [
@@ -328,18 +332,29 @@ def get_nifty_data(limit: int = 500):
     finally:
         session.close()
 
-def get_option_data():
-    """Retrieves the latest record, total count, and cumulative day volume for each tracked option symbol."""
+def get_option_data(end_ts: int = None):
+    """
+    Retrieves the latest record, total count, and cumulative day volume for each tracked option symbol.
+    If end_ts is provided, it returns the state as of that timestamp (Replay mode).
+    """
     session = SessionLocal()
     try:
         from sqlalchemy.orm import aliased
 
-        # Determine the start of the current trading day
+        # Determine the start of the current trading day for volume summing
         today = get_valid_trading_day(exchange="NSE")
         start_of_day = datetime.combine(today, time.min)
         start_ts = int(start_of_day.timestamp())
 
-        # Subquery to rank records, get count, and calculate cumulative volume for each symbol
+        # Subquery to rank records and get count
+        # For 'rn' (latest record), we only filter by end_ts if provided to maintain backward compatibility
+        rn_filter = [OptionData.timestamp <= end_ts] if end_ts else []
+        
+        # For 'day_volume', we always want to sum from the start of the current day session
+        vol_filter = [OptionData.timestamp >= start_ts]
+        if end_ts:
+            vol_filter.append(OptionData.timestamp <= end_ts)
+
         subq = (
             select(
                 OptionData,
@@ -350,10 +365,11 @@ def get_option_data():
                 func.count(OptionData.id).over(
                     partition_by=OptionData.symbol
                 ).label('candle_count'),
-                func.sum(OptionData.volume).over(
+                # Only sum volume for rows that match the session window (start_ts to end_ts)
+                func.sum(case((and_(*vol_filter), OptionData.volume), else_=0)).over(
                     partition_by=OptionData.symbol
                 ).label('total_day_volume')
-            ).filter(OptionData.timestamp >= start_ts)
+            ).filter(*rn_filter)
         ).subquery()
 
         option_data_alias = aliased(OptionData, subq)
@@ -369,8 +385,8 @@ def get_option_data():
                 'high': r.high, 
                 'low': r.low, 
                 'close': r.close, 
-                'volume': r.volume, # Reverted to last candle volume
-                'day_volume': int(total_day_volume) if total_day_volume is not None else 0, # New separate field for cumulative volume
+                'volume': r.volume, 
+                'day_volume': int(total_day_volume) if total_day_volume is not None else 0,
                 'oi': r.oi, 
                 'candle_count': candle_count
             }
@@ -495,27 +511,33 @@ def get_nth_candle_oi_for_all_symbols(n: int):
     finally:
         session.close()
 
-def get_current_day_historical_data():
-    """Fetches all 1-minute candle data for the current day for Nifty and Options."""
+def get_current_day_historical_data(end_ts: int = None):
+    """Fetches all 1-minute candle data for the current day for Nifty and Options, optionally up to end_ts."""
     session = SessionLocal()
     try:
         today = get_valid_trading_day(exchange="NSE")
         start_of_day = datetime.combine(today, time.min)
         start_of_day_ts = int(start_of_day.timestamp())
 
+        nifty_filter = [NiftyData.timestamp >= start_of_day_ts]
+        option_filter = [OptionData.timestamp >= start_of_day_ts]
+        if end_ts:
+            nifty_filter.append(NiftyData.timestamp <= end_ts)
+            option_filter.append(OptionData.timestamp <= end_ts)
+
         nifty_data_query = session.query(
             literal_column("'NIFTY'").label("symbol"), 
             NiftyData.timestamp, 
             func.coalesce(NiftyData.oi, 0).label('oi'),
             NiftyData.close
-        ).filter(NiftyData.timestamp >= start_of_day_ts)
+        ).filter(*nifty_filter)
         nifty_data = nifty_data_query.all()
         option_data = session.query(
             OptionData.symbol, 
             OptionData.timestamp, 
             func.coalesce(OptionData.oi, 0).label('oi'),
             OptionData.close
-        ).filter(OptionData.timestamp >= start_of_day_ts).all()
+        ).filter(*option_filter).all()
 
         combined_data = [row._asdict() for row in nifty_data] + [row._asdict() for row in option_data]
         
