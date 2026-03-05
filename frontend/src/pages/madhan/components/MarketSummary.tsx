@@ -108,7 +108,7 @@ export function MarketSummary({ summary }: MarketSummaryProps) {
         return (
             <div className="relative flex items-center justify-center w-20 h-20">
                 <svg className="w-full h-full transform -rotate-90" viewBox="0 0 120 120">
-                    <circle cx="60" cy="60" r={radius} stroke="#1a1a1a" strokeWidth="10" fill="transparent" />
+                    <circle cx="60" cy="60" r={radius} className="stroke-muted" strokeWidth="10" fill="transparent" />
                     <circle 
                         cx="60" 
                         cy="60" 
@@ -119,11 +119,11 @@ export function MarketSummary({ summary }: MarketSummaryProps) {
                         strokeDasharray={circumference} 
                         strokeDashoffset={strokeDashoffset} 
                         strokeLinecap="round" 
-                        className={`${isBullish ? "text-green-500 shadow-[0_0_12px_rgba(34,197,94,0.5)]" : "text-red-500 shadow-[0_0_12px_rgba(239,68,68,0.5)]"} transition-all duration-1000 ease-out`} 
+                        className={`${isBullish ? "text-green-500 dark:shadow-[0_0_12px_rgba(34,197,94,0.5)]" : "text-red-500 dark:shadow-[0_0_12px_rgba(239,68,68,0.5)]"} transition-all duration-1000 ease-out`} 
                     />
                 </svg>
                 <div className="absolute inset-0 flex flex-col items-center justify-center">
-                    <span className="text-base font-black text-white leading-none tracking-tighter">{displayPercent}%</span>
+                    <span className="text-base font-black text-foreground leading-none tracking-tighter">{displayPercent}%</span>
                     <span className={`text-[7px] font-black uppercase tracking-widest ${isBullish ? "text-green-500" : "text-red-500"}`}>{isBullish ? (isCOI ? "PUT BIAS" : "PUT") : (isCOI ? "CALL BIAS" : "CALL")}</span>
                 </div>
             </div>
@@ -135,15 +135,15 @@ export function MarketSummary({ summary }: MarketSummaryProps) {
     return (
         <div className="grid grid-cols-5 gap-2 w-full bg-transparent">
             {/* Total OI Section */}
-            <Card className="bg-black/40 border-white/5 flex flex-col items-center justify-center relative overflow-hidden shadow-2xl rounded-lg h-[120px]">
-                <div className="absolute top-2 left-2 text-[8px] font-black text-slate-500 uppercase tracking-widest">Total OI</div>
+            <Card className="bg-card border-border flex flex-col items-center justify-center relative overflow-hidden shadow-sm dark:shadow-2xl rounded-lg h-[120px]">
+                <div className="absolute top-2 left-2 text-[8px] font-black text-muted-foreground uppercase tracking-widest">Total OI</div>
                 <div className="absolute top-2 right-2 flex gap-2">
                     <div className="flex flex-col items-end">
-                        <span className="text-[6px] text-slate-600 font-black uppercase mb-0">Call</span>
+                        <span className="text-[6px] text-muted-foreground font-black uppercase mb-0">Call</span>
                         <span className={`text-red-500 text-[9px] font-black tracking-tight`}>{formatValue(summary.total_call_oi)}</span>
                     </div>
                     <div className="flex flex-col items-end">
-                        <span className="text-[6px] text-slate-600 font-black uppercase mb-0">Put</span>
+                        <span className="text-[6px] text-muted-foreground font-black uppercase mb-0">Put</span>
                         <span className={`text-green-500 text-[9px] font-black tracking-tight`}>{formatValue(summary.total_put_oi)}</span>
                     </div>
                 </div>
@@ -152,15 +152,15 @@ export function MarketSummary({ summary }: MarketSummaryProps) {
             </Card>
 
             {/* COI Section */}
-            <Card className="bg-black/40 border-white/5 flex flex-col items-center justify-center relative overflow-hidden shadow-2xl rounded-lg h-[120px]">
-                <div className="absolute top-2 left-2 text-[8px] font-black text-slate-500 uppercase tracking-widest">Change in OI</div>
+            <Card className="bg-card border-border flex flex-col items-center justify-center relative overflow-hidden shadow-sm dark:shadow-2xl rounded-lg h-[120px]">
+                <div className="absolute top-2 left-2 text-[8px] font-black text-muted-foreground uppercase tracking-widest">Change in OI</div>
                 <div className="absolute top-2 right-2 flex gap-2">
                     <div className="flex flex-col items-end">
-                        <span className="text-[6px] text-slate-600 font-black uppercase mb-0">Call Chg</span>
+                        <span className="text-[6px] text-muted-foreground font-black uppercase mb-0">Call Chg</span>
                         <span className={`${getCeColor(summary.total_call_coi)} text-[9px] font-black tracking-tight`}>{formatValue(summary.total_call_coi)}</span>
                     </div>
                     <div className="flex flex-col items-end">
-                        <span className="text-[6px] text-slate-600 font-black uppercase mb-0">Put Chg</span>
+                        <span className="text-[6px] text-muted-foreground font-black uppercase mb-0">Put Chg</span>
                         <span className={`${getPeColor(summary.total_put_coi)} text-[9px] font-black tracking-tight`}>{formatValue(summary.total_put_coi)}</span>
                     </div>
                 </div>
@@ -169,8 +169,8 @@ export function MarketSummary({ summary }: MarketSummaryProps) {
             </Card>
 
             {/* Strikes & ATM Section */}
-            <Card className="bg-black/40 border-white/5 flex flex-col items-center justify-center relative shadow-2xl rounded-lg h-[120px]">
-                <div className="absolute top-2 left-2 text-[8px] font-black text-slate-500 uppercase tracking-widest">Strikes & ATM</div>
+            <Card className="bg-card border-border flex flex-col items-center justify-center relative shadow-sm dark:shadow-2xl rounded-lg h-[120px]">
+                <div className="absolute top-2 left-2 text-[8px] font-black text-muted-foreground uppercase tracking-widest">Strikes & ATM</div>
                 <div className="w-[85%] flex flex-col gap-1.5">
                     {[
                         { type: 'CE', strike: summary.highest_call_oi.strike, oi: summary.highest_call_oi.oi, color: 'text-red-500', barColor: 'bg-red-500/20' },
@@ -181,12 +181,12 @@ export function MarketSummary({ summary }: MarketSummaryProps) {
                             <div className="flex justify-between items-center z-10">
                                 <span className={`${item.color} text-[8px] font-black tracking-wider uppercase`}>{item.type}: {item.strike}</span>
                                 {item.oi > 0 ? (
-                                    <span className="text-white text-[9px] font-black tracking-tight">{formatValue(item.oi)}</span>
+                                    <span className="text-foreground text-[9px] font-black tracking-tight">{formatValue(item.oi)}</span>
                                 ) : (
                                     <span className="text-blue-500 text-[6px] font-black italic animate-pulse">LIVE</span>
                                 )}
                             </div>
-                            <div className="mt-0.5 h-1 w-full bg-white/5 rounded-full overflow-hidden">
+                            <div className="mt-0.5 h-1 w-full bg-muted rounded-full overflow-hidden">
                                 {item.oi > 0 && (
                                     <div className={`h-full ${item.barColor.replace('/20', '')} transition-all duration-1000 ease-out`} style={{ width: `${(item.oi / maxOI) * 100}%` }} />
                                 )}
@@ -198,16 +198,16 @@ export function MarketSummary({ summary }: MarketSummaryProps) {
             </Card>
 
             {/* PCR & Max Pain Section */}
-            <Card className="bg-black/40 border-white/5 flex flex-col items-center justify-center relative shadow-2xl rounded-lg h-[120px]">
-                <div className="absolute top-2 left-2 text-[8px] font-black text-slate-500 uppercase tracking-widest">PCR & Max Pain</div>
+            <Card className="bg-card border-border flex flex-col items-center justify-center relative shadow-sm dark:shadow-2xl rounded-lg h-[120px]">
+                <div className="absolute top-2 left-2 text-[8px] font-black text-muted-foreground uppercase tracking-widest">PCR & Max Pain</div>
                 <div className="grid grid-cols-2 gap-2 w-[85%]">
                     <div className="flex flex-col gap-1.5 justify-center">
-                        <div className="flex flex-col bg-white/5 p-1 rounded border border-white/5">
-                            <span className="text-[6px] text-slate-500 font-black uppercase mb-0">PCR OI</span>
+                        <div className="flex flex-col bg-muted/50 p-1 rounded border border-border">
+                            <span className="text-[6px] text-muted-foreground font-black uppercase mb-0">PCR OI</span>
                             <span className={`text-sm font-black leading-none ${getPcrColor(summary.pcr_oi)}`}>{summary.pcr_oi}</span>
                         </div>
-                        <div className="flex flex-col bg-white/5 p-1 rounded border border-white/5">
-                            <span className="text-[6px] text-slate-500 font-black uppercase mb-0">PCR VOL</span>
+                        <div className="flex flex-col bg-muted/50 p-1 rounded border border-border">
+                            <span className="text-[6px] text-muted-foreground font-black uppercase mb-0">PCR VOL</span>
                             <span className={`text-sm font-black leading-none ${getPcrColor(summary.pcr_vol)}`}>{summary.pcr_vol}</span>
                         </div>
                     </div>
@@ -215,7 +215,7 @@ export function MarketSummary({ summary }: MarketSummaryProps) {
                     <div className="flex flex-col gap-1.5 justify-center">
                         <div className="flex flex-col bg-blue-500/5 p-1 rounded border border-blue-500/10">
                             <span className="text-[6px] text-blue-500/70 font-black uppercase mb-0">ATM</span>
-                            <span className="text-sm font-black text-white leading-none">{summary.current_atm}</span>
+                            <span className="text-sm font-black text-foreground leading-none">{summary.current_atm}</span>
                         </div>
                         <div className="flex flex-col bg-blue-500/5 p-1 rounded border border-blue-500/10">
                             <span className="text-[6px] text-blue-500/70 font-black uppercase mb-0">Pain</span>
@@ -227,10 +227,10 @@ export function MarketSummary({ summary }: MarketSummaryProps) {
             </Card>
 
             {/* Sentiment Section */}
-            <Card className={`bg-black border-white/5 border-l-[4px] ${sentiment.border} relative overflow-hidden flex flex-col items-center justify-center text-center shadow-2xl rounded-lg h-[120px]`}>
-                <div className="absolute top-2 left-2 text-[8px] font-black text-slate-500 uppercase tracking-widest">Sentiment</div>
+            <Card className={`bg-card border-border border-l-[4px] ${sentiment.border} relative overflow-hidden flex flex-col items-center justify-center text-center shadow-sm dark:shadow-2xl rounded-lg h-[120px]`}>
+                <div className="absolute top-2 left-2 text-[8px] font-black text-muted-foreground uppercase tracking-widest">Sentiment</div>
                 <div className={`text-lg font-black tracking-tighter mb-1 uppercase ${sentiment.color} drop-shadow-[0_0_10px_rgba(34,197,94,0.3)]`}>{sentiment.label}</div>
-                <div className="absolute bottom-2 left-1/2 -translate-x-1/2 text-[7px] text-slate-500 font-black bg-white/5 px-2 py-0.5 rounded-full border border-white/5 whitespace-nowrap">Net: {formatValue(summary.total_put_coi - summary.total_call_coi)}</div>
+                <div className="absolute bottom-2 left-1/2 -translate-x-1/2 text-[7px] text-muted-foreground font-black bg-muted px-2 py-0.5 rounded-full border border-border whitespace-nowrap">Net: {formatValue(summary.total_put_coi - summary.total_call_coi)}</div>
             </Card>
         </div>
     );
