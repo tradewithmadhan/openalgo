@@ -1138,9 +1138,11 @@ def nifty_dash_data():
 @madhan_bp.route('/api/nifty/dash-time-analysis')
 @check_session_validity
 def nifty_dash_time_analysis():
-    """Provides 3-minute interval analysis for all tracked strikes."""
-    mode = request.args.get('mode', 'writer_open') # Default to writer_open
+    """Provides interval analysis for all tracked strikes with custom timeframe."""
+    mode = request.args.get('mode', 'writer_open')
     end_ts = request.args.get('end_ts')
+    interval_mins = int(request.args.get('interval', 3)) # Default to 3 minutes
+    
     if end_ts:
         try:
             end_ts = int(end_ts)
@@ -1152,83 +1154,97 @@ def nifty_dash_time_analysis():
     if not tracked_symbols:
         return jsonify({'status': 'success', 'data': []})
 
-    # 2. Get 1-min data for all symbols
+    # 2. Get 1-min data for all symbols (includes NIFTY spot)
     historical_data = get_current_day_historical_data(end_ts=end_ts)
     if not historical_data:
         return jsonify({'status': 'success', 'data': []})
 
-    # Group by timestamp and strike
+    # Group by timestamp
     data_by_ts = defaultdict(list)
+    nifty_by_ts = {}
     for row in historical_data:
-        data_by_ts[row['timestamp']].append(row)
+        if row['symbol'] == 'NIFTY':
+            nifty_by_ts[row['timestamp']] = row['close']
+        else:
+            data_by_ts[row['timestamp']].append(row)
 
-    sorted_ts = sorted(data_by_ts.keys())
+    sorted_ts = sorted(nifty_by_ts.keys())
     if not sorted_ts:
-        return jsonify({'status': 'success', 'data': []})
-
-    # 3. Previous Day Reference for 09:15 comparison
-    prev_day_data = get_previous_day_oi()
-    prev_oi_map = {item['symbol']: item.get('oi', 0) for item in prev_day_data}
-    prev_price_map = {item['symbol']: item.get('close', 0) for item in prev_day_data}
+        # Fallback if NIFTY spot not found in historical, use option timestamps
+        sorted_ts = sorted(data_by_ts.keys())
+        if not sorted_ts:
+            return jsonify({'status': 'success', 'data': []})
 
     open_atm = nifty_fetcher.open_atm_strike
     
-    # Calculate ATM based on the data up to end_ts
-    if end_ts:
+    # Calculate current ATM based on latest spot in the window
+    latest_spot = nifty_by_ts.get(sorted_ts[-1], 0)
+    if end_ts and latest_spot == 0:
         latest_nifty = get_nifty_data(limit=1, end_ts=end_ts)
-        if latest_nifty:
-            spot_price = latest_nifty[0]['close']
-            current_atm = round(spot_price / 50) * 50
-        else:
-            current_atm = nifty_fetcher.current_atm_strike or open_atm
-    else:
-        current_atm = nifty_fetcher.current_atm_strike or open_atm
+        latest_spot = latest_nifty[0]['close'] if latest_nifty else 0
     
-    def is_included(sym, strike):
+    current_atm = round(latest_spot / 50) * 50 if latest_spot > 0 else (nifty_fetcher.current_atm_strike or open_atm)
+    
+    def is_included(sym, strike, bucket_atm):
         if mode == 'total': return True
-        base_atm = open_atm if mode == 'writer_open' else current_atm
+        base_atm = open_atm if mode == 'writer_open' else bucket_atm
         if not base_atm: return True
-        
-        # Symmetric ATM +/- 5 strikes (total 11 strikes) for Writer Views
-        # NIFTY strike interval is 50, so 5 strikes = 250 points
-        if strike > base_atm + 250 or strike < base_atm - 250:
-            return False
-            
-        # One-sided filtering to focus on "Writing Zone" (OTM + ATM + 2 ITM)
+        # Symmetric ATM +/- 5 strikes (total 11 strikes)
+        if strike > base_atm + 250 or strike < base_atm - 250: return False
+        # One-sided writing zone filtering
         if sym.endswith('PE') and strike > base_atm + 100: return False
         if sym.endswith('CE') and strike < base_atm - 100: return False
         return True
 
-    filtered_tracked_symbols = [s for s in tracked_symbols if is_included(s, extract_strike(s))]
-    
-    total_prev_ce_oi = sum(prev_oi_map.get(s, 0) for s in filtered_tracked_symbols if s.endswith('CE'))
-    total_prev_pe_oi = sum(prev_oi_map.get(s, 0) for s in filtered_tracked_symbols if s.endswith('PE'))
-    # Average price for consolidated LTP
-    ce_symbols = [s for s in filtered_tracked_symbols if s.endswith('CE')]
-    pe_symbols = [s for s in filtered_tracked_symbols if s.endswith('PE')]
-    avg_prev_ce_price = sum(prev_price_map.get(s, 0) for s in ce_symbols) / len(ce_symbols) if ce_symbols else 0
-    avg_prev_pe_price = sum(prev_price_map.get(s, 0) for s in pe_symbols) / len(pe_symbols) if pe_symbols else 0
-
-    # 4. Aggregate into 3-minute buckets
+    # 4. Aggregate into custom-minute buckets
     bucket_data = []
-    period_secs = 3 * 60 # 3 minutes
+    period_secs = interval_mins * 60
     
-    # Define start of market (09:15)
-    market_start_dt = datetime.combine(datetime.now().date(), time(9, 15))
-    market_start_ts = int(market_start_dt.timestamp())
+    # Define start of market (09:15 IST)
+    if sorted_ts:
+        market_start_ts = sorted_ts[0]
+    else:
+        today_date = datetime.now().date()
+        market_start_ts = int(datetime.combine(today_date, time(3, 45)).timestamp())
     
     current_bucket = None
     bucket_start_time = 0
     
+    # Track Day High/Low for Spot and Diff
+    day_high_spot = -1.0
+    day_low_spot = float('inf')
+    
     for ts in sorted_ts:
-        if ts < market_start_ts: continue # Skip pre-market
+        if ts < market_start_ts: continue
         
-        # Bucket logic: 9:15-9:17, 9:18-9:20 ...
-        # (ts - market_start) // 180 gives the bucket index
+        spot = nifty_by_ts.get(ts, 0)
+        if spot > 0:
+            day_high_spot = max(day_high_spot, spot)
+            day_low_spot = min(day_low_spot, spot)
+        
         bucket_idx = (ts - market_start_ts) // period_secs
         bucket_start = market_start_ts + (bucket_idx * period_secs)
         
         if current_bucket and bucket_start != bucket_start_time:
+            # Finalize the previous bucket's OI based on its OWN ATM
+            bucket_atm = round(current_bucket['ltp'] / 50) * 50 if current_bucket['ltp'] > 0 else current_atm
+            
+            # Recalculate OI for the bucket based on its specific ATM
+            bucket_ce_oi = 0
+            bucket_pe_oi = 0
+            
+            # We need the data at the LAST timestamp of this bucket
+            last_ts_in_bucket = current_bucket['last_ts']
+            for item in data_by_ts[last_ts_in_bucket]:
+                sym = item['symbol']
+                strike = extract_strike(sym)
+                if not strike or not is_included(sym, strike, bucket_atm): continue
+                if sym.endswith('CE'): bucket_ce_oi += item.get('oi', 0)
+                elif sym.endswith('PE'): bucket_pe_oi += item.get('oi', 0)
+            
+            current_bucket['ce_oi'] = bucket_ce_oi
+            current_bucket['pe_oi'] = bucket_pe_oi
+            
             bucket_data.append(current_bucket)
             current_bucket = None
             
@@ -1238,126 +1254,77 @@ def nifty_dash_time_analysis():
                 'start_ts': bucket_start,
                 'end_ts': bucket_start + period_secs - 60,
                 'ce_oi': 0, 'pe_oi': 0,
-                'ce_price_sum': 0, 'pe_price_sum': 0,
-                'ce_count': 0, 'pe_count': 0,
-                'last_ts': ts
+                'ltp': spot,
+                'last_ts': ts,
+                'is_high_break': False,
+                'is_low_break': False
             }
-            
-        # Sum up for this candle across selective symbols
-        for item in data_by_ts[ts]:
+        
+        current_bucket['ltp'] = spot if spot > 0 else current_bucket['ltp']
+        current_bucket['last_ts'] = ts
+        if spot > 0:
+            if spot >= day_high_spot: current_bucket['is_high_break'] = True
+            if spot <= day_low_spot: current_bucket['is_low_break'] = True
+
+    if current_bucket:
+        # Finalize the last bucket
+        bucket_atm = round(current_bucket['ltp'] / 50) * 50 if current_bucket['ltp'] > 0 else current_atm
+        bucket_ce_oi = 0
+        bucket_pe_oi = 0
+        last_ts_in_bucket = current_bucket['last_ts']
+        for item in data_by_ts[last_ts_in_bucket]:
             sym = item['symbol']
             strike = extract_strike(sym)
-            if strike is None: continue
-            
-            if not is_included(sym, strike): continue
-
-            if sym.endswith('CE'):
-                current_bucket['ce_oi'] += item.get('oi', 0)
-                current_bucket['ce_price_sum'] += item.get('close', 0)
-                current_bucket['ce_count'] += 1
-            elif sym.endswith('PE'):
-                current_bucket['pe_oi'] += item.get('oi', 0)
-                current_bucket['pe_price_sum'] += item.get('close', 0)
-                current_bucket['pe_count'] += 1
-                
-    if current_bucket:
+            if not strike or not is_included(sym, strike, bucket_atm): continue
+            if sym.endswith('CE'): bucket_ce_oi += item.get('oi', 0)
+            elif sym.endswith('PE'): bucket_pe_oi += item.get('oi', 0)
+        
+        current_bucket['ce_oi'] = bucket_ce_oi
+        current_bucket['pe_oi'] = bucket_pe_oi
         bucket_data.append(current_bucket)
 
-    # 5. Interpretation logic
-    def interpret(p_change, oi_change):
-        if p_change > 0 and oi_change > 0: return 'Long Build Up'
-        if p_change < 0 and oi_change > 0: return 'Short Build Up'
-        if p_change > 0 and oi_change < 0: return 'Short Covering'
-        if p_change < 0 and oi_change < 0: return 'Long Unwinding'
-        return 'Neutral'
-
     results = []
-
+    prev_diff = 0
+    day_max_diff = -float('inf')
+    day_min_diff = float('inf')
+    
     for i, b in enumerate(bucket_data):
-        # Find the last timestamp data for this bucket and filter by mode
-        last_ts = b['last_ts']
-        last_items = data_by_ts[last_ts]
+        ce_oi = b['ce_oi']
+        pe_oi = b['pe_oi']
+        diff = pe_oi - ce_oi
         
-        total_ce_oi = 0
-        total_pe_oi = 0
-        ce_prices = []
-        pe_prices = []
+        day_max_diff = max(day_max_diff, diff)
+        day_min_diff = min(day_min_diff, diff)
+        day_hl_diff = day_max_diff - day_min_diff
         
-        for item in last_items:
-            sym = item['symbol']
-            strike = extract_strike(sym)
-            if not strike or not is_included(sym, strike): continue
-            
-            if sym.endswith('CE'):
-                total_ce_oi += item.get('oi', 0)
-                ce_prices.append(item.get('close', 0))
-            elif sym.endswith('PE'):
-                total_pe_oi += item.get('oi', 0)
-                pe_prices.append(item.get('close', 0))
+        chg_in_direction = diff - prev_diff if i > 0 else 0
+        direction_chg_pct = (chg_in_direction / abs(prev_diff) * 100) if i > 0 and prev_diff != 0 else 0
         
-        avg_ce_price = sum(ce_prices) / len(ce_prices) if ce_prices else 0
-        avg_pe_price = sum(pe_prices) / len(pe_prices) if pe_prices else 0
-
-        if i == 0:
-            # Compare with Previous Day (which was already filtered above)
-            ce_oi_change = total_ce_oi - total_prev_ce_oi
-            pe_oi_change = total_pe_oi - total_prev_pe_oi
-            ce_price_change = avg_ce_price - avg_prev_ce_price
-            pe_price_change = avg_pe_price - avg_prev_pe_price
-        else:
-            # Compare with previous bucket (we need to calculate its filtered values)
-            prev_b = bucket_data[i-1]
-            prev_items = data_by_ts[prev_b['last_ts']]
-            
-            prev_total_ce_oi = 0
-            prev_total_pe_oi = 0
-            prev_ce_prices = []
-            prev_pe_prices = []
-            
-            for item in prev_items:
-                sym = item['symbol']
-                strike = extract_strike(sym)
-                if not strike or not is_included(sym, strike): continue
-                
-                if sym.endswith('CE'):
-                    prev_total_ce_oi += item.get('oi', 0)
-                    prev_ce_prices.append(item.get('close', 0))
-                elif sym.endswith('PE'):
-                    prev_total_pe_oi += item.get('oi', 0)
-                    prev_pe_prices.append(item.get('close', 0))
-            
-            prev_avg_ce_price = sum(prev_ce_prices) / len(prev_ce_prices) if prev_ce_prices else 0
-            prev_avg_pe_price = sum(prev_pe_prices) / len(prev_pe_prices) if prev_pe_prices else 0
-            
-            ce_oi_change = total_ce_oi - prev_total_ce_oi
-            pe_oi_change = total_pe_oi - prev_total_pe_oi
-            ce_price_change = avg_ce_price - prev_avg_ce_price
-            pe_price_change = avg_pe_price - prev_avg_pe_price
+        sentiment = "Neutral"
+        if diff > 0 and chg_in_direction > 0: sentiment = "Bullish"
+        elif diff < 0 and chg_in_direction < 0: sentiment = "Bearish"
+        elif diff > 0 and chg_in_direction < 0: sentiment = "Weak Bullish"
+        elif diff < 0 and chg_in_direction > 0: sentiment = "Weak Bearish"
 
         results.append({
-            'time_range': f"{datetime.fromtimestamp(b['start_ts']).strftime('%H:%M')}-{datetime.fromtimestamp(b['end_ts'] + 60).strftime('%H:%M')}",
-            'strike': current_atm,
-            'ce': {
-                'oi': total_ce_oi,
-                'ltp': round(avg_ce_price, 2),
-                'ltp_change': round(ce_price_change, 2),
-                'oi_change': ce_oi_change,
-                'interpretation': interpret(ce_price_change, ce_oi_change)
-            },
-            'pe': {
-                'oi': total_pe_oi,
-                'ltp': round(avg_pe_price, 2),
-                'ltp_change': round(pe_price_change, 2),
-                'oi_change': pe_oi_change,
-                'interpretation': interpret(pe_price_change, pe_oi_change)
-            },
-            'total_oi_change': ce_oi_change + pe_oi_change
+            'index': i + 1,
+            'date': datetime.fromtimestamp(b['last_ts']).strftime('%d-%m-%Y'),
+            'time': datetime.fromtimestamp(b['last_ts']).strftime('%H:%M:%S'),
+            'ltp': round(b['ltp'], 2),
+            'hl_break': 'H Break' if b['is_high_break'] else 'L Break' if b['is_low_break'] else '-',
+            'ce_oi': ce_oi,
+            'pe_oi': pe_oi,
+            'diff_oi': diff,
+            'direction': '▲' if chg_in_direction > 0 else '▼' if chg_in_direction < 0 else '-',
+            'chg_direction': chg_in_direction,
+            'chg_direction_pct': round(direction_chg_pct, 2),
+            'net_pcr': round(pe_oi / ce_oi, 2) if ce_oi > 0 else 0,
+            'day_hl_diff': day_hl_diff,
+            'sentiment': sentiment
         })
+        prev_diff = diff
 
-    return jsonify({
-        'status': 'success',
-        'data': list(reversed(results))
-    })
+    return jsonify({'status': 'success', 'data': list(reversed(results))})
 
 
 @madhan_bp.route('/api/nifty/signals-cross')

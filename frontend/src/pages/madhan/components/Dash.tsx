@@ -1,7 +1,5 @@
 import { useEffect, useState, useMemo } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { MarketSummary } from './MarketSummary';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Play, RotateCcw } from 'lucide-react';
@@ -33,29 +31,30 @@ interface DashData {
 }
 
 interface TimeAnalysisRow {
-    time_range: string;
-    strike: number;
-    total_oi_change: number;
-    ce: {
-        oi: number;
-        ltp: number;
-        ltp_change: number;
-        oi_change: number;
-        interpretation: string;
-    };
-    pe: {
-        oi: number;
-        ltp: number;
-        ltp_change: number;
-        oi_change: number;
-        interpretation: string;
-    };
+    index: number;
+    date: string;
+    time: string;
+    ltp: number;
+    hl_break: string;
+    ce_oi: number;
+    pe_oi: number;
+    diff_oi: number;
+    direction: string;
+    chg_direction: number;
+    chg_direction_pct: number;
+    net_pcr: number;
+    day_hl_diff: number;
+    sentiment: string;
 }
 
 export function Dash({ refreshTrigger }: { refreshTrigger: number }) {
     const [data, setData] = useState<DashData | null>(null);
     const [timeAnalysis, setTimeAnalysis] = useState<TimeAnalysisRow[]>([]);
-    const [mode, setMode] = useState<string>('writer_open');
+    
+    // Separate Individual States
+    const [summaryMode, setSummaryMode] = useState<string>('writer_open');
+    const [tableMode, setTableMode] = useState<string>('writer_open');
+    const [tableTimeframe, setTableTimeframe] = useState<string>('3');
     
     // Replay State
     const [isReplayMode, setIsReplayMode] = useState(false);
@@ -81,8 +80,8 @@ export function Dash({ refreshTrigger }: { refreshTrigger: number }) {
         try {
             const endTsParam = isReplayMode && replayTimestamp ? `&end_ts=${replayTimestamp}` : '';
             const [dashRes, timeRes] = await Promise.all([
-                fetch(`/madhan/api/nifty/dash-data?mode=${mode}${endTsParam}`),
-                fetch(`/madhan/api/nifty/dash-time-analysis?mode=${mode}${endTsParam}`)
+                fetch(`/madhan/api/nifty/dash-data?mode=${summaryMode}${endTsParam}`),
+                fetch(`/madhan/api/nifty/dash-time-analysis?mode=${tableMode}&interval=${tableTimeframe}${endTsParam}`)
             ]);
             
             const dashJson = await dashRes.json();
@@ -115,7 +114,7 @@ export function Dash({ refreshTrigger }: { refreshTrigger: number }) {
     // Initial fetch and on dependencies change
     useEffect(() => {
         fetchData(true);
-    }, [refreshTrigger, mode, isReplayMode, replayTimestamp]);
+    }, [refreshTrigger, summaryMode, tableMode, tableTimeframe, isReplayMode, replayTimestamp]);
 
     // Custom 1-minute aligned refresh logic
     useEffect(() => {
@@ -136,7 +135,7 @@ export function Dash({ refreshTrigger }: { refreshTrigger: number }) {
 
         scheduleNextRefresh();
         return () => clearTimeout(timeoutId);
-    }, [isReplayMode, mode]);
+    }, [isReplayMode, summaryMode, tableMode, tableTimeframe]);
 
     const formatTime = (ts: number | null) => {
         if (!ts) return "--:--";
@@ -146,31 +145,18 @@ export function Dash({ refreshTrigger }: { refreshTrigger: number }) {
     const formatValue = (val: number) => {
         if (val === undefined || val === null) return '0';
         const abs = Math.abs(val);
+        if (abs >= 10000000) return (val / 10000000).toFixed(2) + 'Cr';
         if (abs >= 100000) return (val / 100000).toFixed(2) + 'L';
         if (abs >= 1000) return (val / 1000).toFixed(1) + 'K';
         return val.toString();
     };
 
-    const getInterpretationColor = (interp: string) => {
-        switch (interp) {
-            case 'Long Build Up': return 'bg-green-500 text-white';
-            case 'Short Build Up': return 'bg-red-500 text-white';
-            case 'Short Covering': return 'bg-blue-600 text-white';
-            case 'Long Unwinding': return 'bg-amber-500 text-white';
-            default: return 'bg-slate-200 text-slate-700';
-        }
-    };
-
     if (!data) return <div className="p-4 text-center">Loading Dash data...</div>;
 
-    // Writer View Color Helpers for Table
-    const getCeColor = (val: number = 1) => val >= 0 ? 'text-red-500' : 'text-green-500';
-    const getPeColor = (val: number = 1) => val >= 0 ? 'text-green-500' : 'text-red-500';
-
     return (
-        <div className="flex flex-col h-[calc(100vh-140px)] gap-2 p-1 overflow-hidden bg-background">
+        <div className="flex flex-col h-[calc(100vh-140px)] gap-0 p-0 overflow-hidden bg-background w-full">
             {/* Control Bar */}
-            <div className="flex items-center justify-between px-2 py-1 bg-card border rounded-lg shadow-sm">
+            <div className="flex items-center justify-between px-2 py-0 bg-card border-b shadow-sm w-full h-7">
                 <div className="flex items-center gap-4">
                     <div className="flex items-center gap-2">
                         <div className={`w-2 h-2 rounded-full animate-pulse ${isReplayMode ? 'bg-amber-500' : 'bg-green-500'}`} />
@@ -220,9 +206,9 @@ export function Dash({ refreshTrigger }: { refreshTrigger: number }) {
                 </div>
 
                 <div className="flex items-center gap-2">
-                    <Select value={mode} onValueChange={setMode}>
+                    <Select value={summaryMode} onValueChange={setSummaryMode}>
                         <SelectTrigger className="w-[160px] h-7 text-[10px] font-bold uppercase bg-background">
-                            <SelectValue placeholder="Select View" />
+                            <SelectValue placeholder="Select Summary View" />
                         </SelectTrigger>
                         <SelectContent>
                             <SelectItem value="total" className="text-[10px] font-bold">Total Strikes</SelectItem>
@@ -234,83 +220,114 @@ export function Dash({ refreshTrigger }: { refreshTrigger: number }) {
             </div>
 
             {/* Summary Row */}
-            <MarketSummary summary={data.summary} />
+            <div className="w-full border-b bg-card">
+                <MarketSummary summary={data.summary} />
+            </div>
 
             {/* Interpretation Table (Image style) */}
-            <Card className="flex-1 flex flex-col">
-                <CardHeader className="p-2 border-b flex-shrink-0 flex flex-row items-center justify-between">
-                    <CardTitle className="text-xs uppercase font-bold text-muted-foreground">Market Time Interval Interpretation</CardTitle>
-                    <div className="flex gap-2">
+            <div className="flex-1 flex flex-col overflow-hidden bg-background">
+                <div className="flex items-center justify-between px-2 py-0 border-b bg-muted/5 w-full h-6">
+                    <div className="flex items-center gap-1.5 h-full">
+                        <span className="text-[8px] font-black uppercase tracking-tighter text-muted-foreground leading-none">Interval Interpretation</span>
                         {isReplayMode && (
-                            <span className="text-[10px] font-black text-amber-500 italic bg-amber-500/5 px-2 py-0.5 rounded border border-amber-500/10">
+                            <span className="text-[7px] font-black text-amber-500 italic bg-amber-500/10 px-1 py-0 rounded border border-amber-500/20 leading-none ml-1">
                                 REPLAY: {formatTime(replayTimestamp)}
                             </span>
                         )}
-                        <span className="text-[10px] font-black text-blue-500 italic bg-blue-500/5 px-2 py-0.5 rounded border border-blue-500/10">
-                            MODE: {mode === 'total' ? 'TOTAL' : mode === 'writer_open' ? 'WRITER (OPEN ATM)' : 'WRITER (CURRENT ATM)'}
-                        </span>
                     </div>
-                </CardHeader>
-                <CardContent className="p-0 flex-1 overflow-hidden">
-                    <ScrollArea className="h-full">
-                        <Table className="relative">
-                            <TableHeader className="sticky top-0 bg-background z-10 shadow-sm">
-                                <TableRow className="hover:bg-transparent h-8">
-                                    <TableHead className="text-center text-[9px] uppercase font-bold p-1 whitespace-nowrap text-red-500">C. OI (Sum)</TableHead>
-                                    <TableHead className="text-center text-[9px] uppercase font-bold p-1 whitespace-nowrap border-r">Tot. COI</TableHead>
-                                    <TableHead className="text-center text-[9px] uppercase font-bold p-1 whitespace-nowrap text-red-500">C. LTP (Avg)</TableHead>
-                                    <TableHead className="text-center text-[9px] uppercase font-bold p-1 whitespace-nowrap text-red-500">C. P.Chg</TableHead>
-                                    <TableHead className="text-center text-[9px] uppercase font-bold p-1 whitespace-nowrap text-red-500">C. OI.Chg</TableHead>
-                                    <TableHead className="text-center text-[9px] uppercase font-bold p-1 whitespace-nowrap border-r">C. Interpretation</TableHead>
-                                    <TableHead className="text-center text-[9px] uppercase font-bold p-1 whitespace-nowrap bg-slate-100 dark:bg-slate-900">Strike (ATM)</TableHead>
-                                    <TableHead className="text-center text-[9px] uppercase font-bold p-1 whitespace-nowrap border-l">P. Interpretation</TableHead>
-                                    <TableHead className="text-center text-[9px] uppercase font-bold p-1 whitespace-nowrap text-green-500">P. OI.Chg</TableHead>
-                                    <TableHead className="text-center text-[9px] uppercase font-bold p-1 whitespace-nowrap text-green-500">P. P.Chg</TableHead>
-                                    <TableHead className="text-center text-[9px] uppercase font-bold p-1 whitespace-nowrap text-green-500">P. LTP (Avg)</TableHead>
-                                    <TableHead className="text-center text-[9px] uppercase font-bold p-1 whitespace-nowrap text-green-500">P. OI (Sum)</TableHead>
+                    
+                    <div className="flex items-center gap-1 h-full">
+                        <Select value={tableMode} onValueChange={setTableMode}>
+                            <SelectTrigger className="w-[180px] h-4.5 text-[8px] font-bold uppercase bg-background border-slate-200 px-1.5 py-0">
+                                <SelectValue placeholder="Select Table View" />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="total" className="text-[8px] font-bold">Total Strikes</SelectItem>
+                                <SelectItem value="writer_open" className="text-[8px] font-bold">Writer View (Open ATM)</SelectItem>
+                                <SelectItem value="writer_current" className="text-[8px] font-bold">Writer View (Current ATM)</SelectItem>
+                            </SelectContent>
+                        </Select>
+
+                        <Select value={tableTimeframe} onValueChange={setTableTimeframe}>
+                            <SelectTrigger className="w-[60px] h-4.5 text-[8px] font-bold uppercase bg-background border-slate-200 px-1 py-0">
+                                <SelectValue placeholder="Interval" />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="1" className="text-[8px] font-bold">1 Min</SelectItem>
+                                <SelectItem value="3" className="text-[8px] font-bold">3 Min</SelectItem>
+                                <SelectItem value="5" className="text-[8px] font-bold">5 Min</SelectItem>
+                                <SelectItem value="15" className="text-[8px] font-bold">15 Min</SelectItem>
+                                <SelectItem value="30" className="text-[8px] font-bold">30 Min</SelectItem>
+                                <SelectItem value="60" className="text-[8px] font-bold">60 Min</SelectItem>
+                            </SelectContent>
+                        </Select>
+                    </div>
+                </div>
+                <div className="flex-1 relative overflow-hidden bg-background">
+                    <div className="absolute inset-0 overflow-auto scrollbar-thin">
+                        <Table className="relative w-full border-collapse">
+                            <TableHeader className="sticky top-0 bg-background z-20 shadow-[0_1px_0_rgba(0,0,0,0.1)]">
+                                <TableRow className="hover:bg-transparent border-b h-4">
+                                    <TableHead className="text-center text-[8px] uppercase font-black p-0 h-4 whitespace-nowrap bg-background border-r">#</TableHead>
+                                    <TableHead className="text-center text-[8px] uppercase font-black p-0 h-4 whitespace-nowrap bg-background border-r">Date</TableHead>
+                                    <TableHead className="text-center text-[8px] uppercase font-black p-0 h-4 whitespace-nowrap bg-background border-r">Time</TableHead>
+                                    <TableHead className="text-center text-[8px] uppercase font-black p-0 h-4 whitespace-nowrap bg-background border-r">LTP</TableHead>
+                                    <TableHead className="text-center text-[8px] uppercase font-black p-0 h-4 whitespace-nowrap bg-background border-r">Day H/L Break</TableHead>
+                                    <TableHead className="text-center text-[8px] uppercase font-black p-0 h-4 whitespace-nowrap text-red-500 bg-background border-r">Call OI</TableHead>
+                                    <TableHead className="text-center text-[8px] uppercase font-black p-0 h-4 whitespace-nowrap text-green-500 bg-background border-r">Put OI</TableHead>
+                                    <TableHead className="text-center text-[8px] uppercase font-black p-0 h-4 whitespace-nowrap bg-background border-r">Diff. in OI</TableHead>
+                                    <TableHead className="text-center text-[8px] uppercase font-black p-0 h-4 whitespace-nowrap bg-background border-r">Dir.</TableHead>
+                                    <TableHead className="text-center text-[8px] uppercase font-black p-0 h-4 whitespace-nowrap bg-background border-r">Chg. Dir</TableHead>
+                                    <TableHead className="text-center text-[8px] uppercase font-black p-0 h-4 whitespace-nowrap bg-background border-r">Dir %</TableHead>
+                                    <TableHead className="text-center text-[8px] uppercase font-black p-0 h-4 whitespace-nowrap bg-background border-r">Net PCR</TableHead>
+                                    <TableHead className="text-center text-[8px] uppercase font-black p-0 h-4 whitespace-nowrap bg-background border-r">Day H/L Diff OI</TableHead>
+                                    <TableHead className="text-center text-[8px] uppercase font-black p-0 h-4 whitespace-nowrap bg-background">Sentiment</TableHead>
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
                                 {timeAnalysis.map((row, idx) => (
-                                    <TableRow key={idx} className="hover:bg-accent/50 h-8">
-                                        <TableCell className="text-center p-1 text-[10px] font-medium whitespace-nowrap">{row.time_range}</TableCell>
-                                        <TableCell className={`text-center p-1 text-[10px] ${getCeColor()}`}>{formatValue(row.ce.oi)}</TableCell>
-                                        <TableCell className={`text-center p-1 text-[10px] font-bold border-r ${row.total_oi_change >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                                            {formatValue(row.total_oi_change)}
+                                    <TableRow key={idx} className="hover:bg-accent/30 border-b last:border-0 h-4">
+                                        <TableCell className="text-center p-0 h-4 text-[8px] font-medium border-r">{row.index}</TableCell>
+                                        <TableCell className="text-center p-0 h-4 text-[8px] whitespace-nowrap border-r">{row.date}</TableCell>
+                                        <TableCell className="text-center p-0 h-4 text-[8px] whitespace-nowrap border-r">{row.time}</TableCell>
+                                        <TableCell className="text-center p-0 h-4 text-[8px] font-bold text-blue-600 border-r">{row.ltp.toFixed(2)}</TableCell>
+                                        <TableCell className={`text-center p-0 h-4 text-[7px] font-black italic border-r ${row.hl_break.includes('High') ? 'text-green-600' : row.hl_break.includes('Low') ? 'text-red-600' : 'text-muted-foreground'}`}>
+                                            {row.hl_break}
                                         </TableCell>
-                                        <TableCell className={`text-center p-1 text-[10px] ${getCeColor()}`}>{row.ce.ltp}</TableCell>
-                                        <TableCell className={`text-center p-1 text-[10px] ${row.ce.ltp_change >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                                            {row.ce.ltp_change > 0 ? '+' : ''}{row.ce.ltp_change}
+                                        <TableCell className="text-center p-0 h-4 text-[8px] text-red-500 font-medium border-r">{formatValue(row.ce_oi)}</TableCell>
+                                        <TableCell className="text-center p-0 h-4 text-[8px] text-green-500 font-medium border-r">{formatValue(row.pe_oi)}</TableCell>
+                                        <TableCell className={`text-center p-0 h-4 text-[8px] font-bold border-r ${row.diff_oi >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                            {formatValue(row.diff_oi)}
                                         </TableCell>
-                                        <TableCell className={`text-center p-1 text-[10px] ${getCeColor(row.ce.oi_change)}`}>
-                                            {formatValue(row.ce.oi_change)}
+                                        <TableCell className={`text-center p-0 h-4 text-xs font-bold border-r ${row.direction === '▲' ? 'text-green-600' : row.direction === '▼' ? 'text-red-600' : ''}`}>
+                                            {row.direction}
                                         </TableCell>
-                                        <TableCell className="p-1 text-center border-r">
-                                            <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold inline-block w-full ${getInterpretationColor(row.ce.interpretation)}`}>
-                                                {row.ce.interpretation}
+                                        <TableCell className={`text-center p-0 h-4 text-[8px] font-medium border-r ${row.chg_direction >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                            {formatValue(row.chg_direction)}
+                                        </TableCell>
+                                        <TableCell className={`text-center p-0 h-4 text-[8px] font-medium border-r ${row.chg_direction_pct >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                            {row.chg_direction_pct > 0 ? '+' : ''}{row.chg_direction_pct}%
+                                        </TableCell>
+                                        <TableCell className="text-center p-0 h-4 text-[8px] font-bold border-r">{row.net_pcr.toFixed(2)}</TableCell>
+                                        <TableCell className="text-center p-0 h-4 text-[8px] font-bold text-slate-500 border-r">{formatValue(row.day_hl_diff)}</TableCell>
+                                        <TableCell className="text-center p-0 h-4">
+                                            <span className={`px-1 py-0 rounded-full text-[7px] font-black uppercase inline-block w-full leading-tight ${
+                                                row.sentiment.includes('Strong Bullish') ? 'bg-green-500 text-white' :
+                                                row.sentiment.includes('Bullish') ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' :
+                                                row.sentiment.includes('Strong Bearish') ? 'bg-red-500 text-white' :
+                                                row.sentiment.includes('Bearish') ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400' :
+                                                'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400'
+                                            }`}>
+                                                {row.sentiment}
                                             </span>
                                         </TableCell>
-                                        <TableCell className="text-center p-1 bg-slate-50 dark:bg-slate-900/50 font-bold text-[10px]">{row.strike}</TableCell>
-                                        <TableCell className="p-1 text-center border-l">
-                                            <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold inline-block w-full ${getInterpretationColor(row.pe.interpretation)}`}>
-                                                {row.pe.interpretation}
-                                            </span>
-                                        </TableCell>
-                                        <TableCell className={`text-center p-1 text-[10px] ${getPeColor(row.pe.oi_change)}`}>
-                                            {formatValue(row.pe.oi_change)}
-                                        </TableCell>
-                                        <TableCell className={`text-center p-1 text-[10px] ${row.pe.ltp_change >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                                            {row.pe.ltp_change > 0 ? '+' : ''}{row.pe.ltp_change}
-                                        </TableCell>
-                                        <TableCell className={`text-center p-1 text-[10px] ${getPeColor()}`}>{row.pe.ltp}</TableCell>
-                                        <TableCell className={`text-center p-1 text-[10px] ${getPeColor()}`}>{formatValue(row.pe.oi)}</TableCell>
                                     </TableRow>
                                 ))}
                             </TableBody>
                         </Table>
-                    </ScrollArea>
-                </CardContent>
-            </Card>
+                    </div>
+                </div>
+            </div>
         </div>
     );
 }
