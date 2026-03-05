@@ -154,172 +154,181 @@ export function Dash({ refreshTrigger }: { refreshTrigger: number }) {
     if (!data) return <div className="p-4 text-center">Loading Dash data...</div>;
 
     return (
-        <div className="flex flex-col h-[calc(100vh-140px)] gap-0 p-0 overflow-hidden bg-background w-full">
+        <div className="flex flex-col h-[calc(100vh-140px)] gap-0 p-0 overflow-hidden bg-[#0a0a0a] text-slate-200 w-full font-sans">
             {/* Control Bar */}
-            <div className="flex items-center justify-between px-2 py-0 bg-card border-b shadow-sm w-full h-7">
-                <div className="flex items-center gap-4">
+            <div className="flex items-center justify-between px-4 bg-[#111111] border-b border-white/5 w-full h-10 shadow-2xl">
+                <div className="flex items-center gap-6">
                     <div className="flex items-center gap-2">
-                        <div className={`w-2 h-2 rounded-full animate-pulse ${isReplayMode ? 'bg-amber-500' : 'bg-green-500'}`} />
-                        <span className="text-[10px] font-black uppercase tracking-tighter">
+                        <div className={`w-2 h-2 rounded-full ${isReplayMode ? 'bg-amber-500 animate-pulse' : 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)] animate-pulse'}`} />
+                        <span className="text-[10px] font-black uppercase tracking-widest text-white">
                             {isReplayMode ? 'Replay Mode' : 'Live Market'}
                         </span>
                     </div>
                     
                     <button 
                         onClick={() => {
-                            setIsReplayMode(!isReplayMode);
-                            if (isReplayMode) setReplayTimestamp(latestDataTimestamp);
+                            if (isReplayMode) {
+                                setIsReplayMode(false);
+                                setReplayTimestamp(latestDataTimestamp);
+                            } else {
+                                setIsReplayMode(true);
+                                if (!replayTimestamp) setReplayTimestamp(marketStartTime);
+                            }
                         }}
-                        className={`flex items-center gap-1.5 px-2 py-1 rounded border transition-all text-[9px] font-bold uppercase ${
+                        className={`flex items-center gap-2 px-3 py-1 rounded border transition-all text-[9px] font-black uppercase ${
                             isReplayMode 
-                            ? 'bg-amber-500/10 border-amber-500/50 text-amber-600' 
-                            : 'bg-slate-100 border-slate-200 text-slate-600 hover:bg-slate-200'
+                            ? 'bg-amber-500/10 border-amber-500/50 text-amber-500 hover:bg-amber-500/20' 
+                            : 'bg-white/5 border-white/20 text-white hover:bg-white/10'
                         }`}
                     >
-                        {isReplayMode ? <RotateCcw size={12} /> : <Play size={12} />}
-                        {isReplayMode ? 'Back to Live' : 'Start Replay'}
+                        {isReplayMode ? <RotateCcw size={10} /> : <Play size={10} className="fill-white" />}
+                        {isReplayMode ? 'Stop Replay' : 'Start Replay'}
                     </button>
                 </div>
 
-                <div className="flex-1 px-4 flex items-center gap-3">
-                    <span className="text-[9px] font-bold text-muted-foreground w-10">09:15</span>
-                    <input 
-                        type="range" 
-                        min={marketStartTime}
-                        max={Math.min(latestDataTimestamp || Math.floor(Date.now() / 1000), marketEndTime)}
-                        step={60}
-                        value={replayTimestamp || Math.min(latestDataTimestamp || Math.floor(Date.now() / 1000), marketEndTime)}
-                        onChange={(e) => {
-                            setReplayTimestamp(parseInt(e.target.value));
-                            setIsReplayMode(true);
-                        }}
-                        className="flex-1 h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
-                    />
-                    <div className="flex flex-col items-center min-w-[60px]">
-                        <span className="text-[11px] font-black text-blue-600 leading-none">
-                            {formatTime(replayTimestamp || Math.min(latestDataTimestamp || Math.floor(Date.now() / 1000), marketEndTime))}
-                        </span>
-                        <span className="text-[9px] font-bold text-muted-foreground w-10 ml-2">
-                            {formatTime(Math.min(latestDataTimestamp || Math.floor(Date.now() / 1000), marketEndTime))}
-                        </span>
+                <div className="flex-1 px-8 flex items-center gap-4">
+                    <span className="text-[10px] font-bold text-slate-500 whitespace-nowrap">09:15</span>
+                    <div className="flex-1 relative group flex items-center h-full">
+                        <input 
+                            type="range" 
+                            min={marketStartTime}
+                            max={Math.min(latestDataTimestamp || Math.floor(Date.now() / 1000), marketEndTime)}
+                            step={60}
+                            value={replayTimestamp || Math.min(latestDataTimestamp || Math.floor(Date.now() / 1000), marketEndTime)}
+                            onChange={(e) => {
+                                setReplayTimestamp(parseInt(e.target.value));
+                                setIsReplayMode(true);
+                            }}
+                            className="w-full h-1 bg-white/10 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                        />
+                    </div>
+                    <div className="flex items-center gap-3 min-w-fit">
+                        <div className="flex flex-col items-center justify-center h-full">
+                            <span className="text-[11px] font-black text-blue-400 leading-none">
+                                {formatTime(replayTimestamp || Math.min(latestDataTimestamp || Math.floor(Date.now() / 1000), marketEndTime))}
+                            </span>
+                            <span className="text-[8px] font-bold text-slate-600 leading-none mt-1">
+                                {formatTime(Math.min(latestDataTimestamp || Math.floor(Date.now() / 1000), marketEndTime))}
+                            </span>
+                        </div>
                     </div>
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 pr-2">
                     <Select value={summaryMode} onValueChange={setSummaryMode}>
-                        <SelectTrigger className="w-[160px] h-7 text-[10px] font-bold uppercase bg-background">
-                            <SelectValue placeholder="Select Summary View" />
+                        <SelectTrigger className="w-[160px] h-7 text-[9px] font-black uppercase bg-black border-white/10 text-slate-300">
+                            <SelectValue placeholder="Mode" />
                         </SelectTrigger>
-                        <SelectContent>
-                            <SelectItem value="total" className="text-[10px] font-bold">Total Strikes</SelectItem>
-                            <SelectItem value="writer_open" className="text-[10px] font-bold">Writer View (Open ATM)</SelectItem>
-                            <SelectItem value="writer_current" className="text-[10px] font-bold">Writer View (Current ATM)</SelectItem>
+                        <SelectContent className="bg-black border-white/10 text-slate-300">
+                            <SelectItem value="total" className="text-[9px] font-black uppercase">Total Strikes</SelectItem>
+                            <SelectItem value="writer_open" className="text-[9px] font-black uppercase">Writer View (Open ATM)</SelectItem>
+                            <SelectItem value="writer_current" className="text-[9px] font-black uppercase">Writer View (Current ATM)</SelectItem>
                         </SelectContent>
                     </Select>
                 </div>
             </div>
 
             {/* Summary Row */}
-            <div className="w-full border-b bg-card">
+            <div className="w-full bg-[#0a0a0a] p-2 border-b border-white/5">
                 <MarketSummary summary={data.summary} />
             </div>
 
-            {/* Interpretation Table (Image style) */}
-            <div className="flex-1 flex flex-col overflow-hidden bg-background">
-                <div className="flex items-center justify-between px-2 py-0 border-b bg-muted/5 w-full h-6">
-                    <div className="flex items-center gap-1.5 h-full">
-                        <span className="text-[8px] font-black uppercase tracking-tighter text-muted-foreground leading-none">Interval Interpretation</span>
-                        {isReplayMode && (
-                            <span className="text-[7px] font-black text-amber-500 italic bg-amber-500/10 px-1 py-0 rounded border border-amber-500/20 leading-none ml-1">
-                                REPLAY: {formatTime(replayTimestamp)}
-                            </span>
-                        )}
-                    </div>
+            {/* Interpretation Table */}
+            <div className="flex-1 flex flex-col overflow-hidden">
+                <div className="flex items-center justify-between px-4 py-1.5 bg-[#111111]/50 border-b border-white/5 w-full">
+                    <span className="text-[9px] font-black uppercase tracking-[0.2em] text-slate-500">Interval Interpretation</span>
                     
-                    <div className="flex items-center gap-1 h-full">
+                    <div className="flex items-center gap-2">
                         <Select value={tableMode} onValueChange={setTableMode}>
-                            <SelectTrigger className="w-[180px] h-4.5 text-[8px] font-bold uppercase bg-background border-slate-200 px-1.5 py-0">
-                                <SelectValue placeholder="Select Table View" />
+                            <SelectTrigger className="w-[180px] h-6 text-[8px] font-black uppercase bg-black border-white/10 text-slate-400">
+                                <SelectValue />
                             </SelectTrigger>
-                            <SelectContent>
-                                <SelectItem value="total" className="text-[8px] font-bold">Total Strikes</SelectItem>
-                                <SelectItem value="writer_open" className="text-[8px] font-bold">Writer View (Open ATM)</SelectItem>
-                                <SelectItem value="writer_current" className="text-[8px] font-bold">Writer View (Current ATM)</SelectItem>
+                            <SelectContent className="bg-black border-white/10 text-slate-400">
+                                <SelectItem value="total">Total Strikes</SelectItem>
+                                <SelectItem value="writer_open">Writer View (Open ATM)</SelectItem>
+                                <SelectItem value="writer_current">Writer View (Current ATM)</SelectItem>
                             </SelectContent>
                         </Select>
 
                         <Select value={tableTimeframe} onValueChange={setTableTimeframe}>
-                            <SelectTrigger className="w-[60px] h-4.5 text-[8px] font-bold uppercase bg-background border-slate-200 px-1 py-0">
-                                <SelectValue placeholder="Interval" />
+                            <SelectTrigger className="w-[60px] h-6 text-[8px] font-black uppercase bg-black border-white/10 text-slate-400">
+                                <SelectValue />
                             </SelectTrigger>
-                            <SelectContent>
-                                <SelectItem value="1" className="text-[8px] font-bold">1 Min</SelectItem>
-                                <SelectItem value="3" className="text-[8px] font-bold">3 Min</SelectItem>
-                                <SelectItem value="5" className="text-[8px] font-bold">5 Min</SelectItem>
-                                <SelectItem value="15" className="text-[8px] font-bold">15 Min</SelectItem>
-                                <SelectItem value="30" className="text-[8px] font-bold">30 Min</SelectItem>
-                                <SelectItem value="60" className="text-[8px] font-bold">60 Min</SelectItem>
+                            <SelectContent className="bg-black border-white/10 text-slate-400">
+                                <SelectItem value="1">1 Min</SelectItem>
+                                <SelectItem value="3">3 Min</SelectItem>
+                                <SelectItem value="5">5 Min</SelectItem>
+                                <SelectItem value="15">15 Min</SelectItem>
+                                <SelectItem value="30">30 Min</SelectItem>
+                                <SelectItem value="60">60 Min</SelectItem>
                             </SelectContent>
                         </Select>
                     </div>
                 </div>
-                <div className="flex-1 relative overflow-hidden bg-background">
-                    <div className="absolute inset-0 overflow-auto scrollbar-thin">
+
+                <div className="flex-1 relative overflow-hidden bg-black">
+                    <div className="absolute inset-0 overflow-auto scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent">
                         <Table className="relative w-full border-collapse">
-                            <TableHeader className="sticky top-0 bg-background z-20 shadow-[0_1px_0_rgba(0,0,0,0.1)]">
-                                <TableRow className="hover:bg-transparent border-b h-4">
-                                    <TableHead className="text-center text-[8px] uppercase font-black p-0 h-4 whitespace-nowrap bg-background border-r">#</TableHead>
-                                    <TableHead className="text-center text-[8px] uppercase font-black p-0 h-4 whitespace-nowrap bg-background border-r">Date</TableHead>
-                                    <TableHead className="text-center text-[8px] uppercase font-black p-0 h-4 whitespace-nowrap bg-background border-r">Time</TableHead>
-                                    <TableHead className="text-center text-[8px] uppercase font-black p-0 h-4 whitespace-nowrap bg-background border-r">LTP</TableHead>
-                                    <TableHead className="text-center text-[8px] uppercase font-black p-0 h-4 whitespace-nowrap bg-background border-r">Day H/L Break</TableHead>
-                                    <TableHead className="text-center text-[8px] uppercase font-black p-0 h-4 whitespace-nowrap text-red-500 bg-background border-r">Call OI</TableHead>
-                                    <TableHead className="text-center text-[8px] uppercase font-black p-0 h-4 whitespace-nowrap text-green-500 bg-background border-r">Put OI</TableHead>
-                                    <TableHead className="text-center text-[8px] uppercase font-black p-0 h-4 whitespace-nowrap bg-background border-r">Diff. in OI</TableHead>
-                                    <TableHead className="text-center text-[8px] uppercase font-black p-0 h-4 whitespace-nowrap bg-background border-r">Dir.</TableHead>
-                                    <TableHead className="text-center text-[8px] uppercase font-black p-0 h-4 whitespace-nowrap bg-background border-r">Chg. Dir</TableHead>
-                                    <TableHead className="text-center text-[8px] uppercase font-black p-0 h-4 whitespace-nowrap bg-background border-r">Dir %</TableHead>
-                                    <TableHead className="text-center text-[8px] uppercase font-black p-0 h-4 whitespace-nowrap bg-background border-r">Net PCR</TableHead>
-                                    <TableHead className="text-center text-[8px] uppercase font-black p-0 h-4 whitespace-nowrap bg-background border-r">Day H/L Diff OI</TableHead>
-                                    <TableHead className="text-center text-[8px] uppercase font-black p-0 h-4 whitespace-nowrap bg-background">Sentiment</TableHead>
+                            <TableHeader className="sticky top-0 bg-[#0a0a0a] z-20">
+                                <TableRow className="hover:bg-transparent border-b border-white/5 h-8">
+                                    <TableHead className="text-center text-[9px] uppercase font-black px-2 text-slate-500 border-r border-white/5">#</TableHead>
+                                    <TableHead className="text-center text-[9px] uppercase font-black px-2 text-slate-500 border-r border-white/5">Date</TableHead>
+                                    <TableHead className="text-center text-[9px] uppercase font-black px-2 text-slate-500 border-r border-white/5">Time</TableHead>
+                                    <TableHead className="text-center text-[9px] uppercase font-black px-2 text-slate-500 border-r border-white/5">Ltp</TableHead>
+                                    <TableHead className="text-center text-[9px] uppercase font-black px-2 text-slate-500 border-r border-white/5">Day H/L Break</TableHead>
+                                    <TableHead className="text-center text-[9px] uppercase font-black px-2 text-slate-500 border-r border-white/5">Call Oi</TableHead>
+                                    <TableHead className="text-center text-[9px] uppercase font-black px-2 text-slate-500 border-r border-white/5">Put Oi</TableHead>
+                                    <TableHead className="text-center text-[9px] uppercase font-black px-2 text-slate-500 border-r border-white/5">Diff. In Oi</TableHead>
+                                    <TableHead className="text-center text-[9px] uppercase font-black px-2 text-slate-500 border-r border-white/5">Dir.</TableHead>
+                                    <TableHead className="text-center text-[9px] uppercase font-black px-2 text-slate-500 border-r border-white/5">Chg. Dir</TableHead>
+                                    <TableHead className="text-center text-[9px] uppercase font-black px-2 text-slate-500 border-r border-white/5">Dir %</TableHead>
+                                    <TableHead className="text-center text-[9px] uppercase font-black px-2 text-slate-500 border-r border-white/5">Net Pcr</TableHead>
+                                    <TableHead className="text-center text-[9px] uppercase font-black px-2 text-slate-500 border-r border-white/5">Day H/L Diff Oi</TableHead>
+                                    <TableHead className="text-center text-[9px] uppercase font-black px-2 text-slate-500">Sentiment</TableHead>
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
                                 {timeAnalysis.map((row, idx) => (
-                                    <TableRow key={idx} className="hover:bg-accent/30 border-b last:border-0 h-4">
-                                        <TableCell className="text-center p-0 h-4 text-[8px] font-medium border-r">{row.index}</TableCell>
-                                        <TableCell className="text-center p-0 h-4 text-[8px] whitespace-nowrap border-r">{row.date}</TableCell>
-                                        <TableCell className="text-center p-0 h-4 text-[8px] whitespace-nowrap border-r">{row.time}</TableCell>
-                                        <TableCell className="text-center p-0 h-4 text-[8px] font-bold text-blue-600 border-r">{row.ltp.toFixed(2)}</TableCell>
-                                        <TableCell className={`text-center p-0 h-4 text-[7px] font-black italic border-r ${row.hl_break.includes('High') ? 'text-green-600' : row.hl_break.includes('Low') ? 'text-red-600' : 'text-muted-foreground'}`}>
-                                            {row.hl_break}
+                                    <TableRow key={idx} className="hover:bg-white/5 border-b border-white/5 h-8 transition-colors">
+                                        <TableCell className="text-center px-2 py-0 text-[10px] font-bold text-slate-500 border-r border-white/5">{row.index}</TableCell>
+                                        <TableCell className="text-center px-2 py-0 text-[10px] font-bold text-slate-400 border-r border-white/5">{row.date}</TableCell>
+                                        <TableCell className="text-center px-2 py-0 text-[10px] font-black text-slate-300 border-r border-white/5">{row.time}</TableCell>
+                                        <TableCell className="text-center px-2 py-0 text-[10px] font-black text-blue-400 border-r border-white/5">{row.ltp.toFixed(2)}</TableCell>
+                                        <TableCell className="text-center px-2 py-0 border-r border-white/5">
+                                            <div className={`px-2 py-0.5 rounded text-[8px] font-black uppercase inline-block w-full max-w-[80px] ${
+                                                row.hl_break.includes('High') || row.hl_break.includes('H Break') ? 'bg-green-600/20 text-green-500 border border-green-500/30' :
+                                                row.hl_break.includes('Low') || row.hl_break.includes('L Break') ? 'bg-red-600/20 text-red-500 border border-red-500/30' :
+                                                'text-slate-600'
+                                            }`}>
+                                                {row.hl_break || '-'}
+                                            </div>
                                         </TableCell>
-                                        <TableCell className="text-center p-0 h-4 text-[8px] text-red-500 font-medium border-r">{formatValue(row.ce_oi)}</TableCell>
-                                        <TableCell className="text-center p-0 h-4 text-[8px] text-green-500 font-medium border-r">{formatValue(row.pe_oi)}</TableCell>
-                                        <TableCell className={`text-center p-0 h-4 text-[8px] font-bold border-r ${row.diff_oi >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                        <TableCell className="text-center px-2 py-0 text-[10px] text-red-500 font-black border-r border-white/5">{formatValue(row.ce_oi)}</TableCell>
+                                        <TableCell className="text-center px-2 py-0 text-[10px] text-green-500 font-black border-r border-white/5">{formatValue(row.pe_oi)}</TableCell>
+                                        <TableCell className={`text-center px-2 py-0 text-[10px] font-black border-r border-white/5 ${row.diff_oi >= 0 ? 'text-green-500' : 'text-red-500'}`}>
                                             {formatValue(row.diff_oi)}
                                         </TableCell>
-                                        <TableCell className={`text-center p-0 h-4 text-xs font-bold border-r ${row.direction === '▲' ? 'text-green-600' : row.direction === '▼' ? 'text-red-600' : ''}`}>
+                                        <TableCell className={`text-center px-2 py-0 text-xs font-black border-r border-white/5 ${row.direction === '▲' ? 'text-green-500' : row.direction === '▼' ? 'text-red-500' : ''}`}>
                                             {row.direction}
                                         </TableCell>
-                                        <TableCell className={`text-center p-0 h-4 text-[8px] font-medium border-r ${row.chg_direction >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                        <TableCell className={`text-center px-2 py-0 text-[10px] font-black border-r border-white/5 ${row.chg_direction >= 0 ? 'text-green-500' : 'text-red-500'}`}>
                                             {formatValue(row.chg_direction)}
                                         </TableCell>
-                                        <TableCell className={`text-center p-0 h-4 text-[8px] font-medium border-r ${row.chg_direction_pct >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                        <TableCell className={`text-center px-2 py-0 text-[9px] font-black border-r border-white/5 ${row.chg_direction_pct >= 0 ? 'text-green-500' : 'text-red-500'}`}>
                                             {row.chg_direction_pct > 0 ? '+' : ''}{row.chg_direction_pct}%
                                         </TableCell>
-                                        <TableCell className="text-center p-0 h-4 text-[8px] font-bold border-r">{row.net_pcr.toFixed(2)}</TableCell>
-                                        <TableCell className="text-center p-0 h-4 text-[8px] font-bold text-slate-500 border-r">{formatValue(row.day_hl_diff)}</TableCell>
-                                        <TableCell className="text-center p-0 h-4">
-                                            <span className={`px-1 py-0 rounded-full text-[7px] font-black uppercase inline-block w-full leading-tight ${
-                                                row.sentiment.includes('Strong Bullish') ? 'bg-green-500 text-white' :
-                                                row.sentiment.includes('Bullish') ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' :
-                                                row.sentiment.includes('Strong Bearish') ? 'bg-red-500 text-white' :
-                                                row.sentiment.includes('Bearish') ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400' :
-                                                'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400'
+                                        <TableCell className="text-center px-2 py-0 text-[10px] font-black border-r border-white/5 text-slate-100">{row.net_pcr.toFixed(2)}</TableCell>
+                                        <TableCell className="text-center px-2 py-0 text-[10px] font-black text-slate-400 border-r border-white/5">{formatValue(row.day_hl_diff)}</TableCell>
+                                        <TableCell className="text-center px-2 py-0">
+                                            <div className={`px-2 py-0.5 rounded text-[8px] font-black uppercase inline-block w-full max-w-[90px] ${
+                                                row.sentiment.includes('Strong Bullish') ? 'bg-green-600/20 text-green-500 border border-green-500/30' :
+                                                row.sentiment.includes('Bullish') ? 'bg-green-500/10 text-green-500 border border-green-500/20' :
+                                                row.sentiment.includes('Strong Bearish') ? 'bg-red-600/20 text-red-500 border border-red-500/30' :
+                                                row.sentiment.includes('Bearish') ? 'bg-red-500/10 text-red-500 border border-red-500/20' :
+                                                'bg-slate-500/10 text-slate-500 border border-slate-500/20'
                                             }`}>
                                                 {row.sentiment}
-                                            </span>
+                                            </div>
                                         </TableCell>
                                     </TableRow>
                                 ))}
