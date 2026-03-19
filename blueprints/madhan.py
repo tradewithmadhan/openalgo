@@ -1997,6 +1997,7 @@ def nifty_dash_time_analysis():
             
             current_bucket['ce_oi'] = bucket_ce_oi
             current_bucket['pe_oi'] = bucket_pe_oi
+            current_bucket['atm'] = bucket_atm
             
             bucket_data.append(current_bucket)
             current_bucket = None
@@ -2020,7 +2021,7 @@ def nifty_dash_time_analysis():
             if spot <= day_low_spot: current_bucket['is_low_break'] = True
 
     if current_bucket:
-        # Finalize the last bucket
+        # Finalize the last bucket (after loop)
         bucket_atm = round(current_bucket['ltp'] / 50) * 50 if current_bucket['ltp'] > 0 else current_atm
         bucket_ce_oi = 0
         bucket_pe_oi = 0
@@ -2028,12 +2029,16 @@ def nifty_dash_time_analysis():
         for item in data_by_ts[last_ts_in_bucket]:
             sym = item['symbol']
             strike = extract_strike(sym)
-            if not strike or not is_included(sym, strike, bucket_atm): continue
-            if sym.endswith('CE'): bucket_ce_oi += item.get('oi', 0)
-            elif sym.endswith('PE'): bucket_pe_oi += item.get('oi', 0)
+            if not strike or not is_included(sym, strike, bucket_atm):
+                continue
+            if sym.endswith('CE'):
+                bucket_ce_oi += item.get('oi', 0)
+            elif sym.endswith('PE'):
+                bucket_pe_oi += item.get('oi', 0)
         
         current_bucket['ce_oi'] = bucket_ce_oi
         current_bucket['pe_oi'] = bucket_pe_oi
+        current_bucket['atm'] = bucket_atm
         bucket_data.append(current_bucket)
 
     results = []
@@ -2063,6 +2068,7 @@ def nifty_dash_time_analysis():
             'index': i + 1,
             'date': datetime.fromtimestamp(b['last_ts']).strftime('%d-%m-%Y'),
             'time': datetime.fromtimestamp(b['last_ts']).strftime('%H:%M:%S'),
+            'atm': b.get('atm', current_atm),
             'ltp': round(b['ltp'], 2),
             'hl_break': 'H Break' if b['is_high_break'] else 'L Break' if b['is_low_break'] else '-',
             'ce_oi': ce_oi,

@@ -30,6 +30,7 @@ import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/authStore'
 import { useThemeStore } from '@/stores/themeStore'
 import { profileMenuItems } from '@/config/navigation'
+import { useRef } from 'react'
 import { CoiTrendChart } from './components/CoiTrendChart'
 import { CePeChangesChart } from './components/CePeChangesChart'
 import { CePeStrikeChangesChart } from './components/CePeStrikeChangesChart'
@@ -105,6 +106,7 @@ export default function Madhan01() {
   const [showOiChain, setShowOiChain] = useState(true)
   const [_refreshTrigger, setRefreshTrigger] = useState(0)
   const [isRefreshing, setIsRefreshing] = useState(false)
+  const latestStatusRef = useRef<NiftyStatus | null>(null)
 
   const fetchStatus = useCallback(async () => {
     try {
@@ -123,6 +125,7 @@ export default function Madhan01() {
       if (data.status === 'success') {
         const statusData = data as NiftyStatus
         setStatus(statusData)
+        latestStatusRef.current = statusData
         return statusData
       } else {
         setError(data.message || 'Failed to fetch Nifty status')
@@ -133,6 +136,23 @@ export default function Madhan01() {
       return null
     }
   }, [])
+
+  useEffect(() => {
+    let intervalId: ReturnType<typeof setInterval>
+    const run = async () => {
+      await fetchStatus()
+    }
+    run()
+
+    const isStopped = (s: NiftyStatus | null) =>
+      !s?.is_running && typeof s?.message === 'string' && s.message.includes('Stopped')
+
+    if (!isStopped(latestStatusRef.current)) {
+      intervalId = setInterval(run, 1000)
+    }
+
+    return () => clearInterval(intervalId)
+  }, [fetchStatus])
 
   const startFetcher = useCallback(async () => {
     try {
@@ -257,7 +277,7 @@ export default function Madhan01() {
 
     const runSmartLoop = async () => {
         try {
-            const statusData = await fetchStatus()
+            const statusData = latestStatusRef.current
             await fetchPrevDayOi()
             const lastTs = await fetchLiveData()
             
@@ -266,19 +286,22 @@ export default function Madhan01() {
 
             // Only schedule next run if is_running is true
             if (statusData?.is_running) {
-                // Determine next run time
+                // Determine next run time (dynamic based on last_update)
                 const now = Date.now()
                 const period = 60000 // 1 min
-                const currentMinuteStart = Math.floor(now / period) * period
-                const expectedTs = currentMinuteStart - period 
+                const expectedTs = Math.floor(now / period) * period - period
 
                 let delay = 5000 // default retry
 
                 if (lastTs && lastTs >= expectedTs) {
-                    // We are up to date. Wait for next minute boundary.
-                    const nextMinuteStart = currentMinuteStart + period
-                    // Add 2 seconds buffer to allow DB update
-                    delay = Math.max(5000, nextMinuteStart - now + 2000) 
+                    let nextTarget = Math.floor(now / period) * period + period + 10000
+                    if (statusData?.last_update) {
+                        const lastUpdateMs = Date.parse(statusData.last_update)
+                        if (!Number.isNaN(lastUpdateMs)) {
+                            nextTarget = lastUpdateMs + period + 2000
+                        }
+                    }
+                    delay = Math.max(5000, nextTarget - now)
                 }
                 
                 timeoutId = setTimeout(runSmartLoop, delay)

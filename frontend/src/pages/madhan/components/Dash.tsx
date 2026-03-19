@@ -34,6 +34,7 @@ interface TimeAnalysisRow {
     index: number;
     date: string;
     time: string;
+    atm: number;
     ltp: number;
     hl_break: string;
     ce_oi: number;
@@ -52,8 +53,8 @@ export function Dash({ refreshTrigger }: { refreshTrigger: number }) {
     const [timeAnalysis, setTimeAnalysis] = useState<TimeAnalysisRow[]>([]);
     
     // Separate Individual States
-    const [summaryMode, setSummaryMode] = useState<string>('writer_open');
-    const [tableMode, setTableMode] = useState<string>('writer_open');
+    const [summaryMode, setSummaryMode] = useState<string>('writer_current');
+    const [tableMode, setTableMode] = useState<string>('writer_current');
     const [tableTimeframe, setTableTimeframe] = useState<string>('3');
     
     // Replay State
@@ -274,6 +275,7 @@ export function Dash({ refreshTrigger }: { refreshTrigger: number }) {
                                     <TableHead className="text-center text-[9px] uppercase font-black px-2 text-muted-foreground border-r border-border">#</TableHead>
                                     <TableHead className="text-center text-[9px] uppercase font-black px-2 text-muted-foreground border-r border-border">Date</TableHead>
                                     <TableHead className="text-center text-[9px] uppercase font-black px-2 text-muted-foreground border-r border-border">Time</TableHead>
+                                    <TableHead className="text-center text-[9px] uppercase font-black px-2 text-muted-foreground border-r border-border">ATM</TableHead>
                                     <TableHead className="text-center text-[9px] uppercase font-black px-2 text-muted-foreground border-r border-border">Ltp</TableHead>
                                     <TableHead className="text-center text-[9px] uppercase font-black px-2 text-muted-foreground border-r border-border">Day H/L Break</TableHead>
                                     <TableHead className="text-center text-[9px] uppercase font-black px-2 text-red-500 border-r border-border">Call Oi</TableHead>
@@ -288,12 +290,25 @@ export function Dash({ refreshTrigger }: { refreshTrigger: number }) {
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
-                                {timeAnalysis.map((row, idx) => (
+                                {timeAnalysis.map((row, idx) => {
+                                    const prevRow = idx < timeAnalysis.length - 1 ? timeAnalysis[idx + 1] : null;
+                                    const atmClass =
+                                        !prevRow ? 'text-muted-foreground' :
+                                        row.atm > prevRow.atm ? 'text-green-600 dark:text-green-500' :
+                                        row.atm < prevRow.atm ? 'text-red-600 dark:text-red-500' :
+                                        'text-muted-foreground';
+                                    const ltpClass =
+                                        !prevRow ? 'text-primary' :
+                                        row.ltp > prevRow.ltp ? 'text-green-600 dark:text-green-500' :
+                                        row.ltp < prevRow.ltp ? 'text-red-600 dark:text-red-500' :
+                                        'text-primary';
+                                    return (
                                     <TableRow key={idx} className="hover:bg-muted/50 border-b border-border h-8 transition-colors">
                                         <TableCell className="text-center px-2 py-0 text-[10px] font-bold text-muted-foreground border-r border-border">{row.index}</TableCell>
                                         <TableCell className="text-center px-2 py-0 text-[10px] font-bold text-muted-foreground/80 border-r border-border">{row.date}</TableCell>
                                         <TableCell className="text-center px-2 py-0 text-[10px] font-black text-foreground border-r border-border">{row.time}</TableCell>
-                                        <TableCell className="text-center px-2 py-0 text-[10px] font-black text-primary border-r border-border bg-primary/5">{row.ltp.toFixed(2)}</TableCell>
+                                        <TableCell className={`text-center px-2 py-0 text-[10px] font-black border-r border-border ${atmClass}`}>{row.atm}</TableCell>
+                                        <TableCell className={`text-center px-2 py-0 text-[10px] font-black border-r border-border bg-primary/5 ${ltpClass}`}>{row.ltp.toFixed(2)}</TableCell>
                                         <TableCell className="text-center px-2 py-0 border-r border-border">
                                             <div className={`px-2 py-0.5 rounded text-[8px] font-black uppercase inline-block w-full max-w-[80px] ${
                                                 row.hl_break.includes('High') || row.hl_break.includes('H Break') ? 'bg-green-600/20 text-green-600 dark:text-green-500 border border-green-500/30' :
@@ -331,7 +346,8 @@ export function Dash({ refreshTrigger }: { refreshTrigger: number }) {
                                             </div>
                                         </TableCell>
                                     </TableRow>
-                                ))}
+                                    );
+                                })}
                             </TableBody>
                         </Table>
                     </div>
