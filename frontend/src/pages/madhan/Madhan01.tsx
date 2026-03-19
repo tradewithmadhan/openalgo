@@ -411,6 +411,7 @@ export default function Madhan01() {
     return (Math.abs(value) / max) * 50
   }
 
+
   const unifiedRows = buildUnifiedStrikes()
   const { maxOi, maxSession, max3m, max6m } = computeMaxValues(unifiedRows)
 
@@ -800,7 +801,7 @@ export default function Madhan01() {
                                     <div className="relative h-4 flex-1 rounded bg-transparent">
                                     <div className="absolute inset-y-[15%] left-1/2 w-px bg-border" />
                                     <div
-                                        className="absolute inset-y-0 rounded bg-red-500/70"
+                                        className={`absolute inset-y-0 rounded ${(row.ce?.change_in_oi || 0) < 0 ? 'bg-emerald-500/70' : 'bg-red-500/70'}`}
                                         style={{
                                         right:
                                             (row.ce?.change_in_oi || 0) < 0 ? '50%' : undefined,
@@ -827,7 +828,7 @@ export default function Madhan01() {
                                     <div className="relative h-4 flex-1 rounded bg-transparent">
                                     <div className="absolute inset-y-[15%] left-1/2 w-px bg-border" />
                                     <div
-                                        className="absolute inset-y-0 rounded bg-emerald-500/70"
+                                        className={`absolute inset-y-0 rounded ${(row.pe?.change_in_oi || 0) < 0 ? 'bg-red-500/70' : 'bg-emerald-500/70'}`}
                                         style={{
                                         right:
                                             (row.pe?.change_in_oi || 0) < 0 ? '50%' : undefined,
@@ -858,7 +859,7 @@ export default function Madhan01() {
                                     <div className="relative h-4 flex-1 rounded bg-transparent">
                                     <div className="absolute inset-y-[15%] left-1/2 w-px bg-border" />
                                     <div
-                                        className="absolute inset-y-0 rounded bg-red-500/70"
+                                        className={`absolute inset-y-0 rounded ${(row.ce?.change_in_oi_3min || 0) < 0 ? 'bg-emerald-500/70' : 'bg-red-500/70'}`}
                                         style={{
                                         right:
                                             (row.ce?.change_in_oi_3min || 0) < 0 ? '50%' : undefined,
@@ -885,7 +886,7 @@ export default function Madhan01() {
                                     <div className="relative h-4 flex-1 rounded bg-transparent">
                                     <div className="absolute inset-y-[15%] left-1/2 w-px bg-border" />
                                     <div
-                                        className="absolute inset-y-0 rounded bg-emerald-500/70"
+                                        className={`absolute inset-y-0 rounded ${(row.pe?.change_in_oi_3min || 0) < 0 ? 'bg-red-500/70' : 'bg-emerald-500/70'}`}
                                         style={{
                                         right:
                                             (row.pe?.change_in_oi_3min || 0) < 0 ? '50%' : undefined,
@@ -916,7 +917,7 @@ export default function Madhan01() {
                                     <div className="relative h-4 flex-1 rounded bg-transparent">
                                     <div className="absolute inset-y-[15%] left-1/2 w-px bg-border" />
                                     <div
-                                        className="absolute inset-y-0 rounded bg-red-500/70"
+                                        className={`absolute inset-y-0 rounded ${(row.ce?.change_in_oi_6min || 0) < 0 ? 'bg-emerald-500/70' : 'bg-red-500/70'}`}
                                         style={{
                                         right:
                                             (row.ce?.change_in_oi_6min || 0) < 0 ? '50%' : undefined,
@@ -943,7 +944,7 @@ export default function Madhan01() {
                                     <div className="relative h-4 flex-1 rounded bg-transparent">
                                     <div className="absolute inset-y-[15%] left-1/2 w-px bg-border" />
                                     <div
-                                        className="absolute inset-y-0 rounded bg-emerald-500/70"
+                                        className={`absolute inset-y-0 rounded ${(row.pe?.change_in_oi_6min || 0) < 0 ? 'bg-red-500/70' : 'bg-emerald-500/70'}`}
                                         style={{
                                         right:
                                             (row.pe?.change_in_oi_6min || 0) < 0 ? '50%' : undefined,

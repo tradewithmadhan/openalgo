@@ -329,8 +329,16 @@ export function Dash({ refreshTrigger }: { refreshTrigger: number }) {
                                         <TableCell className={`text-center px-2 py-0 text-[10px] font-black border-r border-border ${row.chg_direction >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                                             {formatValue(row.chg_direction)}
                                         </TableCell>
-                                        <TableCell className={`text-center px-2 py-0 text-[9px] font-black border-r border-border ${row.chg_direction_pct >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                                            {row.chg_direction_pct > 0 ? '+' : ''}{row.chg_direction_pct}%
+                                        <TableCell className="text-center px-2 py-0 border-r border-border">
+                                            <div className={`px-2 py-0.5 rounded text-[8px] font-black uppercase inline-block w-full max-w-[70px] ${
+                                                Math.abs(row.chg_direction_pct) > 50
+                                                ? (row.chg_direction_pct >= 0
+                                                    ? 'bg-green-600/20 text-green-600 dark:text-green-500 border border-green-500/30'
+                                                    : 'bg-red-600/20 text-red-600 dark:text-red-500 border border-red-500/30')
+                                                : (row.chg_direction_pct >= 0 ? 'text-green-600' : 'text-red-600')
+                                            }`}>
+                                                {row.chg_direction_pct > 0 ? '+' : ''}{row.chg_direction_pct}%
+                                            </div>
                                         </TableCell>
                                         <TableCell className="text-center px-2 py-0 text-[10px] font-black border-r border-border text-foreground">{row.net_pcr.toFixed(2)}</TableCell>
                                         <TableCell className="text-center px-2 py-0 text-[10px] font-black text-muted-foreground border-r border-border">{formatValue(row.day_hl_diff)}</TableCell>
