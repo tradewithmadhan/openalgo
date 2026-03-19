@@ -33,6 +33,8 @@ import { profileMenuItems } from '@/config/navigation'
 import { CoiTrendChart } from './components/CoiTrendChart'
 import { CePeChangesChart } from './components/CePeChangesChart'
 import { CePeStrikeChangesChart } from './components/CePeStrikeChangesChart'
+import { CePeVolumeChangesChart } from './components/CePeVolumeChangesChart'
+import { CePeStrikeVolumeChangesChart } from './components/CePeStrikeVolumeChangesChart'
 import { SupportResistanceChart } from './components/SupportResistanceChart'
 import { MultiOptionsChart } from './components/MultiOptionsChart'
 import { Dash } from './components/Dash'
@@ -570,15 +572,16 @@ export default function Madhan01() {
       )}
 
       <Tabs defaultValue="dash" className="w-full">
-        <TabsList className="grid w-full grid-cols-2 md:grid-cols-7">
-          <TabsTrigger value="dash">Dash</TabsTrigger>
-          <TabsTrigger value="unified-oi-chain">Unified OI Chain</TabsTrigger>
-          <TabsTrigger value="ce-pe-analysis">CE/PE Analysis</TabsTrigger>
-          <TabsTrigger value="coi-trend">COI Trend</TabsTrigger>
-          <TabsTrigger value="multi-options">Multi-Options</TabsTrigger>
-          <TabsTrigger value="support-resistance">Support & Resistance</TabsTrigger>
-          <TabsTrigger value="data-check">Data Check</TabsTrigger>
-        </TabsList>
+      <TabsList className="grid w-full grid-cols-2 md:grid-cols-8">
+        <TabsTrigger value="dash">Dash</TabsTrigger>
+        <TabsTrigger value="unified-oi-chain">Unified OI Chain</TabsTrigger>
+        <TabsTrigger value="ce-pe-analysis">CE/PE Analysis</TabsTrigger>
+        <TabsTrigger value="ce-pe-volume-analysis">CE/PE Volume</TabsTrigger>
+        <TabsTrigger value="coi-trend">COI Trend</TabsTrigger>
+        <TabsTrigger value="multi-options">Multi-Options</TabsTrigger>
+        <TabsTrigger value="support-resistance">Support & Resistance</TabsTrigger>
+        <TabsTrigger value="data-check">Data Check</TabsTrigger>
+      </TabsList>
         
         <TabsContent value="dash">
           <Dash refreshTrigger={_refreshTrigger} />
@@ -947,6 +950,13 @@ export default function Madhan01() {
           <div className="flex flex-col gap-6">
             <CePeChangesChart refreshTrigger={_refreshTrigger} />
             <CePeStrikeChangesChart refreshTrigger={_refreshTrigger} atmStrike={status?.current_atm_strike} />
+          </div>
+        </TabsContent>
+
+        <TabsContent value="ce-pe-volume-analysis" className="space-y-3">
+          <div className="flex flex-col gap-3">
+            <CePeVolumeChangesChart refreshTrigger={_refreshTrigger} />
+            <CePeStrikeVolumeChangesChart refreshTrigger={_refreshTrigger} atmStrike={status?.current_atm_strike} />
           </div>
         </TabsContent>
 

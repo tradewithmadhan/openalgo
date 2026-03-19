@@ -1182,6 +1182,139 @@ def nifty_ce_pe_strike_changes():
     })
 
 
+@madhan_bp.route('/api/nifty/ce-pe-volume-changes')
+@check_session_validity
+def nifty_ce_pe_volume_changes():
+    """Gets individual CE and PE volume data for each candle for bar chart visualization."""
+    open_atm = nifty_fetcher.open_atm_strike
+    if not open_atm or open_atm == 0:
+        return jsonify({'status': 'success', 'data': {'timestamps': [], 'ce_changes': [], 'pe_changes': []}, 'message': 'ATM strike not calculated yet.'})
+
+    strike_selection_mode = request.args.get('strike_selection_mode', 'option1')  # option1: all strikes, option2: selective
+    upside_strikes = int(request.args.get('upside_strikes', '10'))
+    downside_strikes = int(request.args.get('downside_strikes', '10'))
+
+    if strike_selection_mode == 'option2':
+        expected_symbol_count = len(nifty_fetcher.option_symbols) + 1
+    else:
+        pe_strikes_count = downside_strikes + 1 + 2
+        ce_strikes_count = upside_strikes + 1 + 2
+        expected_symbol_count = pe_strikes_count + ce_strikes_count + 1
+
+    historical_data = get_current_day_historical_data()
+    if not historical_data:
+        return jsonify({'status': 'success', 'data': {'timestamps': [], 'ce_changes': [], 'pe_changes': []}, 'message': 'No historical data for today.'})
+
+    data_by_ts = defaultdict(list)
+    for row in historical_data:
+        data_by_ts[row['timestamp']].append(row)
+
+    sorted_timestamps = sorted(data_by_ts.keys())
+    timestamps_res = []
+    ce_changes_res = []
+    pe_changes_res = []
+
+    for ts in sorted_timestamps:
+        if len(data_by_ts[ts]) < expected_symbol_count:
+            logger.debug(f"Skipping incomplete candle at timestamp {ts}: got {len(data_by_ts[ts])} symbols, expected {expected_symbol_count}")
+            continue
+
+        total_ce_volume = 0
+        total_pe_volume = 0
+
+        for item in data_by_ts[ts]:
+            symbol = item['symbol']
+            volume = item.get('volume', 0)
+
+            if symbol == 'NIFTY':
+                continue
+
+            if strike_selection_mode == 'option2':
+                strike_price = extract_strike(symbol)
+                if strike_price is None:
+                    continue
+
+                if symbol.endswith('PE'):
+                    if strike_price > open_atm + (2 * 50):
+                        continue
+                elif symbol.endswith('CE'):
+                    if strike_price < open_atm - (2 * 50):
+                        continue
+
+            if volume > 0:
+                if symbol.endswith('CE'):
+                    total_ce_volume += volume
+                elif symbol.endswith('PE'):
+                    total_pe_volume += volume
+
+        timestamps_res.append(ts * 1000)
+        ce_changes_res.append(total_ce_volume)
+        pe_changes_res.append(total_pe_volume)
+
+    return jsonify({'status': 'success', 'data': {'timestamps': timestamps_res, 'ce_changes': ce_changes_res, 'pe_changes': pe_changes_res}})
+
+
+@madhan_bp.route('/api/nifty/ce-pe-strike-volume-changes')
+@check_session_validity
+def nifty_ce_pe_strike_volume_changes():
+    strike_price = request.args.get("strike_price", type=int)
+
+    if not strike_price or strike_price <= 0:
+        return jsonify({
+            "timestamps": [],
+            "ce_changes": [],
+            "pe_changes": [],
+            "error": "strike_price query parameter is required"
+        }), 400
+
+    historical_data = get_current_day_historical_data()
+    data_by_ts = defaultdict(list)
+    for row in historical_data:
+        data_by_ts[row["timestamp"]].append(row)
+
+    timestamps_res = []
+    ce_changes_res = []
+    pe_changes_res = []
+
+    for ts in sorted(data_by_ts.keys()):
+        rows = data_by_ts[ts]
+
+        total_ce_volume = 0
+        total_pe_volume = 0
+        found_ce = False
+        found_pe = False
+
+        for row in rows:
+            symbol = row["symbol"]
+            current_volume = row.get("volume", 0)
+
+            if symbol == "NIFTY":
+                continue
+
+            if extract_strike(symbol) != strike_price:
+                continue
+
+            if symbol.endswith("CE"):
+                total_ce_volume += current_volume
+                found_ce = True
+            elif symbol.endswith("PE"):
+                total_pe_volume += current_volume
+                found_pe = True
+
+        if not (found_ce or found_pe):
+            continue
+
+        timestamps_res.append(ts * 1000)
+        ce_changes_res.append(total_ce_volume)
+        pe_changes_res.append(total_pe_volume)
+
+    return jsonify({
+        "timestamps": timestamps_res,
+        "ce_changes": ce_changes_res,
+        "pe_changes": pe_changes_res
+    })
+
+
 @madhan_bp.route('/nifty_chart_data')
 @check_session_validity
 def nifty_chart_data():
