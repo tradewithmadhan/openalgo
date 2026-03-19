@@ -90,6 +90,7 @@ const FlowKeyboardShortcuts = lazy(() => import('@/pages/flow/FlowKeyboardShortc
 
 // Madhan pages
 const Madhan01 = lazy(() => import('@/pages/madhan/Madhan01'))
+const ATPLTPStrategy = lazy(() => import('@/pages/madhan/ATPLTPStrategy'))
 
 // Admin pages
 const AdminIndex = lazy(() => import('@/pages/admin/AdminIndex'))
@@ -221,6 +222,7 @@ function App() {
               <Route element={<FullWidthLayout />}>
                 {/* Madhan custom dashboards */}
                 <Route path="/madhan/madhan01" element={<Madhan01 />} />
+                <Route path="/madhan/ATP-LTPStrategy" element={<ATPLTPStrategy />} />
                 <Route path="/playground" element={<Playground />} />
                 <Route path="/historify" element={<Historify />} />
                 <Route path="/historify/charts" element={<HistorifyCharts />} />

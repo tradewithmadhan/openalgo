@@ -83,6 +83,24 @@ class NiftyDataFetcher:
         
         self.request_delay = self._get_request_delay()
 
+    def _normalize_history_df(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Normalizes candle history data to ensure required numeric columns exist.
+        This prevents downstream computations (like ATP) from silently falling back
+        due to missing/invalid volume.
+        """
+        if df is None or df.empty:
+            return df
+
+        if "oi" not in df.columns:
+            df["oi"] = 0
+        if "volume" not in df.columns:
+            df["volume"] = 0
+
+        df["oi"] = pd.to_numeric(df["oi"], errors="coerce").fillna(0).astype(int)
+        df["volume"] = pd.to_numeric(df["volume"], errors="coerce").fillna(0).astype(int)
+        return df
+
     def _load_state(self):
         """Loads persisted state from database. Safe to call only after DB init."""
         try:
@@ -273,10 +291,7 @@ class NiftyDataFetcher:
             if success and result.get('status') == 'success':
                 df_option = pd.DataFrame(result['data'])
                 if not df_option.empty:
-                    # Ensure 'oi' column exists and is of integer type, fill NaNs with 0
-                    if 'oi' not in df_option.columns:
-                        df_option['oi'] = 0
-                    df_option['oi'] = pd.to_numeric(df_option['oi'], errors='coerce').fillna(0).astype(int)
+                    df_option = self._normalize_history_df(df_option)
                     df_option['symbol'] = symbol
                     store_option_data(df_option)
                     return True, symbol
@@ -440,6 +455,7 @@ class NiftyDataFetcher:
             if success and result.get('status') == 'success':
                 df_nifty = pd.DataFrame(result['data'])
                 if not df_nifty.empty:
+                    df_nifty = self._normalize_history_df(df_nifty)
                     store_nifty_data(df_nifty)
                     logger.info(f"Initial NIFTY fetch successful. Stored {len(df_nifty)} records.")
                     
@@ -510,6 +526,7 @@ class NiftyDataFetcher:
                 if success_nifty and result_nifty.get('status') == 'success':
                     df_nifty = pd.DataFrame(result_nifty['data'])
                     if not df_nifty.empty:
+                        df_nifty = self._normalize_history_df(df_nifty)
                         store_nifty_data(df_nifty)
                         self.last_update = datetime.now(pytz.timezone('Asia/Kolkata'))
                         logger.info(f"Incremental NIFTY fetch successful. Upserted {len(df_nifty)} records.")

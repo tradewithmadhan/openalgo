@@ -4,6 +4,7 @@ from utils.session import check_session_validity
 from utils.logging import get_logger
 from datetime import datetime, timedelta, time
 from collections import defaultdict
+from bisect import bisect_right
 from services.history_service import get_history
 from services.madhan.nifty_fetch_service import nifty_fetcher
 from database.madhan_db import get_nifty_data, get_option_data, get_nifty_data_count, get_previous_day_oi, get_nth_candle_oi_for_all_symbols, get_current_day_historical_data, get_current_day_instrument_data, SessionLocal, NiftyData, get_tracked_symbols
@@ -20,6 +21,11 @@ madhan_bp = Blueprint('madhan_bp', __name__, url_prefix='/madhan')
 @madhan_bp.route('/madhan01')
 @check_session_validity
 def madhan01_page():
+    return serve_react_app()
+
+@madhan_bp.route('/ATP-LTPStrategy')
+@check_session_validity
+def atp_ltp_strategy_page():
     return serve_react_app()
 
 @madhan_bp.route('/madhan02')
@@ -52,6 +58,620 @@ def get_test_data():
         ]
     }
     return jsonify(data)
+
+@madhan_bp.route('/api/atp-ltp-data')
+@check_session_validity
+def get_atp_ltp_data():
+    """Returns ATP-LTP strategy data with time, spot LTP, ATM call ATP, ATM call LTP, ATM put ATP, ATM put LTP."""
+    try:
+        logger.info("Fetching ATP-LTP data")
+        
+        # Get current NIFTY data
+        nifty_data = get_nifty_data(limit=1)
+        if not nifty_data:
+            return jsonify({
+                'status': 'error', 
+                'message': 'No NIFTY data available'
+            }), 404
+            
+        latest_nifty = nifty_data[0]
+        current_spot = latest_nifty.get('close', 0)
+        
+        # Get current ATM strike from fetcher
+        current_atm_strike = nifty_fetcher.current_atm_strike
+        if not current_atm_strike:
+            return jsonify({
+                'status': 'error', 
+                'message': 'ATM strike not calculated yet'
+            }), 404
+        
+        # Get historical intraday data for ATP calculation
+        # Get current day's instrument data for volume-weighted ATP calculation
+        atm_call_symbol = None
+        atm_put_symbol = None
+        
+        # Find the exact ATM call and put symbols
+        tracked_symbols = get_tracked_symbols()
+        for symbol in tracked_symbols:
+            strike = extract_strike(symbol)
+            if strike == current_atm_strike:
+                if symbol.endswith('CE'):
+                    atm_call_symbol = symbol
+                elif symbol.endswith('PE'):
+                    atm_put_symbol = symbol
+        
+        if not atm_call_symbol and not atm_put_symbol:
+            return jsonify({
+                'status': 'error', 
+                'message': f'No ATM options found for strike {current_atm_strike}'
+            }), 404
+        
+        # Calculate ATP using volume-weighted average from intraday data
+        atm_call_atp = 0
+        atm_put_atp = 0
+        atm_call_ltp = 0
+        atm_put_ltp = 0
+        itm1_call_ltp = 0
+        itm2_call_ltp = 0
+        itm1_put_ltp = 0
+        itm2_put_ltp = 0
+        
+        # Find ITM options (2 strikes away from ATM)
+        itm_call_symbol1 = None
+        itm_call_symbol2 = None
+        itm_put_symbol1 = None
+        itm_put_symbol2 = None
+        
+        # For calls: ITM means strike price < spot price (lower strikes)
+        # For puts: ITM means strike price > spot price (higher strikes)
+        itm1_call_strike = current_atm_strike - 50   # 1 strike below ATM for calls
+        itm2_call_strike = current_atm_strike - 100  # 2 strikes below ATM for calls
+        itm1_put_strike = current_atm_strike + 50   # 1 strike above ATM for puts
+        itm2_put_strike = current_atm_strike + 100  # 2 strikes above ATM for puts
+        
+        for symbol in tracked_symbols:
+            strike = extract_strike(symbol)
+            if strike == itm1_call_strike and symbol.endswith('CE'):
+                itm_call_symbol1 = symbol
+            elif strike == itm2_call_strike and symbol.endswith('CE'):
+                itm_call_symbol2 = symbol
+            elif strike == itm1_put_strike and symbol.endswith('PE'):
+                itm_put_symbol1 = symbol
+            elif strike == itm2_put_strike and symbol.endswith('PE'):
+                itm_put_symbol2 = symbol
+        
+        # Get current option data for LTP
+        option_data = get_option_data()
+        for option in option_data:
+            symbol = option.get('symbol', '')
+            ltp = option.get('close', 0)
+            
+            if symbol == atm_call_symbol:
+                atm_call_ltp = ltp
+            elif symbol == atm_put_symbol:
+                atm_put_ltp = ltp
+            elif symbol == itm_call_symbol1:
+                itm1_call_ltp = ltp
+            elif symbol == itm_call_symbol2:
+                itm2_call_ltp = ltp
+            elif symbol == itm_put_symbol1:
+                itm1_put_ltp = ltp
+            elif symbol == itm_put_symbol2:
+                itm2_put_ltp = ltp
+        
+        # Calculate ATP for ATM options using proper NSE ATP formula
+        # ATP = Total Turnover / Total Volume
+        if atm_call_symbol:
+            call_intraday_data = get_current_day_instrument_data(atm_call_symbol)
+            if call_intraday_data:
+                total_volume = 0
+                total_turnover = 0
+                for candle in call_intraday_data:
+                    volume = candle.get('volume', 0)
+                    close_price = candle.get('close', 0)
+                    
+                    # NSE ATP: Total Turnover = Σ(Price × Volume)
+                    if volume > 0 and close_price > 0:
+                        total_volume += volume
+                        total_turnover += close_price * volume
+                
+                # ATP = Total Turnover / Total Volume (NSE formula)
+                atm_call_atp = total_turnover / total_volume if total_volume > 0 else atm_call_ltp
+        
+        if atm_put_symbol:
+            put_intraday_data = get_current_day_instrument_data(atm_put_symbol)
+            if put_intraday_data:
+                total_volume = 0
+                total_turnover = 0
+                for candle in put_intraday_data:
+                    volume = candle.get('volume', 0)
+                    close_price = candle.get('close', 0)
+                    
+                    # NSE ATP: Total Turnover = Σ(Price × Volume)
+                    if volume > 0 and close_price > 0:
+                        total_volume += volume
+                        total_turnover += close_price * volume
+                
+                # ATP = Total Turnover / Total Volume (NSE formula)
+                atm_put_atp = total_turnover / total_volume if total_volume > 0 else atm_put_ltp
+        
+        # Calculate ATP for ITM options (both strikes)
+        # Initialize all ITM variables
+        itm1_call_atp = 0
+        itm2_call_atp = 0
+        itm1_put_atp = 0
+        itm2_put_atp = 0
+        
+        # ITM Call 1
+        if itm_call_symbol1:
+            itm1_call_intraday_data = get_current_day_instrument_data(itm_call_symbol1)
+            if itm1_call_intraday_data:
+                total_volume = 0
+                total_turnover = 0
+                for candle in itm1_call_intraday_data:
+                    volume = candle.get('volume', 0)
+                    close_price = candle.get('close', 0)
+                    
+                    # NSE ATP: Total Turnover = Σ(Price × Volume)
+                    if volume > 0 and close_price > 0:
+                        total_volume += volume
+                        total_turnover += close_price * volume
+                
+                itm1_call_atp = total_turnover / total_volume if total_volume > 0 else itm1_call_ltp
+        
+        # ITM Call 2
+        if itm_call_symbol2:
+            itm2_call_intraday_data = get_current_day_instrument_data(itm_call_symbol2)
+            if itm2_call_intraday_data:
+                total_volume = 0
+                total_turnover = 0
+                for candle in itm2_call_intraday_data:
+                    volume = candle.get('volume', 0)
+                    close_price = candle.get('close', 0)
+                    
+                    # NSE ATP: Total Turnover = Σ(Price × Volume)
+                    if volume > 0 and close_price > 0:
+                        total_volume += volume
+                        total_turnover += close_price * volume
+                
+                itm2_call_atp = total_turnover / total_volume if total_volume > 0 else itm2_call_ltp
+        
+        # ITM Put 1
+        if itm_put_symbol1:
+            itm1_put_intraday_data = get_current_day_instrument_data(itm_put_symbol1)
+            if itm1_put_intraday_data:
+                total_volume = 0
+                total_turnover = 0
+                for candle in itm1_put_intraday_data:
+                    volume = candle.get('volume', 0)
+                    close_price = candle.get('close', 0)
+                    
+                    # NSE ATP: Total Turnover = Σ(Price × Volume)
+                    if volume > 0 and close_price > 0:
+                        total_volume += volume
+                        total_turnover += close_price * volume
+                
+                itm1_put_atp = total_turnover / total_volume if total_volume > 0 else itm1_put_ltp
+        
+        # ITM Put 2
+        if itm_put_symbol2:
+            itm2_put_intraday_data = get_current_day_instrument_data(itm_put_symbol2)
+            if itm2_put_intraday_data:
+                total_volume = 0
+                total_turnover = 0
+                for candle in itm2_put_intraday_data:
+                    volume = candle.get('volume', 0)
+                    close_price = candle.get('close', 0)
+                    
+                    # NSE ATP: Total Turnover = Σ(Price × Volume)
+                    if volume > 0 and close_price > 0:
+                        total_volume += volume
+                        total_turnover += close_price * volume
+                
+                itm2_put_atp = total_turnover / total_volume if total_volume > 0 else itm2_put_ltp
+        
+        # Calculate ATP signals
+        # Call signal: Check both ITM strikes against ATM
+        # Put signal: Check both ITM strikes against ATM
+        call_atp_signal = False
+        put_atp_signal = False
+        
+        # Signal condition (as requested):
+        # (ITM1 ATP-LTP < ATM ATP-LTP) AND (ITM2 ATP-LTP < ATM ATP-LTP)
+        if itm1_call_atp and itm1_call_ltp and itm2_call_atp and itm2_call_ltp and atm_call_atp and atm_call_ltp:
+            itm1_call_atp_ltp_diff = itm1_call_atp - itm1_call_ltp
+            itm2_call_atp_ltp_diff = itm2_call_atp - itm2_call_ltp
+            atm_call_atp_ltp_diff = atm_call_atp - atm_call_ltp
+            call_atp_signal = (itm1_call_atp_ltp_diff < atm_call_atp_ltp_diff) and (itm2_call_atp_ltp_diff < atm_call_atp_ltp_diff)
+
+        if itm1_put_atp and itm1_put_ltp and itm2_put_atp and itm2_put_ltp and atm_put_atp and atm_put_ltp:
+            itm1_put_atp_ltp_diff = itm1_put_atp - itm1_put_ltp
+            itm2_put_atp_ltp_diff = itm2_put_atp - itm2_put_ltp
+            atm_put_atp_ltp_diff = atm_put_atp - atm_put_ltp
+            put_atp_signal = (itm1_put_atp_ltp_diff < atm_put_atp_ltp_diff) and (itm2_put_atp_ltp_diff < atm_put_atp_ltp_diff)
+        
+        # Create data entry
+        current_time = datetime.now().isoformat()
+        
+        # Calculate ATP-LTP differences
+        call_atp_ltp_diff = atm_call_atp - atm_call_ltp if atm_call_atp and atm_call_ltp else 0
+        put_atp_ltp_diff = atm_put_atp - atm_put_ltp if atm_put_atp and atm_put_ltp else 0
+        
+        data_entry = {
+            'time': current_time,
+            'spot_ltp': current_spot,
+            'atm_strike': current_atm_strike,
+            'atm_call_atp': atm_call_atp,
+            'atm_call_ltp': atm_call_ltp,
+            'atm_call_atp_ltp_diff': call_atp_ltp_diff,
+            'atm_put_atp': atm_put_atp,
+            'atm_put_ltp': atm_put_ltp,
+            'atm_put_atp_ltp_diff': put_atp_ltp_diff,
+            'call_atp_signal': call_atp_signal,
+            'put_atp_signal': put_atp_signal
+        }
+
+        def _final_signal(call_signal: bool, put_signal: bool, call_sma: bool = False, put_sma: bool = False) -> str:
+            if call_signal and put_signal:
+                return "Sideways"
+            if call_signal and not put_signal and not put_sma:
+                return "Bullish"
+            if put_signal and not call_signal and not call_sma:
+                return "Bearish"
+            return "Neutral"
+        
+        # For demo purposes, return historical data points from real database
+        # Using the same approach as dash-time-analysis
+        historical_data = []
+        spot_ltp_series = []
+        ltp_series_by_symbol = {}
+        ts_series_by_symbol = {}
+
+        def _append_and_signal_sma(series: list[float], new_value: float | None) -> bool:
+            if new_value is None:
+                return False
+            try:
+                val = float(new_value)
+            except (TypeError, ValueError):
+                return False
+            if val <= 0:
+                return False
+
+            series.append(val)
+
+            if len(series) < 8:
+                return False
+
+            sma5 = sum(series[-5:]) / 5.0
+            sma8 = sum(series[-8:]) / 8.0
+            return sma5 > sma8
+        
+        # Define current time for market hours logic
+        now = datetime.now()
+
+        def _append_symbol_series(
+            price_by_symbol: dict[str, list[float]],
+            ts_by_symbol: dict[str, list[int]],
+            symbol: str | None,
+            ltp_value: float | None,
+            timestamp: int | None,
+        ) -> None:
+            if not symbol or timestamp is None:
+                return
+            if ltp_value is None:
+                return
+            try:
+                val = float(ltp_value)
+            except (TypeError, ValueError):
+                return
+            if val <= 0:
+                return
+            prices = price_by_symbol.get(symbol)
+            tss = ts_by_symbol.get(symbol)
+            if prices is None:
+                prices = []
+                price_by_symbol[symbol] = prices
+            if tss is None:
+                tss = []
+                ts_by_symbol[symbol] = tss
+            prices.append(val)
+            tss.append(int(timestamp))
+
+        def _sma_signal_from_series(
+            price_by_symbol: dict[str, list[float]],
+            ts_by_symbol: dict[str, list[int]],
+            symbol: str | None,
+            timestamp: int,
+        ) -> bool:
+            if not symbol:
+                return False
+            prices = price_by_symbol.get(symbol)
+            tss = ts_by_symbol.get(symbol)
+            if not prices or not tss:
+                return False
+
+            idx = bisect_right(tss, int(timestamp))
+            if idx < 8:
+                return False
+
+            last_ts = tss[idx - 8 : idx]
+            # Require 8 consecutive 1-minute candles for SMA
+            for i in range(1, len(last_ts)):
+                if last_ts[i] - last_ts[i - 1] != 60:
+                    return False
+
+            last_prices = prices[idx - 8 : idx]
+            sma5 = sum(last_prices[-5:]) / 5.0
+            sma8 = sum(last_prices[-8:]) / 8.0
+            return sma5 > sma8
+        
+        # Get 1-min historical data for all symbols (includes NIFTY spot)
+        # This is the same approach used in dash-time-analysis
+        all_historical_data = get_current_day_historical_data()
+        if not all_historical_data:
+            return jsonify({
+                'status': 'error', 
+                'message': 'No historical data available'
+            }), 404
+        
+        # Group by timestamp and also accumulate volume-weighted data by symbol
+        data_by_ts = defaultdict(list)
+        nifty_by_ts = {}
+        
+        # Sort all data by timestamp first
+        all_historical_data.sort(key=lambda x: x['timestamp'])
+        
+        # Process data in chronological order to accumulate volume up to each timestamp
+        symbol_volume_data = {}
+
+        for row in all_historical_data:
+            if row['symbol'] == 'NIFTY':
+                nifty_by_ts[row['timestamp']] = row['close']
+            else:
+                data_by_ts[row['timestamp']].append(row)
+                
+                # Accumulate volume-weighted data progressively up to this timestamp
+                symbol = row['symbol']
+                timestamp = row['timestamp']
+                
+                raw_close = row.get('close', 0)
+                raw_volume = row.get('volume', 0)
+
+                try:
+                    close = float(raw_close) if raw_close is not None else 0.0
+                except (TypeError, ValueError):
+                    close = 0.0
+
+                try:
+                    volume = float(raw_volume) if raw_volume is not None else 0.0
+                except (TypeError, ValueError):
+                    volume = 0.0
+
+                # Guard against NaNs and negatives
+                if close != close or close < 0:
+                    close = 0.0
+                if volume != volume or volume < 0:
+                    volume = 0.0
+
+                if symbol not in symbol_volume_data:
+                    symbol_volume_data[symbol] = {}
+
+                # Get previous cumulative data
+                prev_timestamps = [t for t in symbol_volume_data[symbol].keys() if t < timestamp]
+                if prev_timestamps:
+                    latest_prev_timestamp = max(prev_timestamps)
+                    prev_data = symbol_volume_data[symbol][latest_prev_timestamp]
+                else:
+                    prev_data = {'total_volume': 0.0, 'total_turnover': 0.0}
+
+                # Calculate new cumulative totals (NSE ATP components)
+                new_total_volume = prev_data['total_volume'] + (volume if volume > 0 else 0.0)
+                new_total_turnover = prev_data['total_turnover'] + (close * volume if volume > 0 and close > 0 else 0.0)
+
+                symbol_volume_data[symbol][timestamp] = {
+                    'total_volume': new_total_volume,
+                    'total_turnover': new_total_turnover
+                }
+        
+        # Sort timestamps and filter market hours
+        sorted_ts = sorted(nifty_by_ts.keys())
+        market_open = datetime.combine(datetime.now().date(), time(9, 15))
+        market_close = datetime.combine(datetime.now().date(), time(15, 30))
+        market_open_ts = int(market_open.timestamp())
+        market_close_ts = int(market_close.timestamp())
+        
+        # Process each timestamp within market hours
+        for ts in sorted_ts:
+            if ts < market_open_ts or ts > market_close_ts:
+                continue
+                
+            # Get spot LTP for this timestamp
+            historical_spot_ltp = nifty_by_ts.get(ts, 0)
+            if historical_spot_ltp == 0:
+                continue
+                
+            # Rolling ATM strike (but call and put use the same strike for this minute)
+            historical_atm_strike = round(historical_spot_ltp / 50) * 50
+            
+            # Find ATM call and put symbols for this timestamp
+            historical_call_atp = None
+            historical_call_ltp = None
+            historical_put_atp = None
+            historical_put_ltp = None
+            historical_itm1_call_atp = None
+            historical_itm1_call_ltp = None
+            historical_itm2_call_atp = None
+            historical_itm2_call_ltp = None
+            historical_itm1_put_atp = None
+            historical_itm1_put_ltp = None
+            historical_itm2_put_atp = None
+            historical_itm2_put_ltp = None
+            
+            # Process option data for this timestamp
+            option_data_at_ts = data_by_ts.get(ts, [])
+
+            def _find_symbol_and_ltp(strike_val: int, suffix: str) -> tuple[str | None, float | None]:
+                for option in option_data_at_ts:
+                    symbol = option.get('symbol', '')
+                    if not symbol or not symbol.endswith(suffix):
+                        continue
+                    strike = extract_strike(symbol)
+                    if strike != strike_val:
+                        continue
+                    ltp_val = option.get('close', None)
+                    try:
+                        return symbol, (float(ltp_val) if ltp_val is not None else None)
+                    except (TypeError, ValueError):
+                        return symbol, None
+                return None, None
+
+            # Update per-symbol LTP series using all option candles at this timestamp
+            for option in option_data_at_ts:
+                symbol = option.get('symbol', '')
+                if not symbol:
+                    continue
+                ltp_val = option.get('close', None)
+                _append_symbol_series(ltp_series_by_symbol, ts_series_by_symbol, symbol, ltp_val, ts)
+
+            def _calc_atp(symbol: str | None, ltp_val: float | None) -> float | None:
+                if not symbol:
+                    return None
+                symbol_data = symbol_volume_data.get(symbol, {}).get(ts)
+                if not symbol_data:
+                    return ltp_val
+                total_volume = symbol_data.get('total_volume', 0) or 0
+                total_turnover = symbol_data.get('total_turnover', 0) or 0
+                try:
+                    total_volume_f = float(total_volume)
+                    total_turnover_f = float(total_turnover)
+                except (TypeError, ValueError):
+                    return ltp_val
+                if total_volume_f > 0:
+                    return total_turnover_f / total_volume_f
+                return ltp_val
+
+            # Symbols for ATM/ITM strikes at this timestamp (no fallback; use only real data at ts)
+            atm_call_symbol_ts, historical_call_ltp = _find_symbol_and_ltp(historical_atm_strike, 'CE')
+            atm_put_symbol_ts, historical_put_ltp = _find_symbol_and_ltp(historical_atm_strike, 'PE')
+
+            itm1_call_symbol_ts, historical_itm1_call_ltp = _find_symbol_and_ltp(historical_atm_strike - 50, 'CE')
+            itm2_call_symbol_ts, historical_itm2_call_ltp = _find_symbol_and_ltp(historical_atm_strike - 100, 'CE')
+            itm1_put_symbol_ts, historical_itm1_put_ltp = _find_symbol_and_ltp(historical_atm_strike + 50, 'PE')
+            itm2_put_symbol_ts, historical_itm2_put_ltp = _find_symbol_and_ltp(historical_atm_strike + 100, 'PE')
+
+            historical_call_atp = _calc_atp(atm_call_symbol_ts, historical_call_ltp)
+            historical_put_atp = _calc_atp(atm_put_symbol_ts, historical_put_ltp)
+            historical_itm1_call_atp = _calc_atp(itm1_call_symbol_ts, historical_itm1_call_ltp)
+            historical_itm2_call_atp = _calc_atp(itm2_call_symbol_ts, historical_itm2_call_ltp)
+            historical_itm1_put_atp = _calc_atp(itm1_put_symbol_ts, historical_itm1_put_ltp)
+            historical_itm2_put_atp = _calc_atp(itm2_put_symbol_ts, historical_itm2_put_ltp)
+            
+            # Calculate ATP-LTP differences
+            call_atp_ltp_diff_historical = (
+                (historical_call_atp - historical_call_ltp)
+                if historical_call_atp is not None and historical_call_ltp is not None
+                else 0
+            )
+            put_atp_ltp_diff_historical = (
+                (historical_put_atp - historical_put_ltp)
+                if historical_put_atp is not None and historical_put_ltp is not None
+                else 0
+            )
+
+            itm1_call_atp_ltp_diff_historical = (
+                (historical_itm1_call_atp - historical_itm1_call_ltp)
+                if historical_itm1_call_atp is not None and historical_itm1_call_ltp is not None
+                else 0
+            )
+            itm2_call_atp_ltp_diff_historical = (
+                (historical_itm2_call_atp - historical_itm2_call_ltp)
+                if historical_itm2_call_atp is not None and historical_itm2_call_ltp is not None
+                else 0
+            )
+            itm1_put_atp_ltp_diff_historical = (
+                (historical_itm1_put_atp - historical_itm1_put_ltp)
+                if historical_itm1_put_atp is not None and historical_itm1_put_ltp is not None
+                else 0
+            )
+            itm2_put_atp_ltp_diff_historical = (
+                (historical_itm2_put_atp - historical_itm2_put_ltp)
+                if historical_itm2_put_atp is not None and historical_itm2_put_ltp is not None
+                else 0
+            )
+
+            # Real signals (same rule as "current" entry): both ITM diffs must be < ATM diff
+            call_atp_signal_historical = False
+            put_atp_signal_historical = False
+            if (
+                historical_call_atp is not None
+                and historical_call_ltp is not None
+                and historical_itm1_call_atp is not None
+                and historical_itm1_call_ltp is not None
+                and historical_itm2_call_atp is not None
+                and historical_itm2_call_ltp is not None
+            ):
+                call_atp_signal_historical = (itm1_call_atp_ltp_diff_historical < call_atp_ltp_diff_historical) and (
+                    itm2_call_atp_ltp_diff_historical < call_atp_ltp_diff_historical
+                )
+
+            if (
+                historical_put_atp is not None
+                and historical_put_ltp is not None
+                and historical_itm1_put_atp is not None
+                and historical_itm1_put_ltp is not None
+                and historical_itm2_put_atp is not None
+                and historical_itm2_put_ltp is not None
+            ):
+                put_atp_signal_historical = (itm1_put_atp_ltp_diff_historical < put_atp_ltp_diff_historical) and (
+                    itm2_put_atp_ltp_diff_historical < put_atp_ltp_diff_historical
+                )
+            
+            historical_data.append({
+                'time': datetime.fromtimestamp(ts).isoformat(),
+                'spot_ltp': historical_spot_ltp,
+                'spot_sma_signal': _append_and_signal_sma(spot_ltp_series, historical_spot_ltp),
+                'atm_strike': historical_atm_strike,
+                'atm_call_atp': historical_call_atp,
+                'atm_call_ltp': historical_call_ltp,
+                'atm_call_atp_ltp_diff': call_atp_ltp_diff_historical,
+                'atm_put_atp': historical_put_atp,
+                'atm_put_ltp': historical_put_ltp,
+                'atm_put_atp_ltp_diff': put_atp_ltp_diff_historical,
+                'call_atp_signal': call_atp_signal_historical,
+                'put_atp_signal': put_atp_signal_historical,
+                'final_signal': _final_signal(
+                    call_atp_signal_historical,
+                    put_atp_signal_historical,
+                    call_sma=_sma_signal_from_series(ltp_series_by_symbol, ts_series_by_symbol, atm_call_symbol_ts, ts),
+                    put_sma=_sma_signal_from_series(ltp_series_by_symbol, ts_series_by_symbol, atm_put_symbol_ts, ts),
+                ),
+                'call_sma_signal': _sma_signal_from_series(ltp_series_by_symbol, ts_series_by_symbol, atm_call_symbol_ts, ts),
+                'put_sma_signal': _sma_signal_from_series(ltp_series_by_symbol, ts_series_by_symbol, atm_put_symbol_ts, ts),
+                # Extra real diagnostics for validation (frontend can ignore)
+                'itm1_call_atp_ltp_diff': itm1_call_atp_ltp_diff_historical,
+                'itm2_call_atp_ltp_diff': itm2_call_atp_ltp_diff_historical,
+                'itm1_put_atp_ltp_diff': itm1_put_atp_ltp_diff_historical,
+                'itm2_put_atp_ltp_diff': itm2_put_atp_ltp_diff_historical,
+            })
+        
+        # Do not append a "current" row; use only 1-minute DB candles to avoid duplicates like 09:31:32.
+        # If outside market hours, use the last historical data point as the final state at 15:30.
+        if now.time() > time(15, 30) and len(historical_data) > 0:
+            last_entry = historical_data[-1].copy()
+            last_entry['time'] = datetime.combine(now.date(), time(15, 30)).isoformat()
+            historical_data.append(last_entry)
+        
+        return jsonify({
+            'status': 'success',
+            'data': historical_data
+        })
+        
+    except Exception as e:
+        logger.error(f"Error fetching ATP-LTP data: {str(e)}")
+        return jsonify({
+            'status': 'error',
+            'message': f'Internal server error: {str(e)}'
+        }), 500
 
 @madhan_bp.route('/api/history', methods=['POST'])
 @check_session_validity

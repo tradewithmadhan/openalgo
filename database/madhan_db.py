@@ -526,17 +526,19 @@ def get_current_day_historical_data(end_ts: int = None):
             option_filter.append(OptionData.timestamp <= end_ts)
 
         nifty_data_query = session.query(
-            literal_column("'NIFTY'").label("symbol"), 
-            NiftyData.timestamp, 
-            func.coalesce(NiftyData.oi, 0).label('oi'),
-            NiftyData.close
+            literal_column("'NIFTY'").label("symbol"),
+            NiftyData.timestamp,
+            func.coalesce(NiftyData.oi, 0).label("oi"),
+            NiftyData.close,
+            func.coalesce(NiftyData.volume, 0).label("volume"),
         ).filter(*nifty_filter)
         nifty_data = nifty_data_query.all()
         option_data = session.query(
-            OptionData.symbol, 
-            OptionData.timestamp, 
-            func.coalesce(OptionData.oi, 0).label('oi'),
-            OptionData.close
+            OptionData.symbol,
+            OptionData.timestamp,
+            func.coalesce(OptionData.oi, 0).label("oi"),
+            OptionData.close,
+            func.coalesce(OptionData.volume, 0).label("volume"),
         ).filter(*option_filter).all()
 
         combined_data = [row._asdict() for row in nifty_data] + [row._asdict() for row in option_data]
