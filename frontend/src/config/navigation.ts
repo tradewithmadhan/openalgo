@@ -9,6 +9,7 @@ import {
   FileStack,
   FileText,
   FlaskConical,
+  Gauge,
   Key,
   Layers,
   LayoutDashboard,
@@ -70,6 +71,7 @@ export const profileMenuItems: NavItem[] = [
   { href: '/madhan/madhan01', label: 'Madhan Nifty Dashboard', icon: BarChart3 },
   { href: '/search/token', label: 'Search', icon: Search },
   { href: '/sandbox', label: 'Sandbox', icon: FlaskConical },
+  { href: '/leverage', label: 'Leverage', icon: Gauge },
   { href: '/admin', label: 'Admin', icon: Settings },
 ]
 

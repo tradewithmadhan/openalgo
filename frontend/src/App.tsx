@@ -88,6 +88,9 @@ const FlowIndex = lazy(() => import('@/pages/flow/FlowIndex'))
 const FlowEditor = lazy(() => import('@/pages/flow/FlowEditor'))
 const FlowKeyboardShortcuts = lazy(() => import('@/pages/flow/FlowKeyboardShortcuts'))
 
+// Leverage page
+const Leverage = lazy(() => import('@/pages/Leverage'))
+
 // Madhan pages
 const Madhan01 = lazy(() => import('@/pages/madhan/Madhan01'))
 const ATPLTPStrategy = lazy(() => import('@/pages/madhan/ATPLTPStrategy'))
@@ -194,6 +197,8 @@ function App() {
                 {/* Flow Editor */}
                 <Route path="/flow" element={<FlowIndex />} />
                 <Route path="/flow/shortcuts" element={<FlowKeyboardShortcuts />} />
+                {/* Leverage Configuration */}
+                <Route path="/leverage" element={<Leverage />} />
                 {/* Phase 7: Admin */}
                 <Route path="/admin" element={<AdminIndex />} />
                 <Route path="/admin/freeze" element={<FreezeQty />} />
