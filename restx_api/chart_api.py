@@ -74,10 +74,10 @@ class ChartPreferencesResource(Resource):
             # Extract preferences (all keys except apikey)
             preferences = {k: v for k, v in data.items() if k != "apikey"}
 
-            # Limit payload: max 50 keys, each key max 50 chars, each value max 1MB
-            if len(preferences) > 50:
+            # Limit payload: max 100 keys, each key max 50 chars, each value max 1MB
+            if len(preferences) > 100:
                 return make_response(
-                    jsonify({"status": "error", "message": "Too many preference keys (max 50)"}), 400
+                    jsonify({"status": "error", "message": "Too many preference keys (max 100)"}), 400
                 )
             for k, v in preferences.items():
                 if len(k) > 50:
