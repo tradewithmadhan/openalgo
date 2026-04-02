@@ -12,6 +12,7 @@ from utils.logging import get_logger
 from .account_schema import ChartSchema
 
 API_RATE_LIMIT = os.getenv("API_RATE_LIMIT", "10 per second")
+PREFERENCE_KEY_MAX_LENGTH = int(os.getenv("CHART_PREFERENCE_KEY_MAX_LENGTH", "128"))
 api = Namespace("chart", description="Chart Preferences and Cloud Workspace Sync")
 
 # Initialize logger
@@ -74,15 +75,15 @@ class ChartPreferencesResource(Resource):
             # Extract preferences (all keys except apikey)
             preferences = {k: v for k, v in data.items() if k != "apikey"}
 
-            # Limit payload: max 100 keys, each key max 50 chars, each value max 1MB
+            # Limit payload: max 100 keys, each key max configurable length, each value max 1MB
             if len(preferences) > 100:
                 return make_response(
                     jsonify({"status": "error", "message": "Too many preference keys (max 100)"}), 400
                 )
             for k, v in preferences.items():
-                if len(k) > 50:
+                if len(k) > PREFERENCE_KEY_MAX_LENGTH:
                     return make_response(
-                        jsonify({"status": "error", "message": f"Preference key too long: {k[:20]}... (max 50 chars)"}), 400
+                        jsonify({"status": "error", "message": f"Preference key too long: {k[:20]}... (max {PREFERENCE_KEY_MAX_LENGTH} chars)"}), 400
                     )
                 # Check serialized size for all value types (not just strings)
                 try:
