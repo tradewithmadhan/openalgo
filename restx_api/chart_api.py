@@ -13,6 +13,9 @@ from .account_schema import ChartSchema
 
 API_RATE_LIMIT = os.getenv("API_RATE_LIMIT", "10 per second")
 PREFERENCE_KEY_MAX_LENGTH = int(os.getenv("CHART_PREFERENCE_KEY_MAX_LENGTH", "128"))
+PREFERENCE_VALUE_MAX_BYTES = int(
+    os.getenv("CHART_PREFERENCE_VALUE_MAX_BYTES", str(5 * 1024 * 1024))
+)
 api = Namespace("chart", description="Chart Preferences and Cloud Workspace Sync")
 
 # Initialize logger
@@ -75,7 +78,7 @@ class ChartPreferencesResource(Resource):
             # Extract preferences (all keys except apikey)
             preferences = {k: v for k, v in data.items() if k != "apikey"}
 
-            # Limit payload: max 100 keys, each key max configurable length, each value max 1MB
+            # Limit payload: max 100 keys, each key max configurable length, each value max configurable size
             if len(preferences) > 100:
                 return make_response(
                     jsonify({"status": "error", "message": "Too many preference keys (max 100)"}), 400
@@ -90,9 +93,18 @@ class ChartPreferencesResource(Resource):
                     serialized = json.dumps(v)
                 except (TypeError, ValueError):
                     serialized = str(v)
-                if len(serialized) > 1_048_576:
+                if len(serialized) > PREFERENCE_VALUE_MAX_BYTES:
                     return make_response(
-                        jsonify({"status": "error", "message": f"Preference value too large for key: {k} (max 1MB)"}), 400
+                        jsonify(
+                            {
+                                "status": "error",
+                                "message": (
+                                    f"Preference value too large for key: {k} "
+                                    f"(max {PREFERENCE_VALUE_MAX_BYTES // (1024 * 1024)}MB)"
+                                ),
+                            }
+                        ),
+                        400,
                     )
 
             if not preferences:
