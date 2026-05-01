@@ -48,6 +48,8 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import GttTab from '@/components/trading/GttTab'
 import { cn, makeFormatCurrency, sanitizeCSV } from '@/lib/utils'
 // Note: AlertDialog still used for Cancel All Orders
 import { useSupportedExchanges } from '@/hooks/useSupportedExchanges'
@@ -309,16 +311,20 @@ export default function OrderBook() {
   const handleModifyOrder = async () => {
     if (!modifyingOrder) return
 
+    const pt = modifyForm.pricetype
+    const sendsPrice = pt === 'LIMIT' || pt === 'SL'
+    const sendsTrigger = pt === 'SL' || pt === 'SL-M'
+
     try {
       const response = await tradingApi.modifyOrder(modifyingOrder.orderid, {
         symbol: modifyingOrder.symbol,
         exchange: modifyingOrder.exchange,
         action: modifyingOrder.action,
         product: modifyingOrder.product,
-        pricetype: modifyForm.pricetype,
-        price: modifyForm.price,
+        pricetype: pt,
         quantity: modifyForm.quantity,
-        trigger_price: modifyForm.trigger_price,
+        ...(sendsPrice && { price: modifyForm.price }),
+        ...(sendsTrigger && { trigger_price: modifyForm.trigger_price }),
       })
       if (response.status === 'success') {
         showToast.success(`Order modified: ${modifyingOrder.orderid}`, 'orders')
@@ -401,13 +407,25 @@ export default function OrderBook() {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">Order Book</h1>
-          <p className="text-muted-foreground">View and manage your orders</p>
-        </div>
-        <div className="flex items-center gap-2 flex-wrap">
+      {/* Page Header */}
+      <div>
+        <h1 className="text-3xl font-bold tracking-tight">Order Book</h1>
+        <p className="text-muted-foreground">View and manage your orders</p>
+      </div>
+
+      <Tabs defaultValue="orders" className="space-y-6">
+        <TabsList className="h-10">
+          <TabsTrigger value="orders" className="min-w-[110px] text-sm">
+            Orders
+          </TabsTrigger>
+          <TabsTrigger value="gtt" className="min-w-[110px] text-sm">
+            GTT
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="orders" className="space-y-6">
+      {/* Orders tab toolbar */}
+      <div className="flex items-center justify-end gap-2 flex-wrap">
           {/* Settings Button */}
           <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
             <DialogTrigger asChild>
@@ -487,7 +505,6 @@ export default function OrderBook() {
               </AlertDialogFooter>
             </AlertDialogContent>
           </AlertDialog>
-        </div>
       </div>
 
       {/* Active Filters Bar */}
@@ -716,6 +733,12 @@ export default function OrderBook() {
           )}
         </CardContent>
       </Card>
+        </TabsContent>
+
+        <TabsContent value="gtt" className="space-y-6">
+          <GttTab />
+        </TabsContent>
+      </Tabs>
 
       {/* Modify Order Dialog */}
       <Dialog open={modifyDialogOpen} onOpenChange={setModifyDialogOpen}>

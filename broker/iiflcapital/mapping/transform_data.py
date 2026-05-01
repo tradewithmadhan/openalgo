@@ -10,6 +10,7 @@ def map_exchange(exchange: str) -> str:
         "CDS": "NSECURR",
         "BCD": "BSECURR",
         "MCX": "MCXCOMM",
+        "NCDEX": "NCDEXCOMM",
     }
     return exchange_mapping.get((exchange or "").upper(), (exchange or "").upper())
 
@@ -102,11 +103,13 @@ def transform_modify_order_data(data: dict) -> dict:
     """Transform OpenAlgo modify request to IIFL Capital format."""
     transformed = {}
 
-    if "quantity" in data:
+    quantity = data.get("quantity")
+    if quantity is not None:
         transformed["quantity"] = str(int(float(data.get("quantity", 0))))
 
-    if "pricetype" in data:
-        order_type = map_order_type(data.get("pricetype", "MARKET"))
+    pricetype = data.get("pricetype")
+    if pricetype:
+        order_type = map_order_type(pricetype)
         transformed["orderType"] = order_type
 
         if order_type in ("LIMIT", "SL"):

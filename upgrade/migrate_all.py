@@ -54,6 +54,7 @@ MIGRATIONS = [
     ("migrate_sandbox.py", "Sandbox Mode"),
     ("migrate_order_mode.py", "Order Mode & Action Center"),
     ("migrate_sandbox_pnl.py", "Sandbox Day-wise PnL Tracking"),
+    ("migrate_gtt.py", "GTT Order Support"),
     # Performance migrations
     ("migrate_indexes.py", "Database Performance Indexes"),
     # Feature migrations
@@ -66,6 +67,7 @@ MIGRATIONS = [
     ("migrate_market_holidays.py", "2026 Market Holiday Calendar Update"),
     ("migrate_leverage.py", "Leverage Configuration for Crypto"),
     ("migrate_samco_auth.py", "Samco 2FA Authentication"),
+    ("migrate_zerodha_new_exchanges.py", "Zerodha NCO/GLOBAL_INDEX & GIFTNIFTY Cleanup"),
 ]
 
 

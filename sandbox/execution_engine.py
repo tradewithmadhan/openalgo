@@ -205,6 +205,42 @@ class ExecutionEngine:
 
         return quote_cache
 
+    def _publish_fill_event(
+        self, orderid, tradeid, symbol, exchange, action, quantity, price, product, strategy
+    ):
+        """Emit SandboxOrderFilledEvent so the analyzer-mode UI auto-refreshes.
+
+        Logged at INFO so it's visible in server logs and confirms the
+        event-bus path was reached (any breakage in registration or imports
+        would suppress the log too).
+        """
+        try:
+            from events import SandboxOrderFilledEvent
+            from utils.event_bus import bus
+
+            bus.publish(
+                SandboxOrderFilledEvent(
+                    mode="analyze",
+                    api_type="sandbox.fill",
+                    orderid=orderid,
+                    tradeid=tradeid,
+                    symbol=symbol,
+                    exchange=exchange,
+                    action=action,
+                    quantity=quantity,
+                    price=price,
+                    product=product,
+                    strategy=strategy,
+                )
+            )
+            logger.info(
+                f"[sandbox-fill] Published SandboxOrderFilledEvent for {orderid} "
+                f"({symbol} {action} {quantity} @ {price})"
+            )
+        except Exception as pub_err:
+            # Never let event-bus failures break order execution
+            logger.debug(f"Failed to publish SandboxOrderFilledEvent: {pub_err}")
+
     def _process_order(self, order, quote):
         """
         Process a single order based on current quote
@@ -229,6 +265,19 @@ class ExecutionEngine:
                     db_session.commit()
                     logger.info(
                         f"Updated order {order.orderid} status to complete (was in race condition)"
+                    )
+                    # Race-condition cleanup transitions an order to complete
+                    # without going through _execute_order, so emit here too.
+                    self._publish_fill_event(
+                        orderid=order.orderid,
+                        tradeid=existing_trade.tradeid,
+                        symbol=order.symbol,
+                        exchange=order.exchange,
+                        action=order.action,
+                        quantity=int(order.quantity),
+                        price=float(existing_trade.price),
+                        product=order.product,
+                        strategy=order.strategy or "",
                     )
                 return
 
@@ -341,6 +390,22 @@ class ExecutionEngine:
 
             logger.info(f"Order {order.orderid} executed successfully. Trade ID: {tradeid}")
 
+            # Notify UI subscribers (OrderBook / TradeBook / Positions auto-refresh).
+            # Engine-internal fills don't go through the service layer, so the
+            # service-layer publish points (place_order_service etc.) never see
+            # them — without this the analyzer UI sits stale until manual refresh.
+            self._publish_fill_event(
+                orderid=order.orderid,
+                tradeid=tradeid,
+                symbol=order.symbol,
+                exchange=order.exchange,
+                action=order.action,
+                quantity=int(order.quantity),
+                price=float(execution_price),
+                product=order.product,
+                strategy=order.strategy or "",
+            )
+
         except Exception as e:
             db_session.rollback()
             logger.exception(f"Error executing order {order.orderid}: {e}")
@@ -351,7 +416,7 @@ class ExecutionEngine:
                 order.rejection_reason = f"Execution error: {str(e)}"
                 order.update_timestamp = datetime.now(pytz.timezone("Asia/Kolkata"))
                 db_session.commit()
-            except:
+            except Exception:
                 db_session.rollback()
 
     def _update_position(self, order, execution_price):

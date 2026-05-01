@@ -26,6 +26,7 @@ from database.sandbox_db import SandboxOrders, SandboxPositions, SandboxTrades, 
 from database.symbol import SymToken
 from database.token_db import get_symbol_info
 from sandbox.fund_manager import FundManager
+from utils.constants import VALID_EXCHANGES
 from utils.logging import get_logger
 from utils.symbol_utils import is_future, is_option
 
@@ -80,6 +81,18 @@ class OrderManager:
             price_type = order_data["price_type"].upper()
             product = order_data["product"].upper()
             strategy = order_data.get("strategy", "")
+
+            # Drop fields that don't apply to this price_type so stale values from
+            # the form (e.g. a leftover trigger_price after switching SL-M -> LIMIT)
+            # cannot be stored or shown back in the orderbook.
+            #   MARKET -> no price, no trigger
+            #   LIMIT  -> price only
+            #   SL     -> price + trigger
+            #   SL-M   -> trigger only
+            if price_type in ("MARKET", "SL-M"):
+                price = None
+            if price_type in ("MARKET", "LIMIT"):
+                trigger_price = None
 
             # Get symbol info for lot size validation (from cache)
             symbol_obj = get_symbol_info(symbol, exchange)
@@ -753,10 +766,35 @@ class OrderManager:
                 order.quantity = new_quantity
                 order.pending_quantity = new_quantity
 
+            # Only accept the fields that apply to this order's price_type:
+            #   MARKET -> none, LIMIT -> price, SL -> price+trigger, SL-M -> trigger
+            allows_price = order.price_type in ("LIMIT", "SL")
+            allows_trigger = order.price_type in ("SL", "SL-M")
+
             if "price" in new_data and new_data["price"]:
+                if not allows_price:
+                    return (
+                        False,
+                        {
+                            "status": "error",
+                            "message": f"{order.price_type} orders do not accept a price",
+                            "mode": "analyze",
+                        },
+                        400,
+                    )
                 order.price = Decimal(str(new_data["price"]))
 
             if "trigger_price" in new_data and new_data["trigger_price"]:
+                if not allows_trigger:
+                    return (
+                        False,
+                        {
+                            "status": "error",
+                            "message": f"{order.price_type} orders do not accept a trigger_price",
+                            "mode": "analyze",
+                        },
+                        400,
+                    )
                 order.trigger_price = Decimal(str(new_data["trigger_price"]))
 
             order.update_timestamp = datetime.now(pytz.timezone("Asia/Kolkata"))
@@ -1136,10 +1174,11 @@ class OrderManager:
             except (ValueError, TypeError):
                 return False, "Invalid trigger_price"
 
-        # Validate exchange
-        valid_exchanges = ["NSE", "BSE", "NFO", "BFO", "CDS", "BCD", "MCX", "NCDEX", "CRYPTO"]
-        if order_data["exchange"].upper() not in valid_exchanges:
-            return False, f"Invalid exchange. Must be one of {', '.join(valid_exchanges)}"
+        # Validate exchange — use the central VALID_EXCHANGES so adding a new
+        # exchange (NCO, GLOBAL_INDEX, ...) is a one-place change in
+        # utils/constants.py.
+        if order_data["exchange"].upper() not in VALID_EXCHANGES:
+            return False, f"Invalid exchange. Must be one of {', '.join(VALID_EXCHANGES)}"
 
         return True, "Validation passed"
 
