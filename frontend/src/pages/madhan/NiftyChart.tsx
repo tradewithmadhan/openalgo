@@ -290,9 +290,11 @@ export default function NiftyChart() {
                         const peLeft = self._mode === 'oi' ? true : peVal >= 0
                         const ceX = ceLeft ? anchor - ceW : anchor
                         const peX = peLeft ? anchor - peW : anchor
-                        ctx.fillStyle = '#f44336'
+                        // CE color changes based on value
+                        ctx.fillStyle = ceVal >= 0 ? '#f44336' : '#4caf50'
                         ctx.fillRect(ceX, y - 10, ceW, 8)
-                        ctx.fillStyle = '#4caf50'
+                        // PE color changes based on value
+                        ctx.fillStyle = peVal >= 0 ? '#4caf50' : '#f44336'
                         ctx.fillRect(peX, y + 2, peW, 8)
                         if (self._showStrike) {
                           ctx.fillStyle = '#9ca3af'
