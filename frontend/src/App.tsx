@@ -116,6 +116,7 @@ function HoldingsRoute() {
 
 // Madhan pages
 const Madhan01 = lazy(() => import('@/pages/madhan/Madhan01'))
+const NiftyChart = lazy(() => import('@/pages/madhan/NiftyChart'))
 const ATPLTPStrategy = lazy(() => import('@/pages/madhan/ATPLTPStrategy'))
 
 // Admin pages
@@ -272,6 +273,7 @@ function App() {
               <Route element={<FullWidthLayout />}>
                 {/* Madhan custom dashboards */}
                 <Route path="/madhan/madhan01" element={<Madhan01 />} />
+                <Route path="/nifty-chart" element={<NiftyChart />} />
                 <Route path="/madhan/ATP-LTPStrategy" element={<ATPLTPStrategy />} />
                 <Route path="/playground" element={<Playground />} />
                 <Route path="/historify" element={<Historify />} />
