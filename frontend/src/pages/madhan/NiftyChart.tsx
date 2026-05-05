@@ -65,7 +65,7 @@ export default function NiftyChart() {
     const isDark = document.documentElement.classList.contains('dark')
     const chart = createChart(chartContainerRef.current, {
       width: chartContainerRef.current.clientWidth,
-      height: 920,
+      height: Math.max(320, chartContainerRef.current.clientHeight),
       layout: {
         background: { type: ColorType.Solid, color: 'transparent' },
         textColor: isDark ? '#a6adbb' : '#333',
@@ -378,6 +378,13 @@ export default function NiftyChart() {
     await Promise.all([fetchOiProfiles(), fetchOptionCombinedVolume()])
   }
 
+  const repaintOverlay = () => {
+    if (!candleRef.current || !priceDataRef.current.length) return
+    const last = priceDataRef.current[priceDataRef.current.length - 1]
+    // Force lightweight-charts to redraw attached primitives immediately.
+    candleRef.current.update(last as any)
+  }
+
   useEffect(() => {
     void refreshChartData()
     if (updaterRef.current) window.clearInterval(updaterRef.current)
@@ -414,6 +421,7 @@ export default function NiftyChart() {
       oiPrimitiveRef.current.setAnchor(oiX / 100)
       oiPrimitiveRef.current.setStrike(oiShowStrike)
       oiPrimitiveRef.current.setValues(oiShowValues)
+      repaintOverlay()
     }
   }, [oiX, oiShowStrike, oiShowValues])
 
@@ -422,27 +430,30 @@ export default function NiftyChart() {
       coiPrimitiveRef.current.setAnchor(coiX / 100)
       coiPrimitiveRef.current.setStrike(coiShowStrike)
       coiPrimitiveRef.current.setValues(coiShowValues)
+      repaintOverlay()
     }
   }, [coiX, coiShowStrike, coiShowValues])
 
   const toggleOi = () => {
     if (!oiPrimitiveRef.current) return
     setOiActive(oiPrimitiveRef.current.toggle())
+    repaintOverlay()
   }
 
   const toggleCoi = () => {
     if (!coiPrimitiveRef.current) return
     setCoiActive(coiPrimitiveRef.current.toggle())
+    repaintOverlay()
   }
 
   return (
-    <div className="p-2">
-      <Card className="overflow-hidden border bg-card">
-        <div className="flex flex-wrap items-center gap-3 border-b p-3">
-          <div className="flex items-center gap-2">
-            <Label>Interval</Label>
+    <div className="h-[calc(100vh-56px)] w-full p-0">
+      <Card className="h-full w-full overflow-hidden rounded-none border-0 bg-card">
+        <div className="flex flex-wrap items-center gap-1.5 border-b px-2 py-1.5">
+          <div className="flex items-center gap-1">
+            <Label className="text-[11px]">Interval</Label>
             <Select value={interval} onValueChange={setIntervalValue}>
-              <SelectTrigger className="h-8 w-20"><SelectValue /></SelectTrigger>
+              <SelectTrigger className="h-7 w-20 text-[11px]"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="1m">1m</SelectItem>
                 <SelectItem value="3m">3m</SelectItem>
@@ -453,25 +464,25 @@ export default function NiftyChart() {
               </SelectContent>
             </Select>
           </div>
-          <Button variant={oiActive ? 'default' : 'outline'} size="sm" onClick={toggleOi}>OI</Button>
-          <Button variant={coiActive ? 'default' : 'outline'} size="sm" onClick={toggleCoi}>COI</Button>
-          <Button variant={emaActive ? 'default' : 'outline'} size="sm" onClick={() => setEmaActive((v) => !v)}>EMA</Button>
-          <Button variant={dayOpenActive ? 'default' : 'outline'} size="sm" onClick={() => setDayOpenActive((v) => !v)}>Day Open</Button>
-          <Button variant={prevOhlcActive ? 'default' : 'outline'} size="sm" onClick={() => setPrevOhlcActive((v) => !v)}>Prev OHLC</Button>
-          <div className="flex items-center gap-2">
-            <Label>OI X %</Label>
-            <Input type="number" min={0} max={100} className="h-8 w-16" value={oiX} onChange={(e) => setOiX(Number(e.target.value || 0))} />
-            <div className="flex items-center gap-1"><Checkbox checked={oiShowStrike} onCheckedChange={(v) => setOiShowStrike(!!v)} /><Label>Labels</Label></div>
-            <div className="flex items-center gap-1"><Checkbox checked={oiShowValues} onCheckedChange={(v) => setOiShowValues(!!v)} /><Label>Values</Label></div>
+          <Button variant={oiActive ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={toggleOi}>OI</Button>
+          <Button variant={coiActive ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={toggleCoi}>COI</Button>
+          <Button variant={emaActive ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={() => setEmaActive((v) => !v)}>EMA</Button>
+          <Button variant={dayOpenActive ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={() => setDayOpenActive((v) => !v)}>Day Open</Button>
+          <Button variant={prevOhlcActive ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={() => setPrevOhlcActive((v) => !v)}>Prev OHLC</Button>
+          <div className="flex items-center gap-1">
+            <Label className="text-[11px]">OI X %</Label>
+            <Input type="number" min={0} max={100} className="h-7 w-14 px-1 text-[11px]" value={oiX} onChange={(e) => setOiX(Number(e.target.value || 0))} />
+            <div className="flex items-center gap-1"><Checkbox checked={oiShowStrike} onCheckedChange={(v) => setOiShowStrike(!!v)} /><Label className="text-[11px]">Labels</Label></div>
+            <div className="flex items-center gap-1"><Checkbox checked={oiShowValues} onCheckedChange={(v) => setOiShowValues(!!v)} /><Label className="text-[11px]">Values</Label></div>
           </div>
-          <div className="flex items-center gap-2">
-            <Label>COI X %</Label>
-            <Input type="number" min={0} max={100} className="h-8 w-16" value={coiX} onChange={(e) => setCoiX(Number(e.target.value || 0))} />
-            <div className="flex items-center gap-1"><Checkbox checked={coiShowStrike} onCheckedChange={(v) => setCoiShowStrike(!!v)} /><Label>Labels</Label></div>
-            <div className="flex items-center gap-1"><Checkbox checked={coiShowValues} onCheckedChange={(v) => setCoiShowValues(!!v)} /><Label>Values</Label></div>
+          <div className="flex items-center gap-1">
+            <Label className="text-[11px]">COI X %</Label>
+            <Input type="number" min={0} max={100} className="h-7 w-14 px-1 text-[11px]" value={coiX} onChange={(e) => setCoiX(Number(e.target.value || 0))} />
+            <div className="flex items-center gap-1"><Checkbox checked={coiShowStrike} onCheckedChange={(v) => setCoiShowStrike(!!v)} /><Label className="text-[11px]">Labels</Label></div>
+            <div className="flex items-center gap-1"><Checkbox checked={coiShowValues} onCheckedChange={(v) => setCoiShowValues(!!v)} /><Label className="text-[11px]">Values</Label></div>
           </div>
         </div>
-        <div ref={chartContainerRef} className="h-[calc(100vh-220px)] w-full" />
+        <div ref={chartContainerRef} className="h-[calc(100%-44px)] w-full" />
       </Card>
     </div>
   )
