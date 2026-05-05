@@ -59,6 +59,7 @@ export function CePeStrikeVolumeChangesChart({ refreshTrigger, atmStrike }: CePe
   const [isLoading, setIsLoading] = useState(false);
   const [selectedStrike, setSelectedStrike] = useState<string>("");
   const [strikes, setStrikes] = useState<number[]>([]);
+  const [volumeView, setVolumeView] = useState<'split' | 'combined'>('split');
   const [showSpot, setShowSpot] = useState(true);
   const [ignoreFirst, setIgnoreFirst] = useState(true);
   const ignoreCount = 2;
@@ -121,6 +122,7 @@ export function CePeStrikeVolumeChangesChart({ refreshTrigger, atmStrike }: CePe
     const filledTimestamps: number[] = [];
     const filledCeData: (number | null)[] = [];
     const filledPeData: (number | null)[] = [];
+    const combinedData: (number | null)[] = [];
 
     let interval = 3 * 60 * 1000;
     if (data.timestamps.length >= 2) {
@@ -146,44 +148,69 @@ export function CePeStrikeVolumeChangesChart({ refreshTrigger, atmStrike }: CePe
       const entry = dataMap.get(currentTime);
       if (entry) {
         const shouldIgnore = ignoreFirst && index < ignoreCount;
-        filledCeData.push(shouldIgnore ? null : entry.ce);
-        filledPeData.push(shouldIgnore ? null : -Math.abs(entry.pe));
+        if (shouldIgnore) {
+          filledCeData.push(null);
+          filledPeData.push(null);
+          combinedData.push(null);
+        } else {
+          filledCeData.push(entry.ce);
+          filledPeData.push(-Math.abs(entry.pe));
+          combinedData.push(Math.abs(entry.ce) + Math.abs(entry.pe));
+        }
       } else {
         filledCeData.push(null);
         filledPeData.push(null);
+        combinedData.push(null);
       }
       index += 1;
       currentTime += interval;
     }
 
-    const datasets: ChartData<'bar' | 'line'>['datasets'] = [
-        {
-          type: 'bar' as const,
-          label: 'CE Volume',
-          data: filledCeData,
-          backgroundColor: 'rgba(16, 185, 129, 0.5)',
-          borderColor: 'rgba(16, 185, 129, 0.9)',
-          borderWidth: 1,
-          barThickness: 'flex',
-          maxBarThickness: 60,
-          categoryPercentage: 1.0,
-          barPercentage: 1.0,
-          yAxisID: 'y',
-        },
-        {
-          type: 'bar' as const,
-          label: 'PE Volume',
-          data: filledPeData,
-          backgroundColor: 'rgba(239, 68, 68, 0.5)',
-          borderColor: 'rgba(239, 68, 68, 0.9)',
-          borderWidth: 1,
-          barThickness: 'flex',
-          maxBarThickness: 60,
-          categoryPercentage: 1.0,
-          barPercentage: 1.0,
-          yAxisID: 'y',
-        },
-      ];
+    const datasets: ChartData<'bar' | 'line'>['datasets'] =
+      volumeView === 'combined'
+        ? [
+            {
+              type: 'bar' as const,
+              label: 'Combined Volume (CE + PE)',
+              data: combinedData,
+              backgroundColor: 'rgba(59, 130, 246, 0.45)',
+              borderColor: 'rgba(59, 130, 246, 0.9)',
+              borderWidth: 1,
+              barThickness: 'flex',
+              maxBarThickness: 60,
+              categoryPercentage: 1.0,
+              barPercentage: 1.0,
+              yAxisID: 'y',
+            },
+          ]
+        : [
+            {
+              type: 'bar' as const,
+              label: 'CE Volume',
+              data: filledCeData,
+              backgroundColor: 'rgba(16, 185, 129, 0.5)',
+              borderColor: 'rgba(16, 185, 129, 0.9)',
+              borderWidth: 1,
+              barThickness: 'flex',
+              maxBarThickness: 60,
+              categoryPercentage: 1.0,
+              barPercentage: 1.0,
+              yAxisID: 'y',
+            },
+            {
+              type: 'bar' as const,
+              label: 'PE Volume',
+              data: filledPeData,
+              backgroundColor: 'rgba(239, 68, 68, 0.5)',
+              borderColor: 'rgba(239, 68, 68, 0.9)',
+              borderWidth: 1,
+              barThickness: 'flex',
+              maxBarThickness: 60,
+              categoryPercentage: 1.0,
+              barPercentage: 1.0,
+              yAxisID: 'y',
+            },
+          ];
 
     if (showSpot && spotData && spotData.timestamps?.length && spotData.prices?.length) {
       const alignedSpotPrices: (number | null)[] = [];
@@ -224,13 +251,21 @@ export function CePeStrikeVolumeChangesChart({ refreshTrigger, atmStrike }: CePe
       labels: filledTimestamps.map(ts => new Date(ts).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })),
       datasets
     };
-  }, [data, spotData, showSpot, mode, ignoreFirst]);
+  }, [data, spotData, showSpot, mode, ignoreFirst, volumeView]);
 
   const maxAbs = useMemo(() => {
-    const ceVals = (data?.ce_changes || []).map((v, i) => (ignoreFirst && i < ignoreCount ? 0 : Math.abs(v || 0)));
-    const peVals = (data?.pe_changes || []).map((v, i) => (ignoreFirst && i < ignoreCount ? 0 : Math.abs(v || 0)));
-    return Math.max(1, ...ceVals, ...peVals);
-  }, [data, ignoreFirst]);
+    const ceVals = data?.ce_changes || [];
+    const peVals = data?.pe_changes || [];
+    if (volumeView === 'combined') {
+      const combinedVals = ceVals.map((v, i) =>
+        ignoreFirst && i < ignoreCount ? 0 : Math.abs(v || 0) + Math.abs(peVals[i] || 0)
+      );
+      return Math.max(1, ...combinedVals);
+    }
+    const splitCe = ceVals.map((v, i) => (ignoreFirst && i < ignoreCount ? 0 : Math.abs(v || 0)));
+    const splitPe = peVals.map((v, i) => (ignoreFirst && i < ignoreCount ? 0 : Math.abs(v || 0)));
+    return Math.max(1, ...splitCe, ...splitPe);
+  }, [data, ignoreFirst, volumeView]);
 
   const spotRange = useMemo(() => {
     if (!spotData?.prices?.length) return null;
@@ -279,7 +314,7 @@ export function CePeStrikeVolumeChangesChart({ refreshTrigger, atmStrike }: CePe
         },
       },
       y: {
-        suggestedMin: -maxAbs,
+        suggestedMin: volumeView === 'combined' ? 0 : -maxAbs,
         suggestedMax: maxAbs,
         ticks: {
           color: mode === 'dark' ? '#9ca3af' : '#6b7280',
@@ -303,7 +338,7 @@ export function CePeStrikeVolumeChangesChart({ refreshTrigger, atmStrike }: CePe
         },
       },
     },
-  }), [mode, maxAbs, showSpot, spotRange]);
+  }), [mode, maxAbs, showSpot, spotRange, volumeView]);
 
   return (
     <Card>
@@ -328,6 +363,13 @@ export function CePeStrikeVolumeChangesChart({ refreshTrigger, atmStrike }: CePe
           <div className="flex items-center gap-1">
             <Label className="text-[11px]">Ignore first 2</Label>
             <Switch checked={ignoreFirst} onCheckedChange={setIgnoreFirst} />
+          </div>
+          <div className="flex items-center gap-1">
+            <Label className="text-[11px]">Combined</Label>
+            <Switch
+              checked={volumeView === 'combined'}
+              onCheckedChange={(v) => setVolumeView(v ? 'combined' : 'split')}
+            />
           </div>
           <div className="flex items-center gap-1">
             <Label className="text-[11px]">Spot</Label>
