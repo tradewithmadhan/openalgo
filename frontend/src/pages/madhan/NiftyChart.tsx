@@ -45,6 +45,12 @@ export default function NiftyChart() {
   const priceDataRef = useRef<Candle[]>([])
   const updaterRef = useRef<number | null>(null)
   const timeoutRef = useRef<number | null>(null)
+  const oiXRef = useRef(100)
+  const coiXRef = useRef(80)
+  const oiShowStrikeRef = useRef(true)
+  const oiShowValuesRef = useRef(true)
+  const coiShowStrikeRef = useRef(true)
+  const coiShowValuesRef = useRef(true)
 
   const [interval, setIntervalValue] = useState('5m')
   const [oiActive, setOiActive] = useState(true)
@@ -254,9 +260,9 @@ export default function NiftyChart() {
           this._profile = data
           this._series = series
           this._show = true
-          this._anchor = oiX / 100
-          this._showStrike = oiShowStrike
-          this._showValues = oiShowValues
+          this._anchor = oiXRef.current / 100
+          this._showStrike = oiShowStrikeRef.current
+          this._showValues = oiShowValuesRef.current
         }
         paneViews() {
           const self = this
@@ -318,12 +324,12 @@ export default function NiftyChart() {
     } else {
       coiPrimitiveRef.current.setData(json.coi)
     }
-    oiPrimitiveRef.current.setAnchor(oiX / 100)
-    oiPrimitiveRef.current.setStrike(oiShowStrike)
-    oiPrimitiveRef.current.setValues(oiShowValues)
-    coiPrimitiveRef.current.setAnchor(coiX / 100)
-    coiPrimitiveRef.current.setStrike(coiShowStrike)
-    coiPrimitiveRef.current.setValues(coiShowValues)
+    oiPrimitiveRef.current.setAnchor(oiXRef.current / 100)
+    oiPrimitiveRef.current.setStrike(oiShowStrikeRef.current)
+    oiPrimitiveRef.current.setValues(oiShowValuesRef.current)
+    coiPrimitiveRef.current.setAnchor(coiXRef.current / 100)
+    coiPrimitiveRef.current.setStrike(coiShowStrikeRef.current)
+    coiPrimitiveRef.current.setValues(coiShowValuesRef.current)
   }
 
   const fetchOptionCombinedVolume = async () => {
@@ -417,6 +423,9 @@ export default function NiftyChart() {
   }, [prevOhlcActive])
 
   useEffect(() => {
+    oiXRef.current = oiX
+    oiShowStrikeRef.current = oiShowStrike
+    oiShowValuesRef.current = oiShowValues
     if (oiPrimitiveRef.current) {
       oiPrimitiveRef.current.setAnchor(oiX / 100)
       oiPrimitiveRef.current.setStrike(oiShowStrike)
@@ -426,6 +435,9 @@ export default function NiftyChart() {
   }, [oiX, oiShowStrike, oiShowValues])
 
   useEffect(() => {
+    coiXRef.current = coiX
+    coiShowStrikeRef.current = coiShowStrike
+    coiShowValuesRef.current = coiShowValues
     if (coiPrimitiveRef.current) {
       coiPrimitiveRef.current.setAnchor(coiX / 100)
       coiPrimitiveRef.current.setStrike(coiShowStrike)
@@ -448,8 +460,8 @@ export default function NiftyChart() {
 
   return (
     <div className="h-[calc(100vh-56px)] w-full p-0">
-      <Card className="h-full w-full overflow-hidden rounded-none border-0 bg-card">
-        <div className="flex flex-wrap items-center gap-1.5 border-b px-2 py-1.5">
+      <Card className="flex h-full w-full flex-col overflow-hidden rounded-none border-0 bg-card">
+        <div className="shrink-0 flex flex-wrap items-center gap-1.5 border-b px-2 py-1.5">
           <div className="flex items-center gap-1">
             <Label className="text-[11px]">Interval</Label>
             <Select value={interval} onValueChange={setIntervalValue}>
@@ -482,7 +494,7 @@ export default function NiftyChart() {
             <div className="flex items-center gap-1"><Checkbox checked={coiShowValues} onCheckedChange={(v) => setCoiShowValues(!!v)} /><Label className="text-[11px]">Values</Label></div>
           </div>
         </div>
-        <div ref={chartContainerRef} className="h-[calc(100%-44px)] w-full" />
+        <div ref={chartContainerRef} className="min-h-0 flex-1 w-full" />
       </Card>
     </div>
   )
