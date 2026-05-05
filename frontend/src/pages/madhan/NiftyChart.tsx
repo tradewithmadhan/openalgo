@@ -3,8 +3,8 @@ import {
   CandlestickSeries,
   ColorType,
   createChart,
+  HistogramSeries,
   LineSeries,
-  LineStyle,
   type IChartApi,
   type ISeriesApi,
 } from 'lightweight-charts'
@@ -34,9 +34,7 @@ export default function NiftyChart() {
   const candleRef = useRef<ISeriesApi<'Candlestick'> | null>(null)
   const ema34Ref = useRef<ISeriesApi<'Line'> | null>(null)
   const ema55Ref = useRef<ISeriesApi<'Line'> | null>(null)
-  const rsiRef = useRef<ISeriesApi<'Line'> | null>(null)
-  const coiPctRef = useRef<ISeriesApi<'Line'> | null>(null)
-  const oiTrendPctRef = useRef<ISeriesApi<'Line'> | null>(null)
+  const optionVolumeRef = useRef<ISeriesApi<'Histogram'> | null>(null)
   const dayOpenRef = useRef<ISeriesApi<'Line'> | null>(null)
   const prevOpenRef = useRef<ISeriesApi<'Line'> | null>(null)
   const prevHighRef = useRef<ISeriesApi<'Line'> | null>(null)
@@ -51,8 +49,6 @@ export default function NiftyChart() {
   const [interval, setIntervalValue] = useState('5m')
   const [oiActive, setOiActive] = useState(true)
   const [coiActive, setCoiActive] = useState(true)
-  const [coiTrendActive, setCoiTrendActive] = useState(true)
-  const [rsiActive, setRsiActive] = useState(true)
   const [emaActive, setEmaActive] = useState(true)
   const [dayOpenActive, setDayOpenActive] = useState(true)
   const [prevOhlcActive, setPrevOhlcActive] = useState(true)
@@ -81,6 +77,27 @@ export default function NiftyChart() {
       timeScale: {
         timeVisible: true,
         secondsVisible: false,
+        tickMarkFormatter: (time: number) => {
+          return new Date(time * 1000).toLocaleTimeString('en-IN', {
+            timeZone: 'Asia/Kolkata',
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: false,
+          })
+        },
+      },
+      localization: {
+        timeFormatter: (time: number) =>
+          new Date(time * 1000).toLocaleString('en-IN', {
+            timeZone: 'Asia/Kolkata',
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: false,
+          }),
       },
       rightPriceScale: {
         borderColor: isDark ? 'rgba(166,173,187,0.2)' : 'rgba(0,0,0,0.2)',
@@ -108,28 +125,28 @@ export default function NiftyChart() {
       lastValueVisible: false,
       crosshairMarkerVisible: false,
     })
-    const rsi = chart.addSeries(LineSeries, {
-      color: 'purple',
-      lineWidth: 1,
-      priceScaleId: 'left',
-      visible: true,
-      crosshairMarkerVisible: false,
-      lastValueVisible: false,
-      priceLineVisible: false,
-    })
-    const coiPct = chart.addSeries(LineSeries, {
-      color: '#2196F3',
-      lineWidth: 2,
-      priceScaleId: 'left',
-      visible: true,
-    })
-    const oiTrendPct = chart.addSeries(LineSeries, {
-      color: '#FF5722',
-      lineWidth: 2,
-      lineStyle: LineStyle.Dashed,
-      priceScaleId: 'left',
-      visible: true,
-    })
+    const chartAny = chart as any
+    let optionVolumeSeries: ISeriesApi<'Histogram'> | null = null
+    if (typeof chartAny.addPane === 'function') {
+      const volumePane = chartAny.addPane()
+      if (volumePane && typeof volumePane.setHeight === 'function') {
+        volumePane.setHeight(140)
+      }
+      if (volumePane && typeof volumePane.addSeries === 'function') {
+        optionVolumeSeries = volumePane.addSeries(HistogramSeries, {
+          title: 'CE+PE Volume',
+          color: 'rgba(59, 130, 246, 1)',
+          priceFormat: { type: 'volume' },
+        }) as ISeriesApi<'Histogram'>
+      }
+    }
+    if (!optionVolumeSeries) {
+      optionVolumeSeries = chart.addSeries(HistogramSeries, {
+        title: 'CE+PE Volume',
+        color: 'rgba(59, 130, 246, 1)',
+        priceFormat: { type: 'volume' },
+      })
+    }
 
     const dayOpen = chart.addSeries(LineSeries, { color: '#00FF00', lineWidth: 1, title: 'Day Open' })
     const prevOpen = chart.addSeries(LineSeries, { color: '#FFA500', lineWidth: 1, title: 'Prev Open' })
@@ -141,9 +158,7 @@ export default function NiftyChart() {
     candleRef.current = candle
     ema34Ref.current = ema34
     ema55Ref.current = ema55
-    rsiRef.current = rsi
-    coiPctRef.current = coiPct
-    oiTrendPctRef.current = oiTrendPct
+    optionVolumeRef.current = optionVolumeSeries
     dayOpenRef.current = dayOpen
     prevOpenRef.current = prevOpen
     prevHighRef.current = prevHigh
@@ -184,28 +199,10 @@ export default function NiftyChart() {
     return result.filter((x) => !Number.isNaN(x.value))
   }
 
-  const calculateRSI = (data: Candle[], period = 14) => {
-    if (data.length <= period) return []
-    const out: Array<{ time: number; value: number }> = []
-    const changes = data.map((d, i) => (i > 0 ? d.close - data[i - 1].close : 0))
-    let gain = 0
-    let loss = 0
-    for (let i = 1; i <= period; i++) {
-      if (changes[i] > 0) gain += changes[i]
-      else loss -= changes[i]
-    }
-    let avgGain = gain / period
-    let avgLoss = loss / period
-    for (let i = period; i < data.length; i++) {
-      const chg = changes[i]
-      const g = chg > 0 ? chg : 0
-      const l = chg < 0 ? -chg : 0
-      avgGain = (avgGain * (period - 1) + g) / period
-      avgLoss = (avgLoss * (period - 1) + l) / period
-      const rs = avgLoss === 0 ? Infinity : avgGain / avgLoss
-      out.push({ time: data[i].time, value: 100 - 100 / (1 + rs) })
-    }
-    return out
+  const getIntervalSeconds = (val: string) => {
+    if (val.endsWith('m')) return Math.max(1, Number(val.slice(0, -1) || '1')) * 60
+    if (val.endsWith('s')) return Math.max(1, Number(val.slice(0, -1) || '1'))
+    return 60
   }
 
   const addHorizontalLines = (data: Candle[]) => {
@@ -237,17 +234,6 @@ export default function NiftyChart() {
     prevHighRef.current.setData(data.map((d) => ({ time: d.time as any, value: prevHigh })))
     prevLowRef.current.setData(data.map((d) => ({ time: d.time as any, value: prevLow })))
     prevCloseRef.current.setData(data.map((d) => ({ time: d.time as any, value: prevClose })))
-  }
-
-  const fetchCoiTrend = async () => {
-    if (!coiPctRef.current || !oiTrendPctRef.current) return
-    const res = await fetch(`/madhan/api/nifty/coi-trend?_=${Date.now()}`)
-    const json = await res.json()
-    if (json?.status !== 'success' || !json?.data?.timestamps) return
-    const coiData = json.data.timestamps.map((t: number, i: number) => ({ time: Math.floor(t / 1000) as any, value: json.data.coi_percent[i] }))
-    const oiTrendData = json.data.timestamps.map((t: number, i: number) => ({ time: Math.floor(t / 1000) as any, value: json.data.oi_trend_percent[i] }))
-    coiPctRef.current.setData(coiData)
-    oiTrendPctRef.current.setData(oiTrendData)
   }
 
   const fetchOiProfiles = async () => {
@@ -340,8 +326,47 @@ export default function NiftyChart() {
     coiPrimitiveRef.current.setValues(coiShowValues)
   }
 
+  const fetchOptionCombinedVolume = async () => {
+    if (!optionVolumeRef.current) return
+    const res = await fetch(
+      `/madhan/api/nifty/ce-pe-volume-changes?strike_selection_mode=option1&upside_strikes=10&downside_strikes=10&_=${Date.now()}`
+    )
+    const json = await res.json()
+    if (json?.status !== 'success' || !json?.data?.timestamps?.length) {
+      optionVolumeRef.current.setData([])
+      return
+    }
+    const timestamps: number[] = json.data.timestamps || []
+    const ce: number[] = json.data.ce_changes || []
+    const pe: number[] = json.data.pe_changes || []
+
+    // Source is 1-min; aggregate by selected timeframe. For sub-minute intervals, keep 1-min buckets.
+    const requestedBucketSec = getIntervalSeconds(interval)
+    const bucketSec = Math.max(60, requestedBucketSec)
+    const bucketMap = new Map<number, number>()
+
+    for (let i = 0; i < timestamps.length; i++) {
+      const rawTs = Number(timestamps[i] || 0)
+      if (!rawTs) continue
+      const tsSec = rawTs > 1e10 ? Math.floor(rawTs / 1000) : Math.floor(rawTs)
+      const bucket = Math.floor(tsSec / bucketSec) * bucketSec
+      const combined = Math.abs(Number(ce[i] || 0)) + Math.abs(Number(pe[i] || 0))
+      bucketMap.set(bucket, (bucketMap.get(bucket) || 0) + combined)
+    }
+
+    const aggregated = Array.from(bucketMap.entries())
+      .sort((a, b) => a[0] - b[0])
+      .map(([time, value]) => ({
+        time: time as any,
+        value,
+        color: 'rgba(59, 130, 246, 1)',
+      }))
+
+    optionVolumeRef.current.setData(aggregated as any)
+  }
+
   const refreshChartData = async () => {
-    if (!candleRef.current || !ema34Ref.current || !ema55Ref.current || !rsiRef.current) return
+    if (!candleRef.current || !ema34Ref.current || !ema55Ref.current) return
     const res = await fetch(`/madhan/nifty_live_data?interval=${interval}&_=${Date.now()}`)
     const json = await res.json()
     const data: Candle[] = json?.data || []
@@ -349,9 +374,8 @@ export default function NiftyChart() {
     candleRef.current.setData(data as any)
     ema34Ref.current.setData(calculateEMA(data, 34) as any)
     ema55Ref.current.setData(calculateEMA(data, 55) as any)
-    rsiRef.current.setData(calculateRSI(data, 14) as any)
     addHorizontalLines(data)
-    await Promise.all([fetchOiProfiles(), fetchCoiTrend()])
+    await Promise.all([fetchOiProfiles(), fetchOptionCombinedVolume()])
   }
 
   useEffect(() => {
@@ -373,15 +397,6 @@ export default function NiftyChart() {
     if (ema34Ref.current) ema34Ref.current.applyOptions({ visible: emaActive })
     if (ema55Ref.current) ema55Ref.current.applyOptions({ visible: emaActive })
   }, [emaActive])
-
-  useEffect(() => {
-    if (rsiRef.current) rsiRef.current.applyOptions({ visible: rsiActive })
-  }, [rsiActive])
-
-  useEffect(() => {
-    if (coiPctRef.current) coiPctRef.current.applyOptions({ visible: coiTrendActive })
-    if (oiTrendPctRef.current) oiTrendPctRef.current.applyOptions({ visible: coiTrendActive })
-  }, [coiTrendActive])
 
   useEffect(() => {
     if (dayOpenRef.current) dayOpenRef.current.applyOptions({ visible: dayOpenActive })
@@ -440,8 +455,6 @@ export default function NiftyChart() {
           </div>
           <Button variant={oiActive ? 'default' : 'outline'} size="sm" onClick={toggleOi}>OI</Button>
           <Button variant={coiActive ? 'default' : 'outline'} size="sm" onClick={toggleCoi}>COI</Button>
-          <Button variant={coiTrendActive ? 'default' : 'outline'} size="sm" onClick={() => setCoiTrendActive((v) => !v)}>COI Trend</Button>
-          <Button variant={rsiActive ? 'default' : 'outline'} size="sm" onClick={() => setRsiActive((v) => !v)}>RSI</Button>
           <Button variant={emaActive ? 'default' : 'outline'} size="sm" onClick={() => setEmaActive((v) => !v)}>EMA</Button>
           <Button variant={dayOpenActive ? 'default' : 'outline'} size="sm" onClick={() => setDayOpenActive((v) => !v)}>Day Open</Button>
           <Button variant={prevOhlcActive ? 'default' : 'outline'} size="sm" onClick={() => setPrevOhlcActive((v) => !v)}>Prev OHLC</Button>
