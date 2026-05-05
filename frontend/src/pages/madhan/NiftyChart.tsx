@@ -252,13 +252,15 @@ export default function NiftyChart() {
       const oiPrimitive = new (class {
         _profile: any
         _series: any
+        _mode: 'oi' | 'coi'
         _show: boolean
         _anchor: number
         _showStrike: boolean
         _showValues: boolean
-        constructor(series: any, data: any) {
+        constructor(series: any, data: any, mode: 'oi' | 'coi') {
           this._profile = data
           this._series = series
+          this._mode = mode
           this._show = true
           this._anchor = oiXRef.current / 100
           this._showStrike = oiShowStrikeRef.current
@@ -280,12 +282,18 @@ export default function NiftyChart() {
                       self._profile.strikes.forEach((s: any) => {
                         const y = self._series.priceToCoordinate(s.price)
                         if (y == null) return
-                        const ceW = Math.max(2, (Math.abs(s.ceOI || 0) / maxAbs) * 150)
-                        const peW = Math.max(2, (Math.abs(s.peOI || 0) / maxAbs) * 150)
+                        const ceVal = Number(s.ceOI || 0)
+                        const peVal = Number(s.peOI || 0)
+                        const ceW = Math.max(2, (Math.abs(ceVal) / maxAbs) * 150)
+                        const peW = Math.max(2, (Math.abs(peVal) / maxAbs) * 150)
+                        const ceLeft = self._mode === 'oi' ? true : ceVal >= 0
+                        const peLeft = self._mode === 'oi' ? true : peVal >= 0
+                        const ceX = ceLeft ? anchor - ceW : anchor
+                        const peX = peLeft ? anchor - peW : anchor
                         ctx.fillStyle = '#f44336'
-                        ctx.fillRect(anchor, y - 10, ceW, 8)
+                        ctx.fillRect(ceX, y - 10, ceW, 8)
                         ctx.fillStyle = '#4caf50'
-                        ctx.fillRect(anchor, y + 2, peW, 8)
+                        ctx.fillRect(peX, y + 2, peW, 8)
                         if (self._showStrike) {
                           ctx.fillStyle = '#9ca3af'
                           ctx.font = '11px Arial'
@@ -294,8 +302,10 @@ export default function NiftyChart() {
                         if (self._showValues) {
                           ctx.fillStyle = '#e5e7eb'
                           ctx.font = '8px Arial'
-                          ctx.fillText(String(Math.abs(s.ceOI || 0)), anchor + ceW + 4, y - 4)
-                          ctx.fillText(String(Math.abs(s.peOI || 0)), anchor + peW + 4, y + 8)
+                          const ceLabelX = ceLeft ? ceX - 28 : ceX + ceW + 4
+                          const peLabelX = peLeft ? peX - 28 : peX + peW + 4
+                          ctx.fillText(String(Math.abs(ceVal)), ceLabelX, y - 4)
+                          ctx.fillText(String(Math.abs(peVal)), peLabelX, y + 8)
                         }
                       })
                     })
@@ -310,7 +320,7 @@ export default function NiftyChart() {
         setAnchor(v: number) { this._anchor = v }
         setStrike(v: boolean) { this._showStrike = v }
         setValues(v: boolean) { this._showValues = v }
-      })(seriesAny, json.oi)
+      })(seriesAny, json.oi, 'oi')
       seriesAny.attachPrimitive(oiPrimitive)
       oiPrimitiveRef.current = oiPrimitive
     } else {
@@ -318,7 +328,7 @@ export default function NiftyChart() {
     }
 
     if (!coiPrimitiveRef.current) {
-      const coiPrimitive = new (oiPrimitiveRef.current.constructor)(seriesAny, json.coi)
+      const coiPrimitive = new (oiPrimitiveRef.current.constructor)(seriesAny, json.coi, 'coi')
       coiPrimitiveRef.current = coiPrimitive
       seriesAny.attachPrimitive(coiPrimitive)
     } else {
