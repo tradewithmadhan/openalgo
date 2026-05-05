@@ -55,15 +55,15 @@ export default function NiftyChart() {
   const [interval, setIntervalValue] = useState('5m')
   const [oiActive, setOiActive] = useState(true)
   const [coiActive, setCoiActive] = useState(true)
-  const [emaActive, setEmaActive] = useState(true)
-  const [dayOpenActive, setDayOpenActive] = useState(true)
-  const [prevOhlcActive, setPrevOhlcActive] = useState(true)
+  const [emaActive, setEmaActive] = useState(false)
+  const [dayOpenActive, setDayOpenActive] = useState(false)
+  const [prevOhlcActive, setPrevOhlcActive] = useState(false)
   const [oiX, setOiX] = useState(100)
   const [coiX, setCoiX] = useState(80)
-  const [oiShowStrike, setOiShowStrike] = useState(true)
-  const [oiShowValues, setOiShowValues] = useState(true)
-  const [coiShowStrike, setCoiShowStrike] = useState(true)
-  const [coiShowValues, setCoiShowValues] = useState(true)
+  const [oiShowStrike, setOiShowStrike] = useState(false)
+  const [oiShowValues, setOiShowValues] = useState(false)
+  const [coiShowStrike, setCoiShowStrike] = useState(false)
+  const [coiShowValues, setCoiShowValues] = useState(false)
 
   useEffect(() => {
     if (!chartContainerRef.current) return
