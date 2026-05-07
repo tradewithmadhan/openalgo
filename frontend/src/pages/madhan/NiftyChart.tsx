@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   CandlestickSeries,
   ColorType,
@@ -14,6 +14,7 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { useMarketData } from '@/hooks/useMarketData'
 
 type Candle = {
   time: number
@@ -64,6 +65,12 @@ export default function NiftyChart() {
   const [oiShowValues, setOiShowValues] = useState(false)
   const [coiShowStrike, setCoiShowStrike] = useState(false)
   const [coiShowValues, setCoiShowValues] = useState(false)
+  const wsSymbols = useMemo(() => [{ symbol: 'NIFTY', exchange: 'NSE_INDEX' }], [])
+  const { data: wsData } = useMarketData({
+    symbols: wsSymbols,
+    mode: 'LTP',
+    enabled: true,
+  })
 
   useEffect(() => {
     if (!chartContainerRef.current) return
@@ -403,6 +410,48 @@ export default function NiftyChart() {
     candleRef.current.update(last as any)
   }
 
+  const applyRealtimeLtp = useCallback((ltp: number, timestampMs: number) => {
+    if (!candleRef.current || !ema34Ref.current || !ema55Ref.current || !Number.isFinite(ltp)) return
+    const data = [...priceDataRef.current]
+    const intervalSeconds = getIntervalSeconds(interval)
+    const tickSeconds = Math.floor(timestampMs / 1000)
+    const candleTime = Math.floor(tickSeconds / intervalSeconds) * intervalSeconds
+
+    if (!data.length) {
+      const firstCandle: Candle = { time: candleTime, open: ltp, high: ltp, low: ltp, close: ltp }
+      data.push(firstCandle)
+      priceDataRef.current = data
+      candleRef.current.update(firstCandle as any)
+      ema34Ref.current.setData(calculateEMA(data, 34) as any)
+      ema55Ref.current.setData(calculateEMA(data, 55) as any)
+      addHorizontalLines(data)
+      return
+    }
+
+    const last = data[data.length - 1]
+    if (candleTime < last.time) return
+
+    let updated: Candle
+    if (candleTime === last.time) {
+      updated = {
+        ...last,
+        high: Math.max(last.high, ltp),
+        low: Math.min(last.low, ltp),
+        close: ltp,
+      }
+      data[data.length - 1] = updated
+    } else {
+      updated = { time: candleTime, open: ltp, high: ltp, low: ltp, close: ltp }
+      data.push(updated)
+    }
+
+    priceDataRef.current = data
+    candleRef.current.update(updated as any)
+    ema34Ref.current.setData(calculateEMA(data, 34) as any)
+    ema55Ref.current.setData(calculateEMA(data, 55) as any)
+    addHorizontalLines(data)
+  }, [interval])
+
   useEffect(() => {
     void refreshChartData()
     if (updaterRef.current) window.clearInterval(updaterRef.current)
@@ -417,6 +466,13 @@ export default function NiftyChart() {
       if (timeoutRef.current) window.clearTimeout(timeoutRef.current)
     }
   }, [interval])
+
+  useEffect(() => {
+    const live = wsData.get('NSE_INDEX:NIFTY')
+    const ltp = live?.data?.ltp
+    if (typeof ltp !== 'number') return
+    applyRealtimeLtp(ltp, live.lastUpdate || Date.now())
+  }, [wsData, applyRealtimeLtp])
 
   useEffect(() => {
     if (ema34Ref.current) ema34Ref.current.applyOptions({ visible: emaActive })
