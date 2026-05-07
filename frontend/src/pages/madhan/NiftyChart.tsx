@@ -471,7 +471,8 @@ export default function NiftyChart() {
     const live = wsData.get('NSE_INDEX:NIFTY')
     const ltp = live?.data?.ltp
     if (typeof ltp !== 'number') return
-    applyRealtimeLtp(ltp, live.lastUpdate || Date.now())
+    const timestamp = live?.lastUpdate ?? Date.now()
+    applyRealtimeLtp(ltp, timestamp)
   }, [wsData, applyRealtimeLtp])
 
   useEffect(() => {
