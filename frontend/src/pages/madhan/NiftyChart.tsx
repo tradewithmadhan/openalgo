@@ -59,6 +59,7 @@ export default function NiftyChart() {
   const trendStartAnchorRef = useRef<{ time: Time; price: number } | null>(null)
   const trendPreviewIdRef = useRef<string | null>(null)
   const activeDrawingToolRef = useRef<'trend-line' | 'horizontal-ray' | null>(null)
+  const drawingColorRef = useRef('#3b82f6')
   const priceDataRef = useRef<Candle[]>([])
   const updaterRef = useRef<number | null>(null)
   const timeoutRef = useRef<number | null>(null)
@@ -104,6 +105,10 @@ export default function NiftyChart() {
     activeDrawingToolRef.current = activeDrawingTool
     if (!activeDrawingTool) trendStartAnchorRef.current = null
   }, [activeDrawingTool])
+
+  useEffect(() => {
+    drawingColorRef.current = drawingColor
+  }, [drawingColor])
 
   useEffect(() => {
     setIndicatorInputs((prev) => {
@@ -283,7 +288,7 @@ export default function NiftyChart() {
       if (price == null) return
       const anchor = { time: param.time as Time, price }
       if (tool === 'horizontal-ray') {
-      drawingManagerRef.current.addDrawing(new HorizontalRay(`hr-${Date.now()}`, [anchor], { lineColor: drawingColor, lineWidth: 2 }))
+      drawingManagerRef.current.addDrawing(new HorizontalRay(`hr-${Date.now()}`, [anchor], { lineColor: drawingColorRef.current, lineWidth: 2 }))
         drawingManagerRef.current.setActiveTool(null)
         setActiveDrawingTool(null)
         chart.applyOptions({ handleScroll: { pressedMouseMove: true } })
@@ -293,14 +298,14 @@ export default function NiftyChart() {
         trendStartAnchorRef.current = anchor
         const previewId = `tl-preview-${Date.now()}`
         trendPreviewIdRef.current = previewId
-        drawingManagerRef.current.addDrawing(new TrendLine(previewId, [anchor, anchor], { lineColor: drawingColor, lineWidth: 2 }))
+        drawingManagerRef.current.addDrawing(new TrendLine(previewId, [anchor, anchor], { lineColor: drawingColorRef.current, lineWidth: 2 }))
         return
       }
       if (trendPreviewIdRef.current) {
         drawingManagerRef.current.removeDrawing(trendPreviewIdRef.current)
         trendPreviewIdRef.current = null
       }
-      drawingManagerRef.current.addDrawing(new TrendLine(`tl-${Date.now()}`, [trendStartAnchorRef.current, anchor], { lineColor: drawingColor, lineWidth: 2 }))
+      drawingManagerRef.current.addDrawing(new TrendLine(`tl-${Date.now()}`, [trendStartAnchorRef.current, anchor], { lineColor: drawingColorRef.current, lineWidth: 2 }))
       trendStartAnchorRef.current = null
       drawingManagerRef.current.setActiveTool(null)
       setActiveDrawingTool(null)
@@ -313,7 +318,7 @@ export default function NiftyChart() {
       if (price == null) return
       drawingManagerRef.current.removeDrawing(trendPreviewIdRef.current)
       drawingManagerRef.current.addDrawing(
-        new TrendLine(trendPreviewIdRef.current, [trendStartAnchorRef.current, { time: param.time as Time, price }], { lineColor: drawingColor, lineWidth: 2 })
+        new TrendLine(trendPreviewIdRef.current, [trendStartAnchorRef.current, { time: param.time as Time, price }], { lineColor: drawingColorRef.current, lineWidth: 2 })
       )
     }
     chart.subscribeClick(handleChartClick)
@@ -343,7 +348,7 @@ export default function NiftyChart() {
       chartRef.current = null
       setChartReady(false)
     }
-  }, [drawingColor])
+  }, [])
 
   const calculateEMA = (data: Candle[], period: number) => {
     if (data.length < period) return []
@@ -686,14 +691,11 @@ export default function NiftyChart() {
     if (!chartReady || !chartRef.current) return
     const chart = chartRef.current
     const existing = indicatorSeriesRef.current
-    const activeSet = new Set(activeIndicators.map((item) => item.key))
-    for (const [instanceKey, seriesByPlot] of existing.entries()) {
-      if (!activeSet.has(instanceKey)) {
-        for (const series of seriesByPlot.values()) chart.removeSeries(series)
-        existing.delete(instanceKey)
-        indicatorPaneRef.current.delete(instanceKey)
-      }
+    for (const seriesByPlot of existing.values()) {
+      for (const series of seriesByPlot.values()) chart.removeSeries(series)
     }
+    existing.clear()
+    indicatorPaneRef.current.clear()
     for (let i = 0; i < activeIndicators.length; i++) {
       const instance = activeIndicators[i]
       const entry = getIndicatorById(instance.indicatorId)
