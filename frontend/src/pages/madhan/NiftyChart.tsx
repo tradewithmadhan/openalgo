@@ -77,7 +77,10 @@ export default function NiftyChart() {
   const [coiShowValues, setCoiShowValues] = useState(false)
   const [indicatorSearch, setIndicatorSearch] = useState('')
   const [activeIndicators, setActiveIndicators] = useState<string[]>(['sma', 'rsi'])
+  const [indicatorInputs, setIndicatorInputs] = useState<Record<string, Record<string, unknown>>>({})
+  const [expandedIndicatorId, setExpandedIndicatorId] = useState<string | null>(null)
   const [showIndicatorPanel, setShowIndicatorPanel] = useState(false)
+  const [showDrawingPanel, setShowDrawingPanel] = useState(false)
   const [activeDrawingTool, setActiveDrawingTool] = useState<'trend-line' | 'horizontal-ray' | null>(null)
   const [chartReady, setChartReady] = useState(false)
   const wsSymbols = useMemo(() => [{ symbol: 'NIFTY', exchange: 'NSE_INDEX' }], [])
@@ -91,6 +94,25 @@ export default function NiftyChart() {
     activeDrawingToolRef.current = activeDrawingTool
     if (!activeDrawingTool) trendStartAnchorRef.current = null
   }, [activeDrawingTool])
+
+  useEffect(() => {
+    setIndicatorInputs((prev) => {
+      const next = { ...prev }
+      for (const indicatorId of activeIndicators) {
+        if (!next[indicatorId]) {
+          const entry = indicatorRegistry.find((item) => item.id === indicatorId)
+          next[indicatorId] = { ...(entry?.defaultInputs || {}) }
+        }
+      }
+      return next
+    })
+    if (!expandedIndicatorId && activeIndicators.length > 0) {
+      setExpandedIndicatorId(activeIndicators[0])
+    }
+    if (expandedIndicatorId && !activeIndicators.includes(expandedIndicatorId)) {
+      setExpandedIndicatorId(activeIndicators[0] || null)
+    }
+  }, [activeIndicators, expandedIndicatorId])
 
   const indicatorColors = useMemo(
     () => ['#8b5cf6', '#f59e0b', '#3b82f6', '#22c55e', '#ef4444', '#14b8a6', '#a855f7', '#f97316'],
@@ -377,7 +399,8 @@ export default function NiftyChart() {
       const series = indicatorSeriesRef.current.get(indicatorId)
       if (!entry || !series) continue
       try {
-        const result = entry.calculate(bars, entry.defaultInputs || {}) as any
+        const inputs = indicatorInputs[indicatorId] || entry.defaultInputs || {}
+        const result = entry.calculate(bars, inputs) as any
         const plots = result?.plots || {}
         const firstPlot = Object.values(plots).find((plot) => Array.isArray(plot)) as any[] | undefined
         if (!firstPlot) {
@@ -389,7 +412,7 @@ export default function NiftyChart() {
         series.setData([] as any)
       }
     }
-  }, [activeIndicators, getIndicatorById])
+  }, [activeIndicators, getIndicatorById, indicatorInputs])
 
   const addHorizontalLines = (data: Candle[]) => {
     if (!data.length || !dayOpenRef.current || !prevOpenRef.current || !prevHighRef.current || !prevLowRef.current || !prevCloseRef.current) return
@@ -754,10 +777,26 @@ export default function NiftyChart() {
   const addIndicator = (indicatorId: string) => {
     if (activeIndicators.includes(indicatorId)) return
     setActiveIndicators((prev) => [...prev, indicatorId])
+    setExpandedIndicatorId(indicatorId)
   }
 
   const removeIndicator = (indicatorId: string) => {
     setActiveIndicators((prev) => prev.filter((id) => id !== indicatorId))
+    setIndicatorInputs((prev) => {
+      const next = { ...prev }
+      delete next[indicatorId]
+      return next
+    })
+  }
+
+  const updateIndicatorInput = (indicatorId: string, inputId: string, value: unknown) => {
+    setIndicatorInputs((prev) => ({
+      ...prev,
+      [indicatorId]: {
+        ...(prev[indicatorId] || {}),
+        [inputId]: value,
+      },
+    }))
   }
 
   return (
@@ -783,75 +822,139 @@ export default function NiftyChart() {
           <Button variant={emaActive ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={() => setEmaActive((v) => !v)}>EMA</Button>
           <Button variant={dayOpenActive ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={() => setDayOpenActive((v) => !v)}>Day Open</Button>
           <Button variant={prevOhlcActive ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={() => setPrevOhlcActive((v) => !v)}>Prev OHLC</Button>
-          <Button variant={activeDrawingTool === 'trend-line' ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={() => setDrawingTool('trend-line')}>Trendline</Button>
-          <Button variant={activeDrawingTool === 'horizontal-ray' ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={() => setDrawingTool('horizontal-ray')}>Horizontal Ray</Button>
-          <Button variant="outline" size="sm" className="h-7 px-2 text-[11px]" onClick={clearDrawings}>Clear Draw</Button>
-          <Button
-            variant={showIndicatorPanel ? 'default' : 'outline'}
-            size="sm"
-            className="h-7 px-2 text-[11px]"
-            onClick={() => setShowIndicatorPanel((v) => !v)}
-          >
-            Indicators
-          </Button>
-          <div className="flex items-center gap-1">
-            {activeIndicators.map((indicatorId) => {
-              const item = getIndicatorById(indicatorId)
-              return (
-                <Button
-                  key={indicatorId}
-                  variant="secondary"
-                  size="sm"
-                  className="h-7 px-2 text-[11px]"
-                  onClick={() => removeIndicator(indicatorId)}
-                >
-                  {item?.shortName || indicatorId} ×
-                </Button>
-              )
-            })}
-          </div>
+          <Button variant={showIndicatorPanel ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={() => setShowIndicatorPanel((v) => !v)}>Indicators</Button>
+          <Button variant={showDrawingPanel ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={() => setShowDrawingPanel((v) => !v)}>Drawings</Button>
           <div className="flex items-center gap-1">
             <Label className="text-[11px]">OI X %</Label>
             <Input type="number" min={0} max={100} className="h-7 w-14 px-1 text-[11px]" value={oiX} onChange={(e) => setOiX(Number(e.target.value || 0))} />
-            <div className="flex items-center gap-1"><Checkbox checked={oiShowStrike} onCheckedChange={(v) => setOiShowStrike(!!v)} /><Label className="text-[11px]">Labels</Label></div>
-            <div className="flex items-center gap-1"><Checkbox checked={oiShowValues} onCheckedChange={(v) => setOiShowValues(!!v)} /><Label className="text-[11px]">Values</Label></div>
+          </div>
+          <div className="flex items-center gap-1">
+            <Checkbox checked={oiShowStrike} onCheckedChange={(v) => setOiShowStrike(!!v)} />
+            <Label className="text-[11px]">OI Labels</Label>
+          </div>
+          <div className="flex items-center gap-1">
+            <Checkbox checked={oiShowValues} onCheckedChange={(v) => setOiShowValues(!!v)} />
+            <Label className="text-[11px]">OI Values</Label>
           </div>
           <div className="flex items-center gap-1">
             <Label className="text-[11px]">COI X %</Label>
             <Input type="number" min={0} max={100} className="h-7 w-14 px-1 text-[11px]" value={coiX} onChange={(e) => setCoiX(Number(e.target.value || 0))} />
-            <div className="flex items-center gap-1"><Checkbox checked={coiShowStrike} onCheckedChange={(v) => setCoiShowStrike(!!v)} /><Label className="text-[11px]">Labels</Label></div>
-            <div className="flex items-center gap-1"><Checkbox checked={coiShowValues} onCheckedChange={(v) => setCoiShowValues(!!v)} /><Label className="text-[11px]">Values</Label></div>
           </div>
-          {showIndicatorPanel && (
-            <div className="w-full flex items-center gap-2 rounded border p-2">
-              <Input
-                className="h-7 w-48 px-2 text-[11px]"
-                value={indicatorSearch}
-                placeholder="Search indicator"
-                onChange={(e) => setIndicatorSearch(e.target.value)}
-              />
-              <Select value="" onValueChange={(value) => addIndicator(value)}>
-                <SelectTrigger className="h-7 w-64 text-[11px]">
-                  <SelectValue placeholder="Select indicator to add" />
-                </SelectTrigger>
-                <SelectContent>
-                  {availableIndicators
-                    .filter((item) => !activeIndicators.includes(item.id))
-                    .slice(0, 200)
-                    .map((item) => (
-                      <SelectItem key={item.id} value={item.id}>
-                        {item.shortName} ({item.id})
-                      </SelectItem>
-                    ))}
-                </SelectContent>
-              </Select>
-              <Label className="text-[11px] text-muted-foreground">
-                Active: {activeIndicators.length}
-              </Label>
+          <div className="flex items-center gap-1">
+            <Checkbox checked={coiShowStrike} onCheckedChange={(v) => setCoiShowStrike(!!v)} />
+            <Label className="text-[11px]">COI Labels</Label>
+          </div>
+          <div className="flex items-center gap-1">
+            <Checkbox checked={coiShowValues} onCheckedChange={(v) => setCoiShowValues(!!v)} />
+            <Label className="text-[11px]">COI Values</Label>
+          </div>
+        </div>
+        <div className="min-h-0 flex flex-1 overflow-hidden">
+          {(showDrawingPanel || showIndicatorPanel) && (
+            <div className="h-full w-[320px] shrink-0 overflow-auto border-r bg-card/40 p-2">
+              {showDrawingPanel && (
+                <div className="mb-2 space-y-2 rounded border p-2">
+                  <Label className="text-xs font-semibold">Drawings</Label>
+                  <div className="flex flex-wrap gap-1">
+                    <Button variant={activeDrawingTool === 'trend-line' ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={() => setDrawingTool('trend-line')}>Trendline</Button>
+                    <Button variant={activeDrawingTool === 'horizontal-ray' ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={() => setDrawingTool('horizontal-ray')}>Horizontal Ray</Button>
+                    <Button variant="outline" size="sm" className="h-7 px-2 text-[11px]" onClick={clearDrawings}>Clear</Button>
+                  </div>
+                  <Label className="text-[11px] text-muted-foreground">Draw once, tool exits automatically.</Label>
+                </div>
+              )}
+              {showIndicatorPanel && (
+                <div className="space-y-2 rounded border p-2">
+                  <Label className="text-xs font-semibold">Indicators</Label>
+                  <Input className="h-7 text-[11px]" value={indicatorSearch} placeholder="Search indicators" onChange={(e) => setIndicatorSearch(e.target.value)} />
+                  <div className="max-h-36 space-y-1 overflow-auto rounded border p-1">
+                    {availableIndicators.slice(0, 200).map((item) => {
+                      const active = activeIndicators.includes(item.id)
+                      return (
+                        <button
+                          key={item.id}
+                          type="button"
+                          className={`w-full rounded px-2 py-1 text-left text-[11px] ${active ? 'bg-primary/20' : 'hover:bg-accent'}`}
+                          onClick={() => {
+                            if (active) setExpandedIndicatorId(item.id)
+                            else addIndicator(item.id)
+                          }}
+                        >
+                          {item.shortName} ({item.id})
+                        </button>
+                      )
+                    })}
+                  </div>
+                  <div className="space-y-2">
+                    {activeIndicators.map((indicatorId) => {
+                      const entry = getIndicatorById(indicatorId)
+                      if (!entry) return null
+                      const expanded = expandedIndicatorId === indicatorId
+                      const config = Array.isArray(entry.inputConfig) ? entry.inputConfig : []
+                      const values = indicatorInputs[indicatorId] || {}
+                      return (
+                        <div key={indicatorId} className="rounded border p-2">
+                          <div className="flex items-center justify-between gap-2">
+                            <button type="button" className="text-left text-[11px] font-semibold" onClick={() => setExpandedIndicatorId(expanded ? null : indicatorId)}>{entry.name}</button>
+                            <Button variant="secondary" size="sm" className="h-6 px-2 text-[10px]" onClick={() => removeIndicator(indicatorId)}>Remove</Button>
+                          </div>
+                          {expanded && (
+                            <div className="mt-2 space-y-2">
+                              {config.map((input: any) => {
+                                const value = values[input.id] ?? input.defval
+                                const inputType = String(input.type || '')
+                                if (inputType === 'bool') {
+                                  return (
+                                    <div key={input.id} className="flex items-center justify-between gap-2">
+                                      <Label className="text-[11px]">{input.title || input.id}</Label>
+                                      <Checkbox checked={Boolean(value)} onCheckedChange={(v) => updateIndicatorInput(indicatorId, input.id, !!v)} />
+                                    </div>
+                                  )
+                                }
+                                if (inputType === 'source' || Array.isArray(input.options)) {
+                                  const options = input.options || ['open', 'high', 'low', 'close']
+                                  return (
+                                    <div key={input.id} className="space-y-1">
+                                      <Label className="text-[11px]">{input.title || input.id}</Label>
+                                      <Select value={String(value)} onValueChange={(val) => updateIndicatorInput(indicatorId, input.id, val)}>
+                                        <SelectTrigger className="h-7 text-[11px]"><SelectValue /></SelectTrigger>
+                                        <SelectContent>
+                                          {options.map((option: string) => (
+                                            <SelectItem key={option} value={String(option)}>{String(option)}</SelectItem>
+                                          ))}
+                                        </SelectContent>
+                                      </Select>
+                                    </div>
+                                  )
+                                }
+                                return (
+                                  <div key={input.id} className="space-y-1">
+                                    <Label className="text-[11px]">{input.title || input.id}</Label>
+                                    <Input
+                                      type="number"
+                                      className="h-7 text-[11px]"
+                                      value={String(value ?? '')}
+                                      onChange={(e) => {
+                                        const raw = e.target.value
+                                        const num = inputType === 'int' ? Number.parseInt(raw || '0', 10) : Number.parseFloat(raw || '0')
+                                        if (!Number.isNaN(num)) updateIndicatorInput(indicatorId, input.id, num)
+                                      }}
+                                    />
+                                  </div>
+                                )
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
           )}
+          <div ref={chartContainerRef} className="min-h-0 w-full flex-1" />
         </div>
-        <div ref={chartContainerRef} className="min-h-0 flex-1 w-full" />
       </Card>
     </div>
   )
