@@ -5,6 +5,7 @@ import {
   ColorType,
   CrosshairMode,
   createChart,
+  createSeriesMarkers,
   HistogramSeries,
   LineSeries,
   type IChartApi,
@@ -43,6 +44,7 @@ type IndicatorInstance = {
 type IndicatorSeriesBucket = {
   plotSeries: Map<string, ISeriesApi<any>>
   extraSeries: ISeriesApi<any>[]
+  markerSeries: Array<{ plotKey: string; primitive: { setMarkers: (markers: any[]) => void } }>
 }
 
 export default function NiftyChart() {
@@ -378,22 +380,54 @@ export default function NiftyChart() {
     return 60
   }
 
-  const toLineData = (plot: unknown, bars: Bar[]) => {
+  const toSeriesData = (plot: unknown, bars: Bar[], preserveWhitespace = false) => {
     if (!Array.isArray(plot)) return []
     return plot
       .map((item, index) => {
+        const bar = bars[index]
         if (item && typeof item === 'object' && 'time' in (item as any) && 'value' in (item as any)) {
           const p = item as any
-          return typeof p.value === 'number' && Number.isFinite(p.value) ? { time: p.time, value: p.value } : null
+          if (typeof p.value === 'number' && Number.isFinite(p.value)) return p
+          return preserveWhitespace ? { time: p.time } : null
         }
         if (typeof item === 'number' && Number.isFinite(item)) {
-          const bar = bars[index]
           if (!bar) return null
           return { time: bar.time as any, value: item }
         }
+        if (preserveWhitespace && bar) return { time: bar.time as any }
         return null
       })
-      .filter((point): point is { time: number; value: number } => point != null)
+      .filter((point): point is { time: number; value?: number } => point != null)
+  }
+
+  const toMarkerData = (plot: unknown, bars: Bar[], shape: 'circle' | 'cross', defaultColor: string) => {
+    if (!Array.isArray(plot)) return []
+    return plot
+      .map((item, index) => {
+        const bar = bars[index]
+        if (item && typeof item === 'object' && 'time' in (item as any) && 'value' in (item as any)) {
+          const point = item as any
+          if (typeof point.value !== 'number' || !Number.isFinite(point.value)) return null
+          return {
+            time: point.time,
+            position: 'atPriceMiddle',
+            price: point.value,
+            shape,
+            color: typeof point.color === 'string' ? point.color : defaultColor,
+          }
+        }
+        if (typeof item === 'number' && Number.isFinite(item) && bar) {
+          return {
+            time: bar.time as any,
+            position: 'atPriceMiddle',
+            price: item,
+            shape,
+            color: defaultColor,
+          }
+        }
+        return null
+      })
+      .filter((marker): marker is { time: number; position: 'atPriceMiddle'; price: number; shape: 'circle' | 'cross'; color: string } => marker != null)
   }
 
   const updateIndicatorSeries = useCallback((data: Candle[]) => {
@@ -417,17 +451,32 @@ export default function NiftyChart() {
         const livePlotKeys = new Set<string>()
         for (const [plotKey, plot] of Object.entries(plots)) {
           if (!Array.isArray(plot)) continue
+          const plotConfig = Array.isArray((entry as any).plotConfig)
+            ? (entry as any).plotConfig.find((config: any) => config?.id === plotKey)
+            : null
+          const style = String(plotConfig?.style || 'line')
           const series = bucket.plotSeries.get(plotKey)
           if (!series) continue
-          series.setData(toLineData(plot, bars) as any)
+          const preserveWhitespace = style === 'linebr'
+          series.setData(toSeriesData(plot, bars, preserveWhitespace) as any)
+          if (style === 'cross' || style === 'circles') {
+            const markerEntry = bucket.markerSeries.find((item) => item.plotKey === plotKey)
+            markerEntry?.primitive.setMarkers(toMarkerData(plot, bars, style === 'cross' ? 'cross' : 'circle', String(plotConfig?.color || '#2962FF')))
+          }
           livePlotKeys.add(plotKey)
         }
         for (const [plotKey, series] of bucket.plotSeries.entries()) {
           if (!livePlotKeys.has(plotKey)) series.setData([] as any)
         }
+        for (const markerEntry of bucket.markerSeries) {
+          if (!livePlotKeys.has(markerEntry.plotKey)) markerEntry.primitive.setMarkers([])
+        }
       } catch {
         for (const series of bucket.plotSeries.values()) {
           series.setData([] as any)
+        }
+        for (const markerEntry of bucket.markerSeries) {
+          markerEntry.primitive.setMarkers([])
         }
       }
     }
@@ -736,6 +785,7 @@ export default function NiftyChart() {
       }
       const seriesByPlot = new Map<string, ISeriesApi<any>>()
       const extraSeries: ISeriesApi<any>[] = []
+      const markerSeries: Array<{ plotKey: string; primitive: { setMarkers: (markers: any[]) => void } }> = []
       plotKeys.forEach((plotKey, plotIndex) => {
         const cfg = plotConfigList.find((p: any) => p?.id === plotKey) || {}
         const color = cfg.color || indicatorColors[(paletteOffset + plotIndex) % indicatorColors.length]
@@ -747,8 +797,23 @@ export default function NiftyChart() {
           ? (addTo.addSeries(HistogramSeries, { title, color, lineWidth: lineWidth as any }) as ISeriesApi<any>)
           : style === 'area'
             ? (addTo.addSeries(AreaSeries, { title, lineColor: color, topColor: `${color}66`, bottomColor: `${color}11`, lineWidth: lineWidth as any }) as ISeriesApi<any>)
-            : (addTo.addSeries(LineSeries, { title, color, lineWidth: lineWidth as any }) as ISeriesApi<any>)
+            : style === 'cross' || style === 'circles'
+              ? (addTo.addSeries(LineSeries, {
+                  title,
+                  color: 'rgba(0,0,0,0)',
+                  lineWidth: 0 as const,
+                  priceLineVisible: false,
+                  lastValueVisible: false,
+                  crosshairMarkerVisible: false,
+                }) as ISeriesApi<any>)
+              : (addTo.addSeries(LineSeries, { title, color, lineWidth: lineWidth as any }) as ISeriesApi<any>)
         seriesByPlot.set(plotKey, series)
+        if (style === 'cross' || style === 'circles') {
+          markerSeries.push({
+            plotKey,
+            primitive: createSeriesMarkers(series, [], { zOrder: 'top' }),
+          })
+        }
       })
 
       const hlines = Array.isArray((entry as any).hlineConfig) ? (entry as any).hlineConfig : []
@@ -791,7 +856,7 @@ export default function NiftyChart() {
         extraSeries.push(area)
       })
 
-      existing.set(instance.key, { plotSeries: seriesByPlot, extraSeries })
+      existing.set(instance.key, { plotSeries: seriesByPlot, extraSeries, markerSeries })
     }
     updateIndicatorSeries(priceDataRef.current)
   }, [activeIndicators, indicatorColors, updateIndicatorSeries, chartReady, getIndicatorById, indicatorInputs])
