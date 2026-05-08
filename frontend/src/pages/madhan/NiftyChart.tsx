@@ -8,6 +8,9 @@ import {
   type IChartApi,
   type ISeriesApi,
 } from 'lightweight-charts'
+import { RSI, SMA } from 'lightweight-charts-indicators'
+import { DrawingManager } from 'lightweight-charts-drawing'
+import type { Bar } from 'oakscriptjs'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -35,6 +38,8 @@ export default function NiftyChart() {
   const candleRef = useRef<ISeriesApi<'Candlestick'> | null>(null)
   const ema34Ref = useRef<ISeriesApi<'Line'> | null>(null)
   const ema55Ref = useRef<ISeriesApi<'Line'> | null>(null)
+  const sma20Ref = useRef<ISeriesApi<'Line'> | null>(null)
+  const rsi14Ref = useRef<ISeriesApi<'Line'> | null>(null)
   const optionVolumeRef = useRef<ISeriesApi<'Histogram'> | null>(null)
   const dayOpenRef = useRef<ISeriesApi<'Line'> | null>(null)
   const prevOpenRef = useRef<ISeriesApi<'Line'> | null>(null)
@@ -43,6 +48,7 @@ export default function NiftyChart() {
   const prevCloseRef = useRef<ISeriesApi<'Line'> | null>(null)
   const oiPrimitiveRef = useRef<any>(null)
   const coiPrimitiveRef = useRef<any>(null)
+  const drawingManagerRef = useRef<DrawingManager | null>(null)
   const priceDataRef = useRef<Candle[]>([])
   const updaterRef = useRef<number | null>(null)
   const timeoutRef = useRef<number | null>(null)
@@ -65,6 +71,8 @@ export default function NiftyChart() {
   const [oiShowValues, setOiShowValues] = useState(false)
   const [coiShowStrike, setCoiShowStrike] = useState(false)
   const [coiShowValues, setCoiShowValues] = useState(false)
+  const [indicatorsActive, setIndicatorsActive] = useState(true)
+  const [activeDrawingTool, setActiveDrawingTool] = useState<'trend-line' | 'horizontal-ray' | null>(null)
   const wsSymbols = useMemo(() => [{ symbol: 'NIFTY', exchange: 'NSE_INDEX' }], [])
   const { data: wsData } = useMarketData({
     symbols: wsSymbols,
@@ -138,6 +146,13 @@ export default function NiftyChart() {
       lastValueVisible: false,
       crosshairMarkerVisible: false,
     })
+    const sma20 = chart.addSeries(LineSeries, {
+      color: '#f59e0b',
+      lineWidth: 2,
+      priceLineVisible: false,
+      lastValueVisible: false,
+      crosshairMarkerVisible: false,
+    })
     const chartAny = chart as any
     let optionVolumeSeries: ISeriesApi<'Histogram'> | null = null
     if (typeof chartAny.addPane === 'function') {
@@ -160,6 +175,27 @@ export default function NiftyChart() {
         priceFormat: { type: 'volume' },
       })
     }
+    let rsiSeries: ISeriesApi<'Line'> | null = null
+    if (typeof chartAny.addPane === 'function') {
+      const rsiPane = chartAny.addPane()
+      if (rsiPane && typeof rsiPane.setHeight === 'function') {
+        rsiPane.setHeight(120)
+      }
+      if (rsiPane && typeof rsiPane.addSeries === 'function') {
+        rsiSeries = rsiPane.addSeries(LineSeries, {
+          title: 'RSI 14',
+          color: '#8b5cf6',
+          lineWidth: 1,
+        }) as ISeriesApi<'Line'>
+      }
+    }
+    if (!rsiSeries) {
+      rsiSeries = chart.addSeries(LineSeries, {
+        title: 'RSI 14',
+        color: '#8b5cf6',
+        lineWidth: 1,
+      })
+    }
 
     const dayOpen = chart.addSeries(LineSeries, { color: '#00FF00', lineWidth: 1, title: 'Day Open' })
     const prevOpen = chart.addSeries(LineSeries, { color: '#FFA500', lineWidth: 1, title: 'Prev Open' })
@@ -171,12 +207,17 @@ export default function NiftyChart() {
     candleRef.current = candle
     ema34Ref.current = ema34
     ema55Ref.current = ema55
+    sma20Ref.current = sma20
+    rsi14Ref.current = rsiSeries
     optionVolumeRef.current = optionVolumeSeries
     dayOpenRef.current = dayOpen
     prevOpenRef.current = prevOpen
     prevHighRef.current = prevHigh
     prevLowRef.current = prevLow
     prevCloseRef.current = prevClose
+    const drawingManager = new DrawingManager()
+    drawingManager.attach(chart, candle, chartContainerRef.current)
+    drawingManagerRef.current = drawingManager
 
     const resizeObserver = new ResizeObserver(() => {
       if (!chartContainerRef.current || !chartRef.current) return
@@ -191,6 +232,10 @@ export default function NiftyChart() {
       if (updaterRef.current) window.clearInterval(updaterRef.current)
       if (timeoutRef.current) window.clearTimeout(timeoutRef.current)
       resizeObserver.disconnect()
+      if (drawingManagerRef.current) {
+        drawingManagerRef.current.detach()
+        drawingManagerRef.current = null
+      }
       chart.remove()
       chartRef.current = null
     }
@@ -217,6 +262,22 @@ export default function NiftyChart() {
     if (val.endsWith('s')) return Math.max(1, Number(val.slice(0, -1) || '1'))
     return 60
   }
+
+  const updateIndicatorSeries = useCallback((data: Candle[]) => {
+    if (!sma20Ref.current || !rsi14Ref.current) return
+    const bars: Bar[] = data.map((item) => ({
+      time: item.time,
+      open: item.open,
+      high: item.high,
+      low: item.low,
+      close: item.close,
+      volume: 0,
+    }))
+    const smaResult = SMA.calculate(bars, { len: 20, src: 'close' }) as any
+    const rsiResult = RSI.calculate(bars, { length: 14, src: 'close' }) as any
+    sma20Ref.current.setData((smaResult?.plots?.plot0 || []) as any)
+    rsi14Ref.current.setData((rsiResult?.plots?.plot0 || []) as any)
+  }, [])
 
   const addHorizontalLines = (data: Candle[]) => {
     if (!data.length || !dayOpenRef.current || !prevOpenRef.current || !prevHighRef.current || !prevLowRef.current || !prevCloseRef.current) return
@@ -399,6 +460,7 @@ export default function NiftyChart() {
     candleRef.current.setData(data as any)
     ema34Ref.current.setData(calculateEMA(data, 34) as any)
     ema55Ref.current.setData(calculateEMA(data, 55) as any)
+    updateIndicatorSeries(data)
     addHorizontalLines(data)
     await Promise.all([fetchOiProfiles(), fetchOptionCombinedVolume()])
   }
@@ -424,6 +486,7 @@ export default function NiftyChart() {
       candleRef.current.update(firstCandle as any)
       ema34Ref.current.setData(calculateEMA(data, 34) as any)
       ema55Ref.current.setData(calculateEMA(data, 55) as any)
+      updateIndicatorSeries(data)
       addHorizontalLines(data)
       return
     }
@@ -449,8 +512,9 @@ export default function NiftyChart() {
     candleRef.current.update(updated as any)
     ema34Ref.current.setData(calculateEMA(data, 34) as any)
     ema55Ref.current.setData(calculateEMA(data, 55) as any)
+    updateIndicatorSeries(data)
     addHorizontalLines(data)
-  }, [interval])
+  }, [interval, updateIndicatorSeries])
 
   useEffect(() => {
     void refreshChartData()
@@ -479,6 +543,11 @@ export default function NiftyChart() {
     if (ema34Ref.current) ema34Ref.current.applyOptions({ visible: emaActive })
     if (ema55Ref.current) ema55Ref.current.applyOptions({ visible: emaActive })
   }, [emaActive])
+
+  useEffect(() => {
+    if (sma20Ref.current) sma20Ref.current.applyOptions({ visible: indicatorsActive })
+    if (rsi14Ref.current) rsi14Ref.current.applyOptions({ visible: indicatorsActive })
+  }, [indicatorsActive])
 
   useEffect(() => {
     if (dayOpenRef.current) dayOpenRef.current.applyOptions({ visible: dayOpenActive })
@@ -527,6 +596,20 @@ export default function NiftyChart() {
     repaintOverlay()
   }
 
+  const setDrawingTool = (tool: 'trend-line' | 'horizontal-ray') => {
+    if (!drawingManagerRef.current) return
+    const nextTool = activeDrawingTool === tool ? null : tool
+    drawingManagerRef.current.setActiveTool(nextTool)
+    setActiveDrawingTool(nextTool)
+  }
+
+  const clearDrawings = () => {
+    if (!drawingManagerRef.current) return
+    drawingManagerRef.current.clearAll()
+    drawingManagerRef.current.setActiveTool(null)
+    setActiveDrawingTool(null)
+  }
+
   return (
     <div className="h-[calc(100vh-56px)] w-full p-0">
       <Card className="flex h-full w-full flex-col overflow-hidden rounded-none border-0 bg-card">
@@ -548,8 +631,12 @@ export default function NiftyChart() {
           <Button variant={oiActive ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={toggleOi}>OI</Button>
           <Button variant={coiActive ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={toggleCoi}>COI</Button>
           <Button variant={emaActive ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={() => setEmaActive((v) => !v)}>EMA</Button>
+          <Button variant={indicatorsActive ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={() => setIndicatorsActive((v) => !v)}>Indicators</Button>
           <Button variant={dayOpenActive ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={() => setDayOpenActive((v) => !v)}>Day Open</Button>
           <Button variant={prevOhlcActive ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={() => setPrevOhlcActive((v) => !v)}>Prev OHLC</Button>
+          <Button variant={activeDrawingTool === 'trend-line' ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={() => setDrawingTool('trend-line')}>Trendline</Button>
+          <Button variant={activeDrawingTool === 'horizontal-ray' ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={() => setDrawingTool('horizontal-ray')}>Horizontal Ray</Button>
+          <Button variant="outline" size="sm" className="h-7 px-2 text-[11px]" onClick={clearDrawings}>Clear Draw</Button>
           <div className="flex items-center gap-1">
             <Label className="text-[11px]">OI X %</Label>
             <Input type="number" min={0} max={100} className="h-7 w-14 px-1 text-[11px]" value={oiX} onChange={(e) => setOiX(Number(e.target.value || 0))} />
