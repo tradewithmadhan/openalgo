@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   CandlestickSeries,
   ColorType,
+  CrosshairMode,
   createChart,
   HistogramSeries,
   LineSeries,
@@ -76,6 +77,7 @@ export default function NiftyChart() {
   const [coiShowValues, setCoiShowValues] = useState(false)
   const [indicatorSearch, setIndicatorSearch] = useState('')
   const [activeIndicators, setActiveIndicators] = useState<string[]>(['sma', 'rsi'])
+  const [showIndicatorPanel, setShowIndicatorPanel] = useState(false)
   const [activeDrawingTool, setActiveDrawingTool] = useState<'trend-line' | 'horizontal-ray' | null>(null)
   const [chartReady, setChartReady] = useState(false)
   const wsSymbols = useMemo(() => [{ symbol: 'NIFTY', exchange: 'NSE_INDEX' }], [])
@@ -139,10 +141,13 @@ export default function NiftyChart() {
       width: chartContainerRef.current.clientWidth,
       height: Math.max(320, chartContainerRef.current.clientHeight),
       handleScroll: {
-        pressedMouseMove: false,
+        pressedMouseMove: true,
         mouseWheel: true,
         horzTouchDrag: true,
         vertTouchDrag: true,
+      },
+      crosshair: {
+        mode: CrosshairMode.Normal,
       },
       layout: {
         background: { type: ColorType.Solid, color: 'transparent' },
@@ -247,16 +252,18 @@ export default function NiftyChart() {
     drawingManagerRef.current = drawingManager
     const handleChartClick = (param: any) => {
       const tool = activeDrawingToolRef.current
-      if (!drawingManagerRef.current || !param?.point) return
-      if (!tool) {
+    if (!drawingManagerRef.current || !param?.point) return
+    if (!tool) {
         const hit = drawingManagerRef.current.hitTest({ x: param.point.x, y: param.point.y })
-        if (hit) {
-          drawingManagerRef.current.selectDrawing(hit.id)
-        } else {
-          drawingManagerRef.current.deselectAll()
-        }
-        return
+      if (hit) {
+        drawingManagerRef.current.selectDrawing(hit.id)
+        chart.applyOptions({ handleScroll: { pressedMouseMove: false } })
+      } else {
+        drawingManagerRef.current.deselectAll()
+        chart.applyOptions({ handleScroll: { pressedMouseMove: true } })
       }
+      return
+    }
       if (param?.time == null) return
       const price = candle.coordinateToPrice(param.point.y)
       if (price == null) return
@@ -267,6 +274,7 @@ export default function NiftyChart() {
         )
         drawingManagerRef.current.setActiveTool(null)
         setActiveDrawingTool(null)
+        chart.applyOptions({ handleScroll: { pressedMouseMove: true } })
         return
       }
       if (!trendStartAnchorRef.current) {
@@ -288,6 +296,7 @@ export default function NiftyChart() {
       trendStartAnchorRef.current = null
       drawingManagerRef.current.setActiveTool(null)
       setActiveDrawingTool(null)
+      chart.applyOptions({ handleScroll: { pressedMouseMove: true } })
     }
     const handleChartCrosshairMove = (param: any) => {
       if (activeDrawingToolRef.current !== 'trend-line') return
@@ -725,6 +734,9 @@ export default function NiftyChart() {
     trendStartAnchorRef.current = null
     drawingManagerRef.current.setActiveTool(nextTool)
     setActiveDrawingTool(nextTool)
+    if (chartRef.current) {
+      chartRef.current.applyOptions({ handleScroll: { pressedMouseMove: nextTool == null } })
+    }
   }
 
   const clearDrawings = () => {
@@ -734,6 +746,9 @@ export default function NiftyChart() {
     trendStartAnchorRef.current = null
     trendPreviewIdRef.current = null
     setActiveDrawingTool(null)
+    if (chartRef.current) {
+      chartRef.current.applyOptions({ handleScroll: { pressedMouseMove: true } })
+    }
   }
 
   const addIndicator = (indicatorId: string) => {
@@ -771,33 +786,14 @@ export default function NiftyChart() {
           <Button variant={activeDrawingTool === 'trend-line' ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={() => setDrawingTool('trend-line')}>Trendline</Button>
           <Button variant={activeDrawingTool === 'horizontal-ray' ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={() => setDrawingTool('horizontal-ray')}>Horizontal Ray</Button>
           <Button variant="outline" size="sm" className="h-7 px-2 text-[11px]" onClick={clearDrawings}>Clear Draw</Button>
-          <div className="flex items-center gap-1">
-            <Label className="text-[11px]">Indicator</Label>
-            <Input
-              className="h-7 w-36 px-2 text-[11px]"
-              value={indicatorSearch}
-              placeholder="Search indicator"
-              onChange={(e) => setIndicatorSearch(e.target.value)}
-            />
-            <Select
-              value=""
-              onValueChange={(value) => addIndicator(value)}
-            >
-              <SelectTrigger className="h-7 w-44 text-[11px]">
-                <SelectValue placeholder="Add from registry" />
-              </SelectTrigger>
-              <SelectContent>
-                {availableIndicators
-                  .filter((item) => !activeIndicators.includes(item.id))
-                  .slice(0, 100)
-                  .map((item) => (
-                    <SelectItem key={item.id} value={item.id}>
-                      {item.shortName} ({item.id})
-                    </SelectItem>
-                  ))}
-              </SelectContent>
-            </Select>
-          </div>
+          <Button
+            variant={showIndicatorPanel ? 'default' : 'outline'}
+            size="sm"
+            className="h-7 px-2 text-[11px]"
+            onClick={() => setShowIndicatorPanel((v) => !v)}
+          >
+            Indicators
+          </Button>
           <div className="flex items-center gap-1">
             {activeIndicators.map((indicatorId) => {
               const item = getIndicatorById(indicatorId)
@@ -826,6 +822,34 @@ export default function NiftyChart() {
             <div className="flex items-center gap-1"><Checkbox checked={coiShowStrike} onCheckedChange={(v) => setCoiShowStrike(!!v)} /><Label className="text-[11px]">Labels</Label></div>
             <div className="flex items-center gap-1"><Checkbox checked={coiShowValues} onCheckedChange={(v) => setCoiShowValues(!!v)} /><Label className="text-[11px]">Values</Label></div>
           </div>
+          {showIndicatorPanel && (
+            <div className="w-full flex items-center gap-2 rounded border p-2">
+              <Input
+                className="h-7 w-48 px-2 text-[11px]"
+                value={indicatorSearch}
+                placeholder="Search indicator"
+                onChange={(e) => setIndicatorSearch(e.target.value)}
+              />
+              <Select value="" onValueChange={(value) => addIndicator(value)}>
+                <SelectTrigger className="h-7 w-64 text-[11px]">
+                  <SelectValue placeholder="Select indicator to add" />
+                </SelectTrigger>
+                <SelectContent>
+                  {availableIndicators
+                    .filter((item) => !activeIndicators.includes(item.id))
+                    .slice(0, 200)
+                    .map((item) => (
+                      <SelectItem key={item.id} value={item.id}>
+                        {item.shortName} ({item.id})
+                      </SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
+              <Label className="text-[11px] text-muted-foreground">
+                Active: {activeIndicators.length}
+              </Label>
+            </div>
+          )}
         </div>
         <div ref={chartContainerRef} className="min-h-0 flex-1 w-full" />
       </Card>
