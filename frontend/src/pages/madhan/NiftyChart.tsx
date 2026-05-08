@@ -7,9 +7,10 @@ import {
   LineSeries,
   type IChartApi,
   type ISeriesApi,
+  type Time,
 } from 'lightweight-charts'
 import { RSI, SMA } from 'lightweight-charts-indicators'
-import { DrawingManager } from 'lightweight-charts-drawing'
+import { DrawingManager, HorizontalRay, TrendLine } from 'lightweight-charts-drawing'
 import type { Bar } from 'oakscriptjs'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -49,6 +50,8 @@ export default function NiftyChart() {
   const oiPrimitiveRef = useRef<any>(null)
   const coiPrimitiveRef = useRef<any>(null)
   const drawingManagerRef = useRef<DrawingManager | null>(null)
+  const trendStartAnchorRef = useRef<{ time: Time; price: number } | null>(null)
+  const activeDrawingToolRef = useRef<'trend-line' | 'horizontal-ray' | null>(null)
   const priceDataRef = useRef<Candle[]>([])
   const updaterRef = useRef<number | null>(null)
   const timeoutRef = useRef<number | null>(null)
@@ -79,6 +82,33 @@ export default function NiftyChart() {
     mode: 'LTP',
     enabled: true,
   })
+
+  useEffect(() => {
+    activeDrawingToolRef.current = activeDrawingTool
+    if (!activeDrawingTool) trendStartAnchorRef.current = null
+  }, [activeDrawingTool])
+
+  const createRsiSeries = useCallback((chart: IChartApi): ISeriesApi<'Line'> => {
+    const chartAny = chart as any
+    if (typeof chartAny.addPane === 'function') {
+      const rsiPane = chartAny.addPane()
+      if (rsiPane && typeof rsiPane.setHeight === 'function') {
+        rsiPane.setHeight(120)
+      }
+      if (rsiPane && typeof rsiPane.addSeries === 'function') {
+        return rsiPane.addSeries(LineSeries, {
+          title: 'RSI 14',
+          color: '#8b5cf6',
+          lineWidth: 1,
+        }) as ISeriesApi<'Line'>
+      }
+    }
+    return chart.addSeries(LineSeries, {
+      title: 'RSI 14',
+      color: '#8b5cf6',
+      lineWidth: 1,
+    })
+  }, [])
 
   useEffect(() => {
     if (!chartContainerRef.current) return
@@ -175,27 +205,7 @@ export default function NiftyChart() {
         priceFormat: { type: 'volume' },
       })
     }
-    let rsiSeries: ISeriesApi<'Line'> | null = null
-    if (typeof chartAny.addPane === 'function') {
-      const rsiPane = chartAny.addPane()
-      if (rsiPane && typeof rsiPane.setHeight === 'function') {
-        rsiPane.setHeight(120)
-      }
-      if (rsiPane && typeof rsiPane.addSeries === 'function') {
-        rsiSeries = rsiPane.addSeries(LineSeries, {
-          title: 'RSI 14',
-          color: '#8b5cf6',
-          lineWidth: 1,
-        }) as ISeriesApi<'Line'>
-      }
-    }
-    if (!rsiSeries) {
-      rsiSeries = chart.addSeries(LineSeries, {
-        title: 'RSI 14',
-        color: '#8b5cf6',
-        lineWidth: 1,
-      })
-    }
+    const rsiSeries = createRsiSeries(chart)
 
     const dayOpen = chart.addSeries(LineSeries, { color: '#00FF00', lineWidth: 1, title: 'Day Open' })
     const prevOpen = chart.addSeries(LineSeries, { color: '#FFA500', lineWidth: 1, title: 'Prev Open' })
@@ -218,6 +228,28 @@ export default function NiftyChart() {
     const drawingManager = new DrawingManager()
     drawingManager.attach(chart, candle, chartContainerRef.current)
     drawingManagerRef.current = drawingManager
+    const handleChartClick = (param: any) => {
+      const tool = activeDrawingToolRef.current
+      if (!drawingManagerRef.current || !tool || !param?.point || param?.time == null) return
+      const price = candle.coordinateToPrice(param.point.y)
+      if (price == null) return
+      const anchor = { time: param.time as Time, price }
+      if (tool === 'horizontal-ray') {
+        drawingManagerRef.current.addDrawing(
+          new HorizontalRay(`hr-${Date.now()}`, [anchor], { lineColor: '#22c55e', lineWidth: 2 })
+        )
+        return
+      }
+      if (!trendStartAnchorRef.current) {
+        trendStartAnchorRef.current = anchor
+        return
+      }
+      drawingManagerRef.current.addDrawing(
+        new TrendLine(`tl-${Date.now()}`, [trendStartAnchorRef.current, anchor], { lineColor: '#3b82f6', lineWidth: 2 })
+      )
+      trendStartAnchorRef.current = null
+    }
+    chart.subscribeClick(handleChartClick)
 
     const resizeObserver = new ResizeObserver(() => {
       if (!chartContainerRef.current || !chartRef.current) return
@@ -232,6 +264,7 @@ export default function NiftyChart() {
       if (updaterRef.current) window.clearInterval(updaterRef.current)
       if (timeoutRef.current) window.clearTimeout(timeoutRef.current)
       resizeObserver.disconnect()
+      chart.unsubscribeClick(handleChartClick)
       if (drawingManagerRef.current) {
         drawingManagerRef.current.detach()
         drawingManagerRef.current = null
@@ -264,7 +297,7 @@ export default function NiftyChart() {
   }
 
   const updateIndicatorSeries = useCallback((data: Candle[]) => {
-    if (!sma20Ref.current || !rsi14Ref.current) return
+    if (!sma20Ref.current) return
     const bars: Bar[] = data.map((item) => ({
       time: item.time,
       open: item.open,
@@ -276,7 +309,9 @@ export default function NiftyChart() {
     const smaResult = SMA.calculate(bars, { len: 20, src: 'close' }) as any
     const rsiResult = RSI.calculate(bars, { length: 14, src: 'close' }) as any
     sma20Ref.current.setData((smaResult?.plots?.plot0 || []) as any)
-    rsi14Ref.current.setData((rsiResult?.plots?.plot0 || []) as any)
+    if (rsi14Ref.current) {
+      rsi14Ref.current.setData((rsiResult?.plots?.plot0 || []) as any)
+    }
   }, [])
 
   const addHorizontalLines = (data: Candle[]) => {
@@ -546,8 +581,19 @@ export default function NiftyChart() {
 
   useEffect(() => {
     if (sma20Ref.current) sma20Ref.current.applyOptions({ visible: indicatorsActive })
-    if (rsi14Ref.current) rsi14Ref.current.applyOptions({ visible: indicatorsActive })
-  }, [indicatorsActive])
+    if (!chartRef.current) return
+    if (!indicatorsActive) {
+      if (rsi14Ref.current) {
+        chartRef.current.removeSeries(rsi14Ref.current)
+        rsi14Ref.current = null
+      }
+      return
+    }
+    if (!rsi14Ref.current) {
+      rsi14Ref.current = createRsiSeries(chartRef.current)
+      updateIndicatorSeries(priceDataRef.current)
+    }
+  }, [indicatorsActive, createRsiSeries, updateIndicatorSeries])
 
   useEffect(() => {
     if (dayOpenRef.current) dayOpenRef.current.applyOptions({ visible: dayOpenActive })
