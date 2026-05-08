@@ -9,7 +9,7 @@ import {
   type ISeriesApi,
   type Time,
 } from 'lightweight-charts'
-import { RSI, SMA } from 'lightweight-charts-indicators'
+import { indicatorRegistry } from 'lightweight-charts-indicators'
 import { DrawingManager, HorizontalRay, TrendLine } from 'lightweight-charts-drawing'
 import type { Bar } from 'oakscriptjs'
 import { Card } from '@/components/ui/card'
@@ -39,8 +39,7 @@ export default function NiftyChart() {
   const candleRef = useRef<ISeriesApi<'Candlestick'> | null>(null)
   const ema34Ref = useRef<ISeriesApi<'Line'> | null>(null)
   const ema55Ref = useRef<ISeriesApi<'Line'> | null>(null)
-  const sma20Ref = useRef<ISeriesApi<'Line'> | null>(null)
-  const rsi14Ref = useRef<ISeriesApi<'Line'> | null>(null)
+  const indicatorSeriesRef = useRef<Map<string, ISeriesApi<'Line'>>>(new Map())
   const optionVolumeRef = useRef<ISeriesApi<'Histogram'> | null>(null)
   const dayOpenRef = useRef<ISeriesApi<'Line'> | null>(null)
   const prevOpenRef = useRef<ISeriesApi<'Line'> | null>(null)
@@ -51,6 +50,7 @@ export default function NiftyChart() {
   const coiPrimitiveRef = useRef<any>(null)
   const drawingManagerRef = useRef<DrawingManager | null>(null)
   const trendStartAnchorRef = useRef<{ time: Time; price: number } | null>(null)
+  const trendPreviewIdRef = useRef<string | null>(null)
   const activeDrawingToolRef = useRef<'trend-line' | 'horizontal-ray' | null>(null)
   const priceDataRef = useRef<Candle[]>([])
   const updaterRef = useRef<number | null>(null)
@@ -74,8 +74,10 @@ export default function NiftyChart() {
   const [oiShowValues, setOiShowValues] = useState(false)
   const [coiShowStrike, setCoiShowStrike] = useState(false)
   const [coiShowValues, setCoiShowValues] = useState(false)
-  const [indicatorsActive, setIndicatorsActive] = useState(true)
+  const [indicatorSearch, setIndicatorSearch] = useState('')
+  const [activeIndicators, setActiveIndicators] = useState<string[]>(['sma', 'rsi'])
   const [activeDrawingTool, setActiveDrawingTool] = useState<'trend-line' | 'horizontal-ray' | null>(null)
+  const [chartReady, setChartReady] = useState(false)
   const wsSymbols = useMemo(() => [{ symbol: 'NIFTY', exchange: 'NSE_INDEX' }], [])
   const { data: wsData } = useMarketData({
     symbols: wsSymbols,
@@ -88,27 +90,46 @@ export default function NiftyChart() {
     if (!activeDrawingTool) trendStartAnchorRef.current = null
   }, [activeDrawingTool])
 
-  const createRsiSeries = useCallback((chart: IChartApi): ISeriesApi<'Line'> => {
-    const chartAny = chart as any
-    if (typeof chartAny.addPane === 'function') {
-      const rsiPane = chartAny.addPane()
-      if (rsiPane && typeof rsiPane.setHeight === 'function') {
-        rsiPane.setHeight(120)
-      }
-      if (rsiPane && typeof rsiPane.addSeries === 'function') {
-        return rsiPane.addSeries(LineSeries, {
-          title: 'RSI 14',
-          color: '#8b5cf6',
-          lineWidth: 1,
-        }) as ISeriesApi<'Line'>
-      }
-    }
-    return chart.addSeries(LineSeries, {
-      title: 'RSI 14',
-      color: '#8b5cf6',
-      lineWidth: 1,
-    })
+  const indicatorColors = useMemo(
+    () => ['#8b5cf6', '#f59e0b', '#3b82f6', '#22c55e', '#ef4444', '#14b8a6', '#a855f7', '#f97316'],
+    []
+  )
+
+  const availableIndicators = useMemo(
+    () =>
+      indicatorRegistry.filter((item) => {
+        const query = indicatorSearch.trim().toLowerCase()
+        if (!query) return true
+        return (
+          item.id.toLowerCase().includes(query) ||
+          item.name.toLowerCase().includes(query) ||
+          item.shortName.toLowerCase().includes(query)
+        )
+      }),
+    [indicatorSearch]
+  )
+
+  const getIndicatorById = useCallback((indicatorId: string) => {
+    return indicatorRegistry.find((item) => item.id === indicatorId)
   }, [])
+
+  const createIndicatorSeries = useCallback(
+    (chart: IChartApi, indicatorId: string, color: string): ISeriesApi<'Line'> => {
+      const indicator = getIndicatorById(indicatorId)
+      const isOverlay = indicator?.overlay ?? true
+      const title = indicator?.shortName || indicatorId.toUpperCase()
+      const chartAny = chart as any
+      if (!isOverlay && typeof chartAny.addPane === 'function') {
+        const pane = chartAny.addPane()
+        if (pane && typeof pane.setHeight === 'function') pane.setHeight(120)
+        if (pane && typeof pane.addSeries === 'function') {
+          return pane.addSeries(LineSeries, { title, color, lineWidth: 1 }) as ISeriesApi<'Line'>
+        }
+      }
+      return chart.addSeries(LineSeries, { title, color, lineWidth: 1 })
+    },
+    [getIndicatorById]
+  )
 
   useEffect(() => {
     if (!chartContainerRef.current) return
@@ -117,6 +138,12 @@ export default function NiftyChart() {
     const chart = createChart(chartContainerRef.current, {
       width: chartContainerRef.current.clientWidth,
       height: Math.max(320, chartContainerRef.current.clientHeight),
+      handleScroll: {
+        pressedMouseMove: false,
+        mouseWheel: true,
+        horzTouchDrag: true,
+        vertTouchDrag: true,
+      },
       layout: {
         background: { type: ColorType.Solid, color: 'transparent' },
         textColor: isDark ? '#a6adbb' : '#333',
@@ -176,13 +203,6 @@ export default function NiftyChart() {
       lastValueVisible: false,
       crosshairMarkerVisible: false,
     })
-    const sma20 = chart.addSeries(LineSeries, {
-      color: '#f59e0b',
-      lineWidth: 2,
-      priceLineVisible: false,
-      lastValueVisible: false,
-      crosshairMarkerVisible: false,
-    })
     const chartAny = chart as any
     let optionVolumeSeries: ISeriesApi<'Histogram'> | null = null
     if (typeof chartAny.addPane === 'function') {
@@ -205,8 +225,6 @@ export default function NiftyChart() {
         priceFormat: { type: 'volume' },
       })
     }
-    const rsiSeries = createRsiSeries(chart)
-
     const dayOpen = chart.addSeries(LineSeries, { color: '#00FF00', lineWidth: 1, title: 'Day Open' })
     const prevOpen = chart.addSeries(LineSeries, { color: '#FFA500', lineWidth: 1, title: 'Prev Open' })
     const prevHigh = chart.addSeries(LineSeries, { color: '#0000FF', lineWidth: 1, title: 'Prev High' })
@@ -217,20 +235,29 @@ export default function NiftyChart() {
     candleRef.current = candle
     ema34Ref.current = ema34
     ema55Ref.current = ema55
-    sma20Ref.current = sma20
-    rsi14Ref.current = rsiSeries
     optionVolumeRef.current = optionVolumeSeries
     dayOpenRef.current = dayOpen
     prevOpenRef.current = prevOpen
     prevHighRef.current = prevHigh
     prevLowRef.current = prevLow
     prevCloseRef.current = prevClose
+    setChartReady(true)
     const drawingManager = new DrawingManager()
     drawingManager.attach(chart, candle, chartContainerRef.current)
     drawingManagerRef.current = drawingManager
     const handleChartClick = (param: any) => {
       const tool = activeDrawingToolRef.current
-      if (!drawingManagerRef.current || !tool || !param?.point || param?.time == null) return
+      if (!drawingManagerRef.current || !param?.point) return
+      if (!tool) {
+        const hit = drawingManagerRef.current.hitTest({ x: param.point.x, y: param.point.y })
+        if (hit) {
+          drawingManagerRef.current.selectDrawing(hit.id)
+        } else {
+          drawingManagerRef.current.deselectAll()
+        }
+        return
+      }
+      if (param?.time == null) return
       const price = candle.coordinateToPrice(param.point.y)
       if (price == null) return
       const anchor = { time: param.time as Time, price }
@@ -238,18 +265,45 @@ export default function NiftyChart() {
         drawingManagerRef.current.addDrawing(
           new HorizontalRay(`hr-${Date.now()}`, [anchor], { lineColor: '#22c55e', lineWidth: 2 })
         )
+        drawingManagerRef.current.setActiveTool(null)
+        setActiveDrawingTool(null)
         return
       }
       if (!trendStartAnchorRef.current) {
         trendStartAnchorRef.current = anchor
+        const previewId = `tl-preview-${Date.now()}`
+        trendPreviewIdRef.current = previewId
+        drawingManagerRef.current.addDrawing(
+          new TrendLine(previewId, [anchor, anchor], { lineColor: '#3b82f6', lineWidth: 2 })
+        )
         return
+      }
+      if (trendPreviewIdRef.current) {
+        drawingManagerRef.current.removeDrawing(trendPreviewIdRef.current)
+        trendPreviewIdRef.current = null
       }
       drawingManagerRef.current.addDrawing(
         new TrendLine(`tl-${Date.now()}`, [trendStartAnchorRef.current, anchor], { lineColor: '#3b82f6', lineWidth: 2 })
       )
       trendStartAnchorRef.current = null
+      drawingManagerRef.current.setActiveTool(null)
+      setActiveDrawingTool(null)
+    }
+    const handleChartCrosshairMove = (param: any) => {
+      if (activeDrawingToolRef.current !== 'trend-line') return
+      if (!drawingManagerRef.current || !trendStartAnchorRef.current || !trendPreviewIdRef.current || !param?.point || param?.time == null) return
+      const price = candle.coordinateToPrice(param.point.y)
+      if (price == null) return
+      drawingManagerRef.current.removeDrawing(trendPreviewIdRef.current)
+      drawingManagerRef.current.addDrawing(
+        new TrendLine(trendPreviewIdRef.current, [trendStartAnchorRef.current, { time: param.time as Time, price }], {
+          lineColor: '#3b82f6',
+          lineWidth: 2,
+        })
+      )
     }
     chart.subscribeClick(handleChartClick)
+    chart.subscribeCrosshairMove(handleChartCrosshairMove)
 
     const resizeObserver = new ResizeObserver(() => {
       if (!chartContainerRef.current || !chartRef.current) return
@@ -265,12 +319,15 @@ export default function NiftyChart() {
       if (timeoutRef.current) window.clearTimeout(timeoutRef.current)
       resizeObserver.disconnect()
       chart.unsubscribeClick(handleChartClick)
+      chart.unsubscribeCrosshairMove(handleChartCrosshairMove)
       if (drawingManagerRef.current) {
         drawingManagerRef.current.detach()
         drawingManagerRef.current = null
       }
+      indicatorSeriesRef.current.clear()
       chart.remove()
       chartRef.current = null
+      setChartReady(false)
     }
   }, [])
 
@@ -297,7 +354,7 @@ export default function NiftyChart() {
   }
 
   const updateIndicatorSeries = useCallback((data: Candle[]) => {
-    if (!sma20Ref.current) return
+    if (!indicatorSeriesRef.current.size) return
     const bars: Bar[] = data.map((item) => ({
       time: item.time,
       open: item.open,
@@ -306,13 +363,24 @@ export default function NiftyChart() {
       close: item.close,
       volume: 0,
     }))
-    const smaResult = SMA.calculate(bars, { len: 20, src: 'close' }) as any
-    const rsiResult = RSI.calculate(bars, { length: 14, src: 'close' }) as any
-    sma20Ref.current.setData((smaResult?.plots?.plot0 || []) as any)
-    if (rsi14Ref.current) {
-      rsi14Ref.current.setData((rsiResult?.plots?.plot0 || []) as any)
+    for (const indicatorId of activeIndicators) {
+      const entry = getIndicatorById(indicatorId)
+      const series = indicatorSeriesRef.current.get(indicatorId)
+      if (!entry || !series) continue
+      try {
+        const result = entry.calculate(bars, entry.defaultInputs || {}) as any
+        const plots = result?.plots || {}
+        const firstPlot = Object.values(plots).find((plot) => Array.isArray(plot)) as any[] | undefined
+        if (!firstPlot) {
+          series.setData([] as any)
+          continue
+        }
+        series.setData(firstPlot as any)
+      } catch {
+        series.setData([] as any)
+      }
     }
-  }, [])
+  }, [activeIndicators, getIndicatorById])
 
   const addHorizontalLines = (data: Candle[]) => {
     if (!data.length || !dayOpenRef.current || !prevOpenRef.current || !prevHighRef.current || !prevLowRef.current || !prevCloseRef.current) return
@@ -575,25 +643,30 @@ export default function NiftyChart() {
   }, [wsData, applyRealtimeLtp])
 
   useEffect(() => {
+    if (!chartReady || !chartRef.current) return
+    const chart = chartRef.current
+    const existing = indicatorSeriesRef.current
+    const activeSet = new Set(activeIndicators)
+    for (const [id, series] of existing.entries()) {
+      if (!activeSet.has(id)) {
+        chart.removeSeries(series)
+        existing.delete(id)
+      }
+    }
+    for (let i = 0; i < activeIndicators.length; i++) {
+      const indicatorId = activeIndicators[i]
+      if (existing.has(indicatorId)) continue
+      const color = indicatorColors[i % indicatorColors.length]
+      const series = createIndicatorSeries(chart, indicatorId, color)
+      existing.set(indicatorId, series)
+    }
+    updateIndicatorSeries(priceDataRef.current)
+  }, [activeIndicators, indicatorColors, createIndicatorSeries, updateIndicatorSeries, chartReady])
+
+  useEffect(() => {
     if (ema34Ref.current) ema34Ref.current.applyOptions({ visible: emaActive })
     if (ema55Ref.current) ema55Ref.current.applyOptions({ visible: emaActive })
   }, [emaActive])
-
-  useEffect(() => {
-    if (sma20Ref.current) sma20Ref.current.applyOptions({ visible: indicatorsActive })
-    if (!chartRef.current) return
-    if (!indicatorsActive) {
-      if (rsi14Ref.current) {
-        chartRef.current.removeSeries(rsi14Ref.current)
-        rsi14Ref.current = null
-      }
-      return
-    }
-    if (!rsi14Ref.current) {
-      rsi14Ref.current = createRsiSeries(chartRef.current)
-      updateIndicatorSeries(priceDataRef.current)
-    }
-  }, [indicatorsActive, createRsiSeries, updateIndicatorSeries])
 
   useEffect(() => {
     if (dayOpenRef.current) dayOpenRef.current.applyOptions({ visible: dayOpenActive })
@@ -645,6 +718,11 @@ export default function NiftyChart() {
   const setDrawingTool = (tool: 'trend-line' | 'horizontal-ray') => {
     if (!drawingManagerRef.current) return
     const nextTool = activeDrawingTool === tool ? null : tool
+    if (trendPreviewIdRef.current) {
+      drawingManagerRef.current.removeDrawing(trendPreviewIdRef.current)
+      trendPreviewIdRef.current = null
+    }
+    trendStartAnchorRef.current = null
     drawingManagerRef.current.setActiveTool(nextTool)
     setActiveDrawingTool(nextTool)
   }
@@ -653,7 +731,18 @@ export default function NiftyChart() {
     if (!drawingManagerRef.current) return
     drawingManagerRef.current.clearAll()
     drawingManagerRef.current.setActiveTool(null)
+    trendStartAnchorRef.current = null
+    trendPreviewIdRef.current = null
     setActiveDrawingTool(null)
+  }
+
+  const addIndicator = (indicatorId: string) => {
+    if (activeIndicators.includes(indicatorId)) return
+    setActiveIndicators((prev) => [...prev, indicatorId])
+  }
+
+  const removeIndicator = (indicatorId: string) => {
+    setActiveIndicators((prev) => prev.filter((id) => id !== indicatorId))
   }
 
   return (
@@ -677,12 +766,54 @@ export default function NiftyChart() {
           <Button variant={oiActive ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={toggleOi}>OI</Button>
           <Button variant={coiActive ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={toggleCoi}>COI</Button>
           <Button variant={emaActive ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={() => setEmaActive((v) => !v)}>EMA</Button>
-          <Button variant={indicatorsActive ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={() => setIndicatorsActive((v) => !v)}>Indicators</Button>
           <Button variant={dayOpenActive ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={() => setDayOpenActive((v) => !v)}>Day Open</Button>
           <Button variant={prevOhlcActive ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={() => setPrevOhlcActive((v) => !v)}>Prev OHLC</Button>
           <Button variant={activeDrawingTool === 'trend-line' ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={() => setDrawingTool('trend-line')}>Trendline</Button>
           <Button variant={activeDrawingTool === 'horizontal-ray' ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={() => setDrawingTool('horizontal-ray')}>Horizontal Ray</Button>
           <Button variant="outline" size="sm" className="h-7 px-2 text-[11px]" onClick={clearDrawings}>Clear Draw</Button>
+          <div className="flex items-center gap-1">
+            <Label className="text-[11px]">Indicator</Label>
+            <Input
+              className="h-7 w-36 px-2 text-[11px]"
+              value={indicatorSearch}
+              placeholder="Search indicator"
+              onChange={(e) => setIndicatorSearch(e.target.value)}
+            />
+            <Select
+              value=""
+              onValueChange={(value) => addIndicator(value)}
+            >
+              <SelectTrigger className="h-7 w-44 text-[11px]">
+                <SelectValue placeholder="Add from registry" />
+              </SelectTrigger>
+              <SelectContent>
+                {availableIndicators
+                  .filter((item) => !activeIndicators.includes(item.id))
+                  .slice(0, 100)
+                  .map((item) => (
+                    <SelectItem key={item.id} value={item.id}>
+                      {item.shortName} ({item.id})
+                    </SelectItem>
+                  ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="flex items-center gap-1">
+            {activeIndicators.map((indicatorId) => {
+              const item = getIndicatorById(indicatorId)
+              return (
+                <Button
+                  key={indicatorId}
+                  variant="secondary"
+                  size="sm"
+                  className="h-7 px-2 text-[11px]"
+                  onClick={() => removeIndicator(indicatorId)}
+                >
+                  {item?.shortName || indicatorId} ×
+                </Button>
+              )
+            })}
+          </div>
           <div className="flex items-center gap-1">
             <Label className="text-[11px]">OI X %</Label>
             <Input type="number" min={0} max={100} className="h-7 w-14 px-1 text-[11px]" value={oiX} onChange={(e) => setOiX(Number(e.target.value || 0))} />
