@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
+  AreaSeries,
   CandlestickSeries,
   ColorType,
   CrosshairMode,
@@ -39,13 +40,18 @@ type IndicatorInstance = {
   indicatorId: string
 }
 
+type IndicatorSeriesBucket = {
+  plotSeries: Map<string, ISeriesApi<any>>
+  extraSeries: ISeriesApi<any>[]
+}
+
 export default function NiftyChart() {
   const chartContainerRef = useRef<HTMLDivElement | null>(null)
   const chartRef = useRef<IChartApi | null>(null)
   const candleRef = useRef<ISeriesApi<'Candlestick'> | null>(null)
   const ema34Ref = useRef<ISeriesApi<'Line'> | null>(null)
   const ema55Ref = useRef<ISeriesApi<'Line'> | null>(null)
-  const indicatorSeriesRef = useRef<Map<string, Map<string, ISeriesApi<'Line'>>>>(new Map())
+  const indicatorSeriesRef = useRef<Map<string, IndicatorSeriesBucket>>(new Map())
   const indicatorPaneRef = useRef<Map<string, any>>(new Map())
   const optionVolumeRef = useRef<ISeriesApi<'Histogram'> | null>(null)
   const dayOpenRef = useRef<ISeriesApi<'Line'> | null>(null)
@@ -402,8 +408,8 @@ export default function NiftyChart() {
     }))
     for (const instance of activeIndicators) {
       const entry = getIndicatorById(instance.indicatorId)
-      const seriesByPlot = indicatorSeriesRef.current.get(instance.key)
-      if (!entry || !seriesByPlot) continue
+      const bucket = indicatorSeriesRef.current.get(instance.key)
+      if (!entry || !bucket) continue
       try {
         const inputs = indicatorInputs[instance.key] || entry.defaultInputs || {}
         const result = entry.calculate(bars, inputs) as any
@@ -411,16 +417,16 @@ export default function NiftyChart() {
         const livePlotKeys = new Set<string>()
         for (const [plotKey, plot] of Object.entries(plots)) {
           if (!Array.isArray(plot)) continue
-          const series = seriesByPlot.get(plotKey)
+          const series = bucket.plotSeries.get(plotKey)
           if (!series) continue
           series.setData(toLineData(plot, bars) as any)
           livePlotKeys.add(plotKey)
         }
-        for (const [plotKey, series] of seriesByPlot.entries()) {
+        for (const [plotKey, series] of bucket.plotSeries.entries()) {
           if (!livePlotKeys.has(plotKey)) series.setData([] as any)
         }
       } catch {
-        for (const series of seriesByPlot.values()) {
+        for (const series of bucket.plotSeries.values()) {
           series.setData([] as any)
         }
       }
@@ -691,8 +697,9 @@ export default function NiftyChart() {
     if (!chartReady || !chartRef.current) return
     const chart = chartRef.current
     const existing = indicatorSeriesRef.current
-    for (const seriesByPlot of existing.values()) {
-      for (const series of seriesByPlot.values()) chart.removeSeries(series)
+    for (const bucket of existing.values()) {
+      for (const series of bucket.plotSeries.values()) chart.removeSeries(series)
+      for (const series of bucket.extraSeries) chart.removeSeries(series)
     }
     existing.clear()
     indicatorPaneRef.current.clear()
@@ -715,6 +722,7 @@ export default function NiftyChart() {
       } catch {
         plots = { plot0: [] }
       }
+      const plotConfigList = Array.isArray((entry as any).plotConfig) ? (entry as any).plotConfig : []
       const plotKeys = Object.keys(plots).filter((key) => Array.isArray((plots as any)[key]))
       if (!plotKeys.length) plotKeys.push('plot0')
       const paletteOffset = i * 3
@@ -726,17 +734,64 @@ export default function NiftyChart() {
         if (pane && typeof pane.setHeight === 'function') pane.setHeight(120)
         indicatorPaneRef.current.set(instance.key, pane)
       }
-      const seriesByPlot = new Map<string, ISeriesApi<'Line'>>()
+      const seriesByPlot = new Map<string, ISeriesApi<any>>()
+      const extraSeries: ISeriesApi<any>[] = []
       plotKeys.forEach((plotKey, plotIndex) => {
-        const color = indicatorColors[(paletteOffset + plotIndex) % indicatorColors.length]
-        const title = `${indicatorTitle} ${plotKey}`
-        const options = { title, color, lineWidth: 1 as const }
-        const series = pane && typeof pane.addSeries === 'function'
-          ? (pane.addSeries(LineSeries, options) as ISeriesApi<'Line'>)
-          : chart.addSeries(LineSeries, options)
+        const cfg = plotConfigList.find((p: any) => p?.id === plotKey) || {}
+        const color = cfg.color || indicatorColors[(paletteOffset + plotIndex) % indicatorColors.length]
+        const title = `${indicatorTitle} ${cfg.title || plotKey}`
+        const style = String(cfg.style || 'line')
+        const lineWidth = (cfg.lineWidth ?? 1) as number
+        const addTo = pane && typeof pane.addSeries === 'function' ? pane : chart
+        const series = style === 'columns' || style === 'histogram'
+          ? (addTo.addSeries(HistogramSeries, { title, color, lineWidth: lineWidth as any }) as ISeriesApi<any>)
+          : style === 'area'
+            ? (addTo.addSeries(AreaSeries, { title, lineColor: color, topColor: `${color}66`, bottomColor: `${color}11`, lineWidth: lineWidth as any }) as ISeriesApi<any>)
+            : (addTo.addSeries(LineSeries, { title, color, lineWidth: lineWidth as any }) as ISeriesApi<any>)
         seriesByPlot.set(plotKey, series)
       })
-      existing.set(instance.key, seriesByPlot)
+
+      const hlines = Array.isArray((entry as any).hlineConfig) ? (entry as any).hlineConfig : []
+      if (hlines.length && seriesByPlot.size > 0) {
+        const firstSeries = seriesByPlot.values().next().value as ISeriesApi<any>
+        hlines.forEach((hl: any) => {
+          const style = String(hl.linestyle || 'solid')
+          firstSeries.createPriceLine({
+            price: Number(hl.price ?? 0),
+            color: String(hl.color || '#787B86'),
+            lineWidth: 1,
+            lineStyle: style === 'dashed' ? 2 : style === 'dotted' ? 1 : 0,
+            axisLabelVisible: false,
+            title: hl.title || '',
+          } as any)
+        })
+      }
+
+      const fills = Array.isArray((entry as any).fillConfig) ? (entry as any).fillConfig : []
+      fills.forEach((fill: any, fillIndex: number) => {
+        const h1 = hlines.find((h: any) => h.id === fill.plot1)
+        const h2 = hlines.find((h: any) => h.id === fill.plot2)
+        if (!h1 || !h2) return
+        const upper = Math.max(Number(h1.price || 0), Number(h2.price || 0))
+        const lower = Math.min(Number(h1.price || 0), Number(h2.price || 0))
+        const addTo = pane && typeof pane.addSeries === 'function' ? pane : chart
+        const area = addTo.addSeries(AreaSeries, {
+          title: `${indicatorTitle} Fill ${fillIndex + 1}`,
+          lineColor: 'transparent',
+          topColor: String(fill.color || '#2962FF1A'),
+          bottomColor: String(fill.color || '#2962FF1A'),
+          lineWidth: 0 as const,
+          priceLineVisible: false,
+          lastValueVisible: false,
+          crosshairMarkerVisible: false,
+          baseValue: { type: 'price', price: lower },
+        } as any) as ISeriesApi<any>
+        const areaData = priceDataRef.current.map((bar) => ({ time: bar.time as any, value: upper }))
+        area.setData(areaData as any)
+        extraSeries.push(area)
+      })
+
+      existing.set(instance.key, { plotSeries: seriesByPlot, extraSeries })
     }
     updateIndicatorSeries(priceDataRef.current)
   }, [activeIndicators, indicatorColors, updateIndicatorSeries, chartReady, getIndicatorById, indicatorInputs])
