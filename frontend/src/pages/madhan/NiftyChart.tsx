@@ -34,13 +34,19 @@ type OIProfileResponse = {
   coi: { strikes: Array<{ price: number; ceOI: number; peOI: number }> }
 }
 
+type IndicatorInstance = {
+  key: string
+  indicatorId: string
+}
+
 export default function NiftyChart() {
   const chartContainerRef = useRef<HTMLDivElement | null>(null)
   const chartRef = useRef<IChartApi | null>(null)
   const candleRef = useRef<ISeriesApi<'Candlestick'> | null>(null)
   const ema34Ref = useRef<ISeriesApi<'Line'> | null>(null)
   const ema55Ref = useRef<ISeriesApi<'Line'> | null>(null)
-  const indicatorSeriesRef = useRef<Map<string, ISeriesApi<'Line'>>>(new Map())
+  const indicatorSeriesRef = useRef<Map<string, Map<string, ISeriesApi<'Line'>>>>(new Map())
+  const indicatorPaneRef = useRef<Map<string, any>>(new Map())
   const optionVolumeRef = useRef<ISeriesApi<'Histogram'> | null>(null)
   const dayOpenRef = useRef<ISeriesApi<'Line'> | null>(null)
   const prevOpenRef = useRef<ISeriesApi<'Line'> | null>(null)
@@ -76,12 +82,16 @@ export default function NiftyChart() {
   const [coiShowStrike, setCoiShowStrike] = useState(false)
   const [coiShowValues, setCoiShowValues] = useState(false)
   const [indicatorSearch, setIndicatorSearch] = useState('')
-  const [activeIndicators, setActiveIndicators] = useState<string[]>(['sma', 'rsi'])
+  const [activeIndicators, setActiveIndicators] = useState<IndicatorInstance[]>([
+    { key: 'sma-0', indicatorId: 'sma' },
+    { key: 'rsi-0', indicatorId: 'rsi' },
+  ])
   const [indicatorInputs, setIndicatorInputs] = useState<Record<string, Record<string, unknown>>>({})
-  const [expandedIndicatorId, setExpandedIndicatorId] = useState<string | null>(null)
+  const [expandedIndicatorKey, setExpandedIndicatorKey] = useState<string | null>(null)
   const [showIndicatorPanel, setShowIndicatorPanel] = useState(false)
   const [showDrawingPanel, setShowDrawingPanel] = useState(false)
   const [activeDrawingTool, setActiveDrawingTool] = useState<'trend-line' | 'horizontal-ray' | null>(null)
+  const [drawingColor, setDrawingColor] = useState('#3b82f6')
   const [chartReady, setChartReady] = useState(false)
   const wsSymbols = useMemo(() => [{ symbol: 'NIFTY', exchange: 'NSE_INDEX' }], [])
   const { data: wsData } = useMarketData({
@@ -98,21 +108,21 @@ export default function NiftyChart() {
   useEffect(() => {
     setIndicatorInputs((prev) => {
       const next = { ...prev }
-      for (const indicatorId of activeIndicators) {
-        if (!next[indicatorId]) {
-          const entry = indicatorRegistry.find((item) => item.id === indicatorId)
-          next[indicatorId] = { ...(entry?.defaultInputs || {}) }
+      for (const instance of activeIndicators) {
+        if (!next[instance.key]) {
+          const entry = indicatorRegistry.find((item) => item.id === instance.indicatorId)
+          next[instance.key] = { ...(entry?.defaultInputs || {}) }
         }
       }
       return next
     })
-    if (!expandedIndicatorId && activeIndicators.length > 0) {
-      setExpandedIndicatorId(activeIndicators[0])
+    if (!expandedIndicatorKey && activeIndicators.length > 0) {
+      setExpandedIndicatorKey(activeIndicators[0].key)
     }
-    if (expandedIndicatorId && !activeIndicators.includes(expandedIndicatorId)) {
-      setExpandedIndicatorId(activeIndicators[0] || null)
+    if (expandedIndicatorKey && !activeIndicators.some((item) => item.key === expandedIndicatorKey)) {
+      setExpandedIndicatorKey(activeIndicators[0]?.key || null)
     }
-  }, [activeIndicators, expandedIndicatorId])
+  }, [activeIndicators, expandedIndicatorKey])
 
   const indicatorColors = useMemo(
     () => ['#8b5cf6', '#f59e0b', '#3b82f6', '#22c55e', '#ef4444', '#14b8a6', '#a855f7', '#f97316'],
@@ -136,24 +146,6 @@ export default function NiftyChart() {
   const getIndicatorById = useCallback((indicatorId: string) => {
     return indicatorRegistry.find((item) => item.id === indicatorId)
   }, [])
-
-  const createIndicatorSeries = useCallback(
-    (chart: IChartApi, indicatorId: string, color: string): ISeriesApi<'Line'> => {
-      const indicator = getIndicatorById(indicatorId)
-      const isOverlay = indicator?.overlay ?? true
-      const title = indicator?.shortName || indicatorId.toUpperCase()
-      const chartAny = chart as any
-      if (!isOverlay && typeof chartAny.addPane === 'function') {
-        const pane = chartAny.addPane()
-        if (pane && typeof pane.setHeight === 'function') pane.setHeight(120)
-        if (pane && typeof pane.addSeries === 'function') {
-          return pane.addSeries(LineSeries, { title, color, lineWidth: 1 }) as ISeriesApi<'Line'>
-        }
-      }
-      return chart.addSeries(LineSeries, { title, color, lineWidth: 1 })
-    },
-    [getIndicatorById]
-  )
 
   useEffect(() => {
     if (!chartContainerRef.current) return
@@ -291,9 +283,7 @@ export default function NiftyChart() {
       if (price == null) return
       const anchor = { time: param.time as Time, price }
       if (tool === 'horizontal-ray') {
-        drawingManagerRef.current.addDrawing(
-          new HorizontalRay(`hr-${Date.now()}`, [anchor], { lineColor: '#22c55e', lineWidth: 2 })
-        )
+      drawingManagerRef.current.addDrawing(new HorizontalRay(`hr-${Date.now()}`, [anchor], { lineColor: drawingColor, lineWidth: 2 }))
         drawingManagerRef.current.setActiveTool(null)
         setActiveDrawingTool(null)
         chart.applyOptions({ handleScroll: { pressedMouseMove: true } })
@@ -303,18 +293,14 @@ export default function NiftyChart() {
         trendStartAnchorRef.current = anchor
         const previewId = `tl-preview-${Date.now()}`
         trendPreviewIdRef.current = previewId
-        drawingManagerRef.current.addDrawing(
-          new TrendLine(previewId, [anchor, anchor], { lineColor: '#3b82f6', lineWidth: 2 })
-        )
+        drawingManagerRef.current.addDrawing(new TrendLine(previewId, [anchor, anchor], { lineColor: drawingColor, lineWidth: 2 }))
         return
       }
       if (trendPreviewIdRef.current) {
         drawingManagerRef.current.removeDrawing(trendPreviewIdRef.current)
         trendPreviewIdRef.current = null
       }
-      drawingManagerRef.current.addDrawing(
-        new TrendLine(`tl-${Date.now()}`, [trendStartAnchorRef.current, anchor], { lineColor: '#3b82f6', lineWidth: 2 })
-      )
+      drawingManagerRef.current.addDrawing(new TrendLine(`tl-${Date.now()}`, [trendStartAnchorRef.current, anchor], { lineColor: drawingColor, lineWidth: 2 }))
       trendStartAnchorRef.current = null
       drawingManagerRef.current.setActiveTool(null)
       setActiveDrawingTool(null)
@@ -327,10 +313,7 @@ export default function NiftyChart() {
       if (price == null) return
       drawingManagerRef.current.removeDrawing(trendPreviewIdRef.current)
       drawingManagerRef.current.addDrawing(
-        new TrendLine(trendPreviewIdRef.current, [trendStartAnchorRef.current, { time: param.time as Time, price }], {
-          lineColor: '#3b82f6',
-          lineWidth: 2,
-        })
+        new TrendLine(trendPreviewIdRef.current, [trendStartAnchorRef.current, { time: param.time as Time, price }], { lineColor: drawingColor, lineWidth: 2 })
       )
     }
     chart.subscribeClick(handleChartClick)
@@ -360,7 +343,7 @@ export default function NiftyChart() {
       chartRef.current = null
       setChartReady(false)
     }
-  }, [])
+  }, [drawingColor])
 
   const calculateEMA = (data: Candle[], period: number) => {
     if (data.length < period) return []
@@ -384,6 +367,24 @@ export default function NiftyChart() {
     return 60
   }
 
+  const toLineData = (plot: unknown, bars: Bar[]) => {
+    if (!Array.isArray(plot)) return []
+    return plot
+      .map((item, index) => {
+        if (item && typeof item === 'object' && 'time' in (item as any) && 'value' in (item as any)) {
+          const p = item as any
+          return typeof p.value === 'number' && Number.isFinite(p.value) ? { time: p.time, value: p.value } : null
+        }
+        if (typeof item === 'number' && Number.isFinite(item)) {
+          const bar = bars[index]
+          if (!bar) return null
+          return { time: bar.time as any, value: item }
+        }
+        return null
+      })
+      .filter((point): point is { time: number; value: number } => point != null)
+  }
+
   const updateIndicatorSeries = useCallback((data: Candle[]) => {
     if (!indicatorSeriesRef.current.size) return
     const bars: Bar[] = data.map((item) => ({
@@ -394,22 +395,29 @@ export default function NiftyChart() {
       close: item.close,
       volume: 0,
     }))
-    for (const indicatorId of activeIndicators) {
-      const entry = getIndicatorById(indicatorId)
-      const series = indicatorSeriesRef.current.get(indicatorId)
-      if (!entry || !series) continue
+    for (const instance of activeIndicators) {
+      const entry = getIndicatorById(instance.indicatorId)
+      const seriesByPlot = indicatorSeriesRef.current.get(instance.key)
+      if (!entry || !seriesByPlot) continue
       try {
-        const inputs = indicatorInputs[indicatorId] || entry.defaultInputs || {}
+        const inputs = indicatorInputs[instance.key] || entry.defaultInputs || {}
         const result = entry.calculate(bars, inputs) as any
         const plots = result?.plots || {}
-        const firstPlot = Object.values(plots).find((plot) => Array.isArray(plot)) as any[] | undefined
-        if (!firstPlot) {
-          series.setData([] as any)
-          continue
+        const livePlotKeys = new Set<string>()
+        for (const [plotKey, plot] of Object.entries(plots)) {
+          if (!Array.isArray(plot)) continue
+          const series = seriesByPlot.get(plotKey)
+          if (!series) continue
+          series.setData(toLineData(plot, bars) as any)
+          livePlotKeys.add(plotKey)
         }
-        series.setData(firstPlot as any)
+        for (const [plotKey, series] of seriesByPlot.entries()) {
+          if (!livePlotKeys.has(plotKey)) series.setData([] as any)
+        }
       } catch {
-        series.setData([] as any)
+        for (const series of seriesByPlot.values()) {
+          series.setData([] as any)
+        }
       }
     }
   }, [activeIndicators, getIndicatorById, indicatorInputs])
@@ -678,22 +686,58 @@ export default function NiftyChart() {
     if (!chartReady || !chartRef.current) return
     const chart = chartRef.current
     const existing = indicatorSeriesRef.current
-    const activeSet = new Set(activeIndicators)
-    for (const [id, series] of existing.entries()) {
-      if (!activeSet.has(id)) {
-        chart.removeSeries(series)
-        existing.delete(id)
+    const activeSet = new Set(activeIndicators.map((item) => item.key))
+    for (const [instanceKey, seriesByPlot] of existing.entries()) {
+      if (!activeSet.has(instanceKey)) {
+        for (const series of seriesByPlot.values()) chart.removeSeries(series)
+        existing.delete(instanceKey)
+        indicatorPaneRef.current.delete(instanceKey)
       }
     }
     for (let i = 0; i < activeIndicators.length; i++) {
-      const indicatorId = activeIndicators[i]
-      if (existing.has(indicatorId)) continue
-      const color = indicatorColors[i % indicatorColors.length]
-      const series = createIndicatorSeries(chart, indicatorId, color)
-      existing.set(indicatorId, series)
+      const instance = activeIndicators[i]
+      const entry = getIndicatorById(instance.indicatorId)
+      if (!entry) continue
+      const inputs = indicatorInputs[instance.key] || entry.defaultInputs || {}
+      const bars: Bar[] = priceDataRef.current.map((item) => ({
+        time: item.time,
+        open: item.open,
+        high: item.high,
+        low: item.low,
+        close: item.close,
+        volume: 0,
+      }))
+      let plots: Record<string, unknown> = {}
+      try {
+        plots = (entry.calculate(bars, inputs) as any)?.plots || {}
+      } catch {
+        plots = { plot0: [] }
+      }
+      const plotKeys = Object.keys(plots).filter((key) => Array.isArray((plots as any)[key]))
+      if (!plotKeys.length) plotKeys.push('plot0')
+      const paletteOffset = i * 3
+      const chartAny = chart as any
+      const indicatorTitle = `${entry.shortName || instance.indicatorId.toUpperCase()} ${i + 1}`
+      let pane: any = null
+      if ((entry.overlay ?? true) === false && typeof chartAny.addPane === 'function') {
+        pane = chartAny.addPane()
+        if (pane && typeof pane.setHeight === 'function') pane.setHeight(120)
+        indicatorPaneRef.current.set(instance.key, pane)
+      }
+      const seriesByPlot = new Map<string, ISeriesApi<'Line'>>()
+      plotKeys.forEach((plotKey, plotIndex) => {
+        const color = indicatorColors[(paletteOffset + plotIndex) % indicatorColors.length]
+        const title = `${indicatorTitle} ${plotKey}`
+        const options = { title, color, lineWidth: 1 as const }
+        const series = pane && typeof pane.addSeries === 'function'
+          ? (pane.addSeries(LineSeries, options) as ISeriesApi<'Line'>)
+          : chart.addSeries(LineSeries, options)
+        seriesByPlot.set(plotKey, series)
+      })
+      existing.set(instance.key, seriesByPlot)
     }
     updateIndicatorSeries(priceDataRef.current)
-  }, [activeIndicators, indicatorColors, createIndicatorSeries, updateIndicatorSeries, chartReady])
+  }, [activeIndicators, indicatorColors, updateIndicatorSeries, chartReady, getIndicatorById, indicatorInputs])
 
   useEffect(() => {
     if (ema34Ref.current) ema34Ref.current.applyOptions({ visible: emaActive })
@@ -775,25 +819,26 @@ export default function NiftyChart() {
   }
 
   const addIndicator = (indicatorId: string) => {
-    if (activeIndicators.includes(indicatorId)) return
-    setActiveIndicators((prev) => [...prev, indicatorId])
-    setExpandedIndicatorId(indicatorId)
+    const nextIndex = activeIndicators.filter((item) => item.indicatorId === indicatorId).length
+    const key = `${indicatorId}-${Date.now()}-${nextIndex}`
+    setActiveIndicators((prev) => [...prev, { key, indicatorId }])
+    setExpandedIndicatorKey(key)
   }
 
-  const removeIndicator = (indicatorId: string) => {
-    setActiveIndicators((prev) => prev.filter((id) => id !== indicatorId))
+  const removeIndicator = (instanceKey: string) => {
+    setActiveIndicators((prev) => prev.filter((item) => item.key !== instanceKey))
     setIndicatorInputs((prev) => {
       const next = { ...prev }
-      delete next[indicatorId]
+      delete next[instanceKey]
       return next
     })
   }
 
-  const updateIndicatorInput = (indicatorId: string, inputId: string, value: unknown) => {
+  const updateIndicatorInput = (instanceKey: string, inputId: string, value: unknown) => {
     setIndicatorInputs((prev) => ({
       ...prev,
-      [indicatorId]: {
-        ...(prev[indicatorId] || {}),
+      [instanceKey]: {
+        ...(prev[instanceKey] || {}),
         [inputId]: value,
       },
     }))
@@ -855,6 +900,10 @@ export default function NiftyChart() {
               {showDrawingPanel && (
                 <div className="mb-2 space-y-2 rounded border p-2">
                   <Label className="text-xs font-semibold">Drawings</Label>
+                  <div className="space-y-1">
+                    <Label className="text-[11px]">Color</Label>
+                    <Input type="color" className="h-7 w-full p-1" value={drawingColor} onChange={(e) => setDrawingColor(e.target.value)} />
+                  </div>
                   <div className="flex flex-wrap gap-1">
                     <Button variant={activeDrawingTool === 'trend-line' ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={() => setDrawingTool('trend-line')}>Trendline</Button>
                     <Button variant={activeDrawingTool === 'horizontal-ray' ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={() => setDrawingTool('horizontal-ray')}>Horizontal Ray</Button>
@@ -869,34 +918,33 @@ export default function NiftyChart() {
                   <Input className="h-7 text-[11px]" value={indicatorSearch} placeholder="Search indicators" onChange={(e) => setIndicatorSearch(e.target.value)} />
                   <div className="max-h-36 space-y-1 overflow-auto rounded border p-1">
                     {availableIndicators.slice(0, 200).map((item) => {
-                      const active = activeIndicators.includes(item.id)
+                      const active = activeIndicators.some((x) => x.indicatorId === item.id)
                       return (
                         <button
                           key={item.id}
                           type="button"
                           className={`w-full rounded px-2 py-1 text-left text-[11px] ${active ? 'bg-primary/20' : 'hover:bg-accent'}`}
                           onClick={() => {
-                            if (active) setExpandedIndicatorId(item.id)
-                            else addIndicator(item.id)
+                            addIndicator(item.id)
                           }}
                         >
-                          {item.shortName} ({item.id})
+                          {item.shortName} ({item.id}) {active ? '• Added' : ''}
                         </button>
                       )
                     })}
                   </div>
                   <div className="space-y-2">
-                    {activeIndicators.map((indicatorId) => {
-                      const entry = getIndicatorById(indicatorId)
+                    {activeIndicators.map((indicator, index) => {
+                      const entry = getIndicatorById(indicator.indicatorId)
                       if (!entry) return null
-                      const expanded = expandedIndicatorId === indicatorId
+                      const expanded = expandedIndicatorKey === indicator.key
                       const config = Array.isArray(entry.inputConfig) ? entry.inputConfig : []
-                      const values = indicatorInputs[indicatorId] || {}
+                      const values = indicatorInputs[indicator.key] || {}
                       return (
-                        <div key={indicatorId} className="rounded border p-2">
+                        <div key={indicator.key} className="rounded border p-2">
                           <div className="flex items-center justify-between gap-2">
-                            <button type="button" className="text-left text-[11px] font-semibold" onClick={() => setExpandedIndicatorId(expanded ? null : indicatorId)}>{entry.name}</button>
-                            <Button variant="secondary" size="sm" className="h-6 px-2 text-[10px]" onClick={() => removeIndicator(indicatorId)}>Remove</Button>
+                            <button type="button" className="text-left text-[11px] font-semibold" onClick={() => setExpandedIndicatorKey(expanded ? null : indicator.key)}>{entry.name} #{index + 1}</button>
+                            <Button variant="secondary" size="sm" className="h-6 px-2 text-[10px]" onClick={() => removeIndicator(indicator.key)}>Remove</Button>
                           </div>
                           {expanded && (
                             <div className="mt-2 space-y-2">
@@ -907,7 +955,7 @@ export default function NiftyChart() {
                                   return (
                                     <div key={input.id} className="flex items-center justify-between gap-2">
                                       <Label className="text-[11px]">{input.title || input.id}</Label>
-                                      <Checkbox checked={Boolean(value)} onCheckedChange={(v) => updateIndicatorInput(indicatorId, input.id, !!v)} />
+                                      <Checkbox checked={Boolean(value)} onCheckedChange={(v) => updateIndicatorInput(indicator.key, input.id, !!v)} />
                                     </div>
                                   )
                                 }
@@ -916,7 +964,7 @@ export default function NiftyChart() {
                                   return (
                                     <div key={input.id} className="space-y-1">
                                       <Label className="text-[11px]">{input.title || input.id}</Label>
-                                      <Select value={String(value)} onValueChange={(val) => updateIndicatorInput(indicatorId, input.id, val)}>
+                                      <Select value={String(value)} onValueChange={(val) => updateIndicatorInput(indicator.key, input.id, val)}>
                                         <SelectTrigger className="h-7 text-[11px]"><SelectValue /></SelectTrigger>
                                         <SelectContent>
                                           {options.map((option: string) => (
@@ -937,7 +985,7 @@ export default function NiftyChart() {
                                       onChange={(e) => {
                                         const raw = e.target.value
                                         const num = inputType === 'int' ? Number.parseInt(raw || '0', 10) : Number.parseFloat(raw || '0')
-                                        if (!Number.isNaN(num)) updateIndicatorInput(indicatorId, input.id, num)
+                                        if (!Number.isNaN(num)) updateIndicatorInput(indicator.key, input.id, num)
                                       }}
                                     />
                                   </div>
