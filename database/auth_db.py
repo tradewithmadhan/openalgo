@@ -52,13 +52,43 @@ if len(_pepper_value) < 32:
 PEPPER = _pepper_value
 
 
-# Setup Fernet encryption for auth tokens
+# Setup Fernet encryption for auth tokens.
+#
+# The KDF salt has two sources, in order of preference:
+#   1. FERNET_SALT env var (per-install random hex, 32+ chars). This is the
+#      production path. utils/env_check.py auto-provisions it on first boot
+#      (and migrates existing ciphertext) so by the time this module imports,
+#      the env var is set.
+#   2. The legacy hardcoded literal b"openalgo_static_salt". This is the
+#      fallback for one-off scripts that import auth_db directly without
+#      going through the env_check bootstrap (CLI utilities, ad-hoc REPL,
+#      docs/typecheck runs). A one-time stderr warning fires so the operator
+#      notices if a real production process ever hits this path.
+def _resolve_fernet_salt() -> bytes:
+    raw = (os.getenv("FERNET_SALT") or "").strip()
+    if raw and len(raw) >= 32:
+        try:
+            return bytes.fromhex(raw)
+        except ValueError:
+            pass
+    # Fallback path. Print once so prod misuse is visible without spamming.
+    if not getattr(_resolve_fernet_salt, "_warned", False):
+        import sys as _sys
+        _sys.stderr.write(
+            "[auth_db] WARNING: FERNET_SALT not set or invalid; using legacy\n"
+            "static salt. Run the app once via app.py so utils/env_check.py\n"
+            "auto-provisions a per-install salt.\n"
+        )
+        _resolve_fernet_salt._warned = True  # type: ignore[attr-defined]
+    return b"openalgo_static_salt"
+
+
 def get_encryption_key():
-    """Generate a Fernet key from the pepper"""
+    """Generate a Fernet key from PEPPER + per-install FERNET_SALT."""
     kdf = PBKDF2HMAC(
         algorithm=hashes.SHA256(),
         length=32,
-        salt=b"openalgo_static_salt",
+        salt=_resolve_fernet_salt(),
         iterations=100000,
     )
     key = base64.urlsafe_b64encode(kdf.derive(PEPPER.encode()))
@@ -421,6 +451,15 @@ def encrypt_token(token):
     return fernet.encrypt(token.encode()).decode()
 
 
+# Track ciphertext fingerprints we've already failed to decrypt so we log each
+# orphan row's full traceback once, then suppress the noise on every subsequent
+# call. Without this, a single un-migrated row encrypted under a lost salt
+# (e.g. the row left as-is after a Fernet salt rotation, see issue #1394)
+# triggers a full ERROR + traceback on every WebSocket re-connect attempt,
+# spamming the logs with hundreds of identical entries.
+_decrypt_failure_fingerprints: set[str] = set()
+
+
 def decrypt_token(encrypted_token):
     """Decrypt auth token"""
     if not encrypted_token:
@@ -428,7 +467,33 @@ def decrypt_token(encrypted_token):
     try:
         return fernet.decrypt(encrypted_token.encode()).decode()
     except Exception as e:
-        logger.exception(f"Error decrypting token: {e}")
+        # Hash the ciphertext (not the plaintext — there is no plaintext yet)
+        # so we don't keep the full token in memory just to dedupe log lines.
+        import hashlib
+
+        try:
+            payload = (
+                encrypted_token.encode()
+                if isinstance(encrypted_token, str)
+                else encrypted_token
+            )
+            fp = hashlib.blake2s(payload, digest_size=8).hexdigest()
+        except Exception:
+            fp = "unknown"
+
+        if fp in _decrypt_failure_fingerprints:
+            # Already reported the full traceback once — keep the signal
+            # but at debug level so it doesn't spam ERROR logs.
+            logger.debug(f"Repeat decrypt failure (fingerprint={fp})")
+        else:
+            _decrypt_failure_fingerprints.add(fp)
+            logger.exception(
+                f"Error decrypting token (fingerprint={fp}): {e}. "
+                "This row may have been encrypted under a previous "
+                "API_KEY_PEPPER or FERNET_SALT and survived a rotation. "
+                "Re-authenticate the affected broker / user to overwrite "
+                "the orphan ciphertext with a fresh value."
+            )
         return None
 
 
@@ -482,6 +547,22 @@ def upsert_auth(name, auth_token, broker, feed_token=None, user_id=None, revoke=
         # Don't fail auth operation if cache invalidation fails
         # The database fallback in other processes will handle it
         logger.warning(f"Failed to publish cache invalidation for user {name}: {e}")
+
+    # Same-process invalidation. Production runs `gunicorn -w 1` per CLAUDE.md
+    # (single worker required for SocketIO state), so the WebSocket proxy's
+    # _POOLED_ADAPTERS registry lives in this very process. The ZeroMQ
+    # publish above is for hypothetical multi-process deployments; without
+    # also discarding the in-process cache here, the next WS connect after
+    # re-login reuses the pool that was initialised with the *old* token
+    # and fails with "Adapter initialization failed: No authentication
+    # token found" until the process is restarted. See issue #1394.
+    try:
+        from websocket_proxy.broker_factory import cleanup_pools_for_user
+        cleanup_pools_for_user(name, broker_name=broker)
+    except Exception as e:
+        # Don't fail auth on cleanup error — the user can still trade via
+        # HTTP endpoints; only the WS layer is affected.
+        logger.warning(f"Failed to invalidate WS adapter pool for {name}/{broker}: {e}")
 
     return auth_obj.id
 

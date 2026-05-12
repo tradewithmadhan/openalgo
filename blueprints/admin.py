@@ -612,7 +612,12 @@ _MAX_TAIL_BYTES = 10 * 1024 * 1024  # 10 MB cap on tail-read
 _REPORT_RATE = "10/minute"
 _DIAG_RATE = "10/minute"
 
-# Sensitive env var names — never emit values, only "set"/"not set"
+# Sensitive env var names — never emit values, only "set"/"not set".
+# These are the env vars actually consumed by the codebase. SMTP credentials,
+# Telegram bot tokens, and any future Google OAuth secrets are stored encrypted
+# in the database (see `_db_secrets_status` below) — not in env — so they
+# don't belong in this list. Reporting them here would always say "not set"
+# even when the feature is fully configured (issue #1388).
 _SECRET_ENV_KEYS = frozenset(
     {
         "APP_KEY",
@@ -622,11 +627,91 @@ _SECRET_ENV_KEYS = frozenset(
         "BROKER_API_KEY_MARKET",
         "BROKER_API_SECRET_MARKET",
         "REDIRECT_URL",
-        "SMTP_PASSWORD",
-        "TELEGRAM_BOT_TOKEN",
-        "GOOGLE_CLIENT_SECRET",
     }
 )
+
+
+def _db_secrets_status() -> dict:
+    """Presence-only status for secrets stored in the database (not env).
+
+    Returns a {label: bool} dict where the label is rendered as-is in the
+    diagnostics UI. Each lookup is wrapped in try/except so a transient DB
+    failure on one feature can't blank out the whole diagnostics page.
+    """
+    out: dict[str, bool] = {}
+
+    try:
+        from database.settings_db import get_smtp_settings
+
+        smtp = get_smtp_settings() or {}
+        out["SMTP password (DB)"] = bool(smtp.get("smtp_password"))
+    except Exception:
+        out["SMTP password (DB)"] = False
+
+    try:
+        from database.telegram_db import get_bot_config
+
+        bot = get_bot_config() or {}
+        out["Telegram bot token (DB)"] = bool(bot.get("bot_token") or bot.get("token"))
+    except Exception:
+        out["Telegram bot token (DB)"] = False
+
+    return out
+
+
+def _secret_strength_status() -> dict:
+    """Per-secret randomization status.
+
+    Reports True when a secret is plausibly install-specific (random hex of
+    sufficient length, not a known placeholder, not a leaked literal). False
+    means the secret is the publicly-known sample value, the placeholder
+    string from .sample.env, blank, or otherwise weak — i.e. functionally
+    no protection. This surfaces the kind of regression where an operator
+    skipped install.sh and just `cp .sample.env .env`.
+
+    Reading-side notes:
+        - We never include the actual values, only the boolean verdict.
+        - The set of "compromised" sentinels is imported from utils.env_check
+          so it stays in sync with the auto-rotation logic that runs on first
+          boot. Adding a new placeholder there auto-flows through to here.
+    """
+    try:
+        from utils.env_check import (
+            COMPROMISED_APP_KEYS,
+            COMPROMISED_PEPPERS,
+            PLACEHOLDER_FERNET_SALT,
+        )
+    except Exception:
+        # Module shape changed — skip the section rather than crash diagnostics.
+        return {}
+
+    import re as _re
+
+    def _is_random_hex(value: str, min_chars: int = 32) -> bool:
+        if not value:
+            return False
+        if len(value) < min_chars:
+            return False
+        return bool(_re.fullmatch(r"[0-9a-fA-F]+", value))
+
+    out: dict[str, bool] = {}
+
+    app_key = os.getenv("APP_KEY", "")
+    out["APP_KEY randomized"] = bool(
+        app_key and app_key not in COMPROMISED_APP_KEYS and len(app_key) >= 32
+    )
+
+    pepper = os.getenv("API_KEY_PEPPER", "")
+    out["API_KEY_PEPPER randomized"] = bool(
+        pepper and pepper not in COMPROMISED_PEPPERS and len(pepper) >= 32
+    )
+
+    salt = (os.getenv("FERNET_SALT") or "").strip()
+    out["FERNET_SALT per-install"] = bool(
+        salt and salt != PLACEHOLDER_FERNET_SALT and _is_random_hex(salt)
+    )
+
+    return out
 
 
 def _errors_file_path():
@@ -1188,6 +1273,18 @@ def _build_info():
     except OSError:
         pass
 
+    # Docker images don't ship .git/ (it's in .dockerignore), so the .git/HEAD
+    # read above always misses inside containers (issue #1388). Fall back to
+    # build-time env vars that install scripts populate from `git rev-parse`.
+    if not info["git_branch"]:
+        env_branch = os.getenv("OPENALGO_GIT_BRANCH")
+        if env_branch:
+            info["git_branch"] = env_branch.strip()[:64]
+    if not info["git_commit"]:
+        env_commit = os.getenv("OPENALGO_GIT_COMMIT")
+        if env_commit:
+            info["git_commit"] = env_commit.strip()[:12]
+
     try:
         idx = Path("frontend/dist/index.html")
         if idx.exists():
@@ -1202,6 +1299,13 @@ def _build_info():
 def _safe_config_snapshot():
     """Public-safe view of config — secrets reduced to set/not-set booleans."""
     secret_status = {key: bool(os.getenv(key)) for key in _SECRET_ENV_KEYS}
+    # Augment with DB-stored secret presence (SMTP, Telegram). Without this,
+    # users with fully-configured features see "not set" because those creds
+    # never lived in env to begin with — see issue #1388.
+    secret_status.update(_db_secrets_status())
+    # Per-secret randomization status (APP_KEY / API_KEY_PEPPER / FERNET_SALT
+    # not the publicly-known sample placeholder values). Surfaces operators
+    # who skipped install.sh and copied .sample.env directly. See #1394.
     return {
         "valid_brokers": [
             b.strip() for b in (os.getenv("VALID_BROKERS") or "").split(",") if b.strip()
@@ -1216,6 +1320,7 @@ def _safe_config_snapshot():
         "api_rate_limit": os.getenv("API_RATE_LIMIT", "50 per second"),
         "flask_debug": (os.getenv("FLASK_DEBUG") or "False").lower() == "true",
         "secrets_present": secret_status,
+        "secret_strength": _secret_strength_status(),
     }
 
 
@@ -1622,6 +1727,12 @@ def _render_report(payload, errors_summary, errors_recent, fmt):
         lines.append(f"{h2}Secrets (presence only)")
         for k, v in sorted(secrets.items()):
             lines.append(f"{bullet}{k}: {'set' if v else 'not set'}")
+    strength = cfg.get("secret_strength") or {}
+    if strength:
+        lines.append("")
+        lines.append(f"{h2}Secret strength")
+        for k, v in sorted(strength.items()):
+            lines.append(f"{bullet}{k}: {'yes' if v else 'NO — using default/placeholder'}")
     lines.append("")
 
     brokers = payload.get("brokers") or {}
