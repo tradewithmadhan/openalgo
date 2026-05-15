@@ -26,6 +26,7 @@ export function CoiTrendChart({ refreshTrigger }: CoiTrendChartProps) {
     const coiSeriesRef = useRef<ISeriesApi<"Baseline"> | null>(null);
     const oiTrendSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
     const spotSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+    const spotSeriesDataRef = useRef<Array<{ time: any; value: number }>>([]);
     const lastSpotTimeRef = useRef<number | null>(null);
     const prevWidthRef = useRef(0);
     const shouldFitContent = useRef(true);
@@ -133,7 +134,16 @@ export function CoiTrendChart({ refreshTrigger }: CoiTrendChartProps) {
                             }));
                         } else if (type === 'market_data' && message.data) {
                             const { symbol, exchange, data } = message;
-                            if (symbol === 'NIFTY' && exchange === 'NSE_INDEX' && data.ltp && spotSeriesRef.current) {
+                            const ltpRaw = data?.ltp ?? data?.data?.ltp;
+                            const ltp = typeof ltpRaw === 'string' ? Number(ltpRaw) : ltpRaw;
+
+                            if (
+                                symbol === 'NIFTY' &&
+                                exchange === 'NSE_INDEX' &&
+                                Number.isFinite(ltp) &&
+                                ltp > 0 &&
+                                spotSeriesRef.current
+                            ) {
                                 let rawTime: number;
                                 if (data.timestamp) {
                                     if (typeof data.timestamp === 'number') {
@@ -152,13 +162,21 @@ export function CoiTrendChart({ refreshTrigger }: CoiTrendChartProps) {
                                 }
 
                                 try {
-                                    spotSeriesRef.current.update({
+                                    const nextPoint = {
                                         time: time as any,
-                                        value: data.ltp,
-                                    });
+                                        value: ltp,
+                                    };
+
+                                    if (spotSeriesDataRef.current.length > 0 && lastSpotTimeRef.current === time) {
+                                        spotSeriesDataRef.current[spotSeriesDataRef.current.length - 1] = nextPoint;
+                                    } else {
+                                        spotSeriesDataRef.current.push(nextPoint);
+                                    }
+
+                                    spotSeriesRef.current.setData(spotSeriesDataRef.current);
                                     lastSpotTimeRef.current = time;
                                 } catch (err) {
-                                    console.error('[WS] COI spot update failed:', err, { time, ltp: data.ltp });
+                                    console.error('[WS] COI spot update failed:', err, { time, ltp });
                                 }
                             }
                         }
@@ -383,15 +401,18 @@ export function CoiTrendChart({ refreshTrigger }: CoiTrendChartProps) {
                 value: spotData.prices[i],
             }));
             spotSeriesData.sort((a: any, b: any) => (a.time as number) - (b.time as number));
-            spotSeriesRef.current.setData(spotSeriesData);
+            spotSeriesDataRef.current = spotSeriesData;
+            spotSeriesRef.current.setData(spotSeriesDataRef.current);
             spotSeriesRef.current.applyOptions({ visible: true });
 
-            if (spotSeriesData.length > 0) {
-                lastSpotTimeRef.current = spotSeriesData[spotSeriesData.length - 1].time as number;
+            if (spotSeriesDataRef.current.length > 0) {
+                lastSpotTimeRef.current = spotSeriesDataRef.current[spotSeriesDataRef.current.length - 1].time as number;
             } else {
                 lastSpotTimeRef.current = null;
             }
         } else {
+            spotSeriesDataRef.current = [];
+            lastSpotTimeRef.current = null;
             spotSeriesRef.current.applyOptions({ visible: false });
         }
         
