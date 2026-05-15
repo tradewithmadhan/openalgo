@@ -31,6 +31,7 @@ export function CoiTrendChart({ refreshTrigger }: CoiTrendChartProps) {
     const prevWidthRef = useRef(0);
     const shouldFitContent = useRef(true);
     const wsRef = useRef<WebSocket | null>(null);
+    const chartActiveRef = useRef(false);
 
     const [data, setData] = useState<CoiTrendData | null>(null);
     const [spotData, setSpotData] = useState<any>(null);
@@ -143,6 +144,8 @@ export function CoiTrendChart({ refreshTrigger }: CoiTrendChartProps) {
 
                 socket.onmessage = (event) => {
                     try {
+                        if (!chartActiveRef.current) return;
+                        if (wsRef.current !== socket) return;
                         const message = JSON.parse(event.data);
                         const type = message.type || message.status;
 
@@ -183,6 +186,7 @@ export function CoiTrendChart({ refreshTrigger }: CoiTrendChartProps) {
                                 }
 
                                 try {
+                                    if (!chartActiveRef.current || !spotSeriesRef.current) return;
                                     const nextPoint = toValidSpotPoint(time, ltp);
                                     if (!nextPoint) return;
 
@@ -339,6 +343,7 @@ export function CoiTrendChart({ refreshTrigger }: CoiTrendChartProps) {
         coiSeriesRef.current = coiSeries;
         oiTrendSeriesRef.current = oiTrendSeries;
         spotSeriesRef.current = spotSeries;
+        chartActiveRef.current = true;
 
         // Apply initial theme
         applyTheme(chart, mode === 'dark');
@@ -382,13 +387,21 @@ export function CoiTrendChart({ refreshTrigger }: CoiTrendChartProps) {
         resizeObserver.observe(chartContainerRef.current);
 
         return () => {
+            chartActiveRef.current = false;
             window.removeEventListener('resize', handleResize);
             resizeObserver.disconnect();
             chart.remove();
+            chartRef.current = null;
+            coiSeriesRef.current = null;
+            oiTrendSeriesRef.current = null;
+            spotSeriesRef.current = null;
+            spotSeriesDataRef.current = [];
+            lastSpotTimeRef.current = null;
         };
     }, []);
 
     useEffect(() => {
+        if (!chartActiveRef.current) return;
         if (!data || !coiSeriesRef.current || !oiTrendSeriesRef.current || !spotSeriesRef.current) return;
 
         const coiData = data.timestamps
@@ -403,9 +416,19 @@ export function CoiTrendChart({ refreshTrigger }: CoiTrendChartProps) {
         coiData.sort((a, b) => (a.time as number) - (b.time as number));
         oiTrendData.sort((a, b) => (a.time as number) - (b.time as number));
 
-        coiSeriesRef.current.setData(coiData);
+        try {
+            coiSeriesRef.current.setData(coiData);
+        } catch (err) {
+            console.error('[COI] setData failed', err, { points: coiData.length });
+            return;
+        }
         if (showTrend) {
-            oiTrendSeriesRef.current.setData(oiTrendData);
+            try {
+                oiTrendSeriesRef.current.setData(oiTrendData);
+            } catch (err) {
+                console.error('[OI Trend] setData failed', err, { points: oiTrendData.length });
+                return;
+            }
             // Ensure series is visible
             oiTrendSeriesRef.current.applyOptions({ visible: true });
         } else {
@@ -418,7 +441,12 @@ export function CoiTrendChart({ refreshTrigger }: CoiTrendChartProps) {
             }).filter((p: { time: any; value: number } | null): p is { time: any; value: number } => p !== null);
             spotSeriesData.sort((a: any, b: any) => (a.time as number) - (b.time as number));
             spotSeriesDataRef.current = spotSeriesData;
-            spotSeriesRef.current.setData(spotSeriesDataRef.current);
+            try {
+                spotSeriesRef.current.setData(spotSeriesDataRef.current);
+            } catch (err) {
+                console.error('[Spot] setData failed', err, { points: spotSeriesDataRef.current.length });
+                return;
+            }
             spotSeriesRef.current.applyOptions({ visible: true });
 
             if (spotSeriesDataRef.current.length > 0) {
