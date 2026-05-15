@@ -51,6 +51,16 @@ export function CoiTrendChart({ refreshTrigger }: CoiTrendChartProps) {
         };
     };
 
+    const toValidTrendPoint = (timeRaw: unknown, valueRaw: unknown): { time: any; value: number } | null => {
+        const timeNum = typeof timeRaw === 'string' ? Number(timeRaw) : timeRaw;
+        const valueNum = typeof valueRaw === 'string' ? Number(valueRaw) : valueRaw;
+        if (!Number.isFinite(timeNum) || !Number.isFinite(valueNum)) return null;
+        return {
+            time: timeNum as any,
+            value: valueNum as number,
+        };
+    };
+
     const fetchData = async () => {
         setIsLoading(true);
         try {
@@ -381,15 +391,13 @@ export function CoiTrendChart({ refreshTrigger }: CoiTrendChartProps) {
     useEffect(() => {
         if (!data || !coiSeriesRef.current || !oiTrendSeriesRef.current || !spotSeriesRef.current) return;
 
-        const coiData = data.timestamps.map((ts, i) => ({
-            time: ts / 1000 as any, // lightweight-charts expects seconds for UTCTimestamp
-            value: data.coi_percent[i],
-        }));
+        const coiData = data.timestamps
+            .map((ts, i) => toValidTrendPoint(ts / 1000, data.coi_percent[i]))
+            .filter((p: { time: any; value: number } | null): p is { time: any; value: number } => p !== null);
 
-        const oiTrendData = data.timestamps.map((ts, i) => ({
-            time: ts / 1000 as any,
-            value: data.oi_trend_percent[i],
-        }));
+        const oiTrendData = data.timestamps
+            .map((ts, i) => toValidTrendPoint(ts / 1000, data.oi_trend_percent[i]))
+            .filter((p: { time: any; value: number } | null): p is { time: any; value: number } => p !== null);
 
         // Sort data by time just in case
         coiData.sort((a, b) => (a.time as number) - (b.time as number));
