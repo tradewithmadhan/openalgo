@@ -6,6 +6,8 @@ import { RefreshCw } from 'lucide-react';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { useThemeStore } from '@/stores/themeStore';
+import { Zap, ZapOff } from 'lucide-react';
+import { toast } from 'sonner';
 
 interface CoiTrendData {
     timestamps: number[];
@@ -24,14 +26,17 @@ export function CoiTrendChart({ refreshTrigger }: CoiTrendChartProps) {
     const coiSeriesRef = useRef<ISeriesApi<"Baseline"> | null>(null);
     const oiTrendSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
     const spotSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+    const lastSpotTimeRef = useRef<number | null>(null);
     const prevWidthRef = useRef(0);
     const shouldFitContent = useRef(true);
+    const wsRef = useRef<WebSocket | null>(null);
 
     const [data, setData] = useState<CoiTrendData | null>(null);
     const [spotData, setSpotData] = useState<any>(null);
     const [isLoading, setIsLoading] = useState(false);
+    const [isLive, setIsLive] = useState(true);
     const [showTrend, setShowTrend] = useState(true);
-    const [showSpot, setShowSpot] = useState(false);
+    const [showSpot, setShowSpot] = useState(true);
     const [strikeMode, setStrikeMode] = useState<'option1' | 'option2'>('option2'); // option2 (Writers View) default
 
     const fetchData = async () => {
@@ -65,6 +70,122 @@ export function CoiTrendChart({ refreshTrigger }: CoiTrendChartProps) {
             console.error("Failed to fetch Spot data", error);
         }
     };
+
+    // WebSocket Connection for live NIFTY spot LTP
+    useEffect(() => {
+        if (!isLive) {
+            if (wsRef.current) {
+                wsRef.current.close();
+                wsRef.current = null;
+            }
+            return;
+        }
+
+        const connectWebSocket = async () => {
+            try {
+                const csrfResponse = await fetch('/auth/csrf-token', { credentials: 'include' });
+                const csrfData = await csrfResponse.json();
+                const csrfToken = csrfData.csrf_token;
+
+                const configResponse = await fetch('/api/websocket/config', {
+                    headers: { 'X-CSRFToken': csrfToken },
+                    credentials: 'include',
+                });
+                const configData = await configResponse.json();
+
+                if (configData.status !== 'success') throw new Error('Config fetch failed');
+
+                const socket = new WebSocket(configData.websocket_url);
+                wsRef.current = socket;
+
+                socket.onopen = async () => {
+                    try {
+                        const authCsrfResponse = await fetch('/auth/csrf-token', { credentials: 'include' });
+                        const authCsrfData = await authCsrfResponse.json();
+                        const authCsrfToken = authCsrfData.csrf_token;
+
+                        const apiKeyResponse = await fetch('/api/websocket/apikey', {
+                            headers: { 'X-CSRFToken': authCsrfToken },
+                            credentials: 'include',
+                        });
+                        const apiKeyData = await apiKeyResponse.json();
+
+                        if (apiKeyData.status === 'success' && apiKeyData.api_key) {
+                            socket.send(JSON.stringify({ action: 'authenticate', api_key: apiKeyData.api_key }));
+                        }
+                    } catch (error) {
+                        console.error('WebSocket Auth Failed', error);
+                        setIsLive(false);
+                    }
+                };
+
+                socket.onmessage = (event) => {
+                    try {
+                        const message = JSON.parse(event.data);
+                        const type = message.type || message.status;
+
+                        if (type === 'auth' && message.status === 'success') {
+                            toast.success('Live connection established');
+                            socket.send(JSON.stringify({
+                                action: 'subscribe',
+                                symbols: [{ symbol: 'NIFTY', exchange: 'NSE_INDEX' }],
+                                mode: 1,
+                            }));
+                        } else if (type === 'market_data' && message.data) {
+                            const { symbol, exchange, data } = message;
+                            if (symbol === 'NIFTY' && exchange === 'NSE_INDEX' && data.ltp && spotSeriesRef.current) {
+                                let rawTime: number;
+                                if (data.timestamp) {
+                                    if (typeof data.timestamp === 'number') {
+                                        rawTime = data.timestamp < 100000000000 ? data.timestamp : data.timestamp / 1000;
+                                    } else {
+                                        rawTime = new Date(data.timestamp).getTime() / 1000;
+                                    }
+                                } else {
+                                    rawTime = Date.now() / 1000;
+                                }
+
+                                const time = Math.floor(rawTime / 60) * 60;
+
+                                if (lastSpotTimeRef.current !== null && time < lastSpotTimeRef.current) {
+                                    return;
+                                }
+
+                                try {
+                                    spotSeriesRef.current.update({
+                                        time: time as any,
+                                        value: data.ltp,
+                                    });
+                                    lastSpotTimeRef.current = time;
+                                } catch (err) {
+                                    console.error('[WS] COI spot update failed:', err, { time, ltp: data.ltp });
+                                }
+                            }
+                        }
+                    } catch (error) {
+                        console.error('Error parsing WS message', error);
+                    }
+                };
+
+                socket.onerror = (error) => {
+                    console.error('WebSocket Error', error);
+                };
+            } catch (error) {
+                console.error('WebSocket Connection Failed', error);
+                setIsLive(false);
+                toast.error('Failed to connect to live data');
+            }
+        };
+
+        connectWebSocket();
+
+        return () => {
+            if (wsRef.current) {
+                wsRef.current.close();
+                wsRef.current = null;
+            }
+        };
+    }, [isLive]);
 
     // Apply theme settings
     const applyTheme = (chart: IChartApi, isDark: boolean) => {
@@ -264,6 +385,12 @@ export function CoiTrendChart({ refreshTrigger }: CoiTrendChartProps) {
             spotSeriesData.sort((a: any, b: any) => (a.time as number) - (b.time as number));
             spotSeriesRef.current.setData(spotSeriesData);
             spotSeriesRef.current.applyOptions({ visible: true });
+
+            if (spotSeriesData.length > 0) {
+                lastSpotTimeRef.current = spotSeriesData[spotSeriesData.length - 1].time as number;
+            } else {
+                lastSpotTimeRef.current = null;
+            }
         } else {
             spotSeriesRef.current.applyOptions({ visible: false });
         }
@@ -281,6 +408,17 @@ export function CoiTrendChart({ refreshTrigger }: CoiTrendChartProps) {
                 <CardTitle className="text-base font-bold">OI vs COI Trend</CardTitle>
                 <div className="flex items-center gap-4">
                      <div className="flex items-center space-x-2">
+                        <Label htmlFor="live-mode-coi" className="text-xs font-semibold flex items-center gap-1">
+                            {isLive ? <Zap className="h-3 w-3 text-yellow-500 fill-yellow-500" /> : <ZapOff className="h-3 w-3" />}
+                            Live
+                        </Label>
+                        <Switch
+                            id="live-mode-coi"
+                            checked={isLive}
+                            onCheckedChange={setIsLive}
+                        />
+                    </div>
+                    <div className="flex items-center space-x-2">
                         <Label htmlFor="writers-view" className="text-xs font-semibold">Writers View</Label>
                         <Switch 
                             id="writers-view" 
