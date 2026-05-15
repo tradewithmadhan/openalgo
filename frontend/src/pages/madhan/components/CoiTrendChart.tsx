@@ -40,6 +40,17 @@ export function CoiTrendChart({ refreshTrigger }: CoiTrendChartProps) {
     const [showSpot, setShowSpot] = useState(true);
     const [strikeMode, setStrikeMode] = useState<'option1' | 'option2'>('option2'); // option2 (Writers View) default
 
+    const toValidSpotPoint = (timeRaw: unknown, valueRaw: unknown): { time: any; value: number } | null => {
+        const timeNum = typeof timeRaw === 'string' ? Number(timeRaw) : timeRaw;
+        const valueNum = typeof valueRaw === 'string' ? Number(valueRaw) : valueRaw;
+        if (!Number.isFinite(timeNum) || !Number.isFinite(valueNum)) return null;
+        if ((valueNum as number) <= 0) return null;
+        return {
+            time: timeNum as any,
+            value: valueNum as number,
+        };
+    };
+
     const fetchData = async () => {
         setIsLoading(true);
         try {
@@ -162,10 +173,8 @@ export function CoiTrendChart({ refreshTrigger }: CoiTrendChartProps) {
                                 }
 
                                 try {
-                                    const nextPoint = {
-                                        time: time as any,
-                                        value: ltp,
-                                    };
+                                    const nextPoint = toValidSpotPoint(time, ltp);
+                                    if (!nextPoint) return;
 
                                     if (spotSeriesDataRef.current.length > 0 && lastSpotTimeRef.current === time) {
                                         spotSeriesDataRef.current[spotSeriesDataRef.current.length - 1] = nextPoint;
@@ -396,10 +405,9 @@ export function CoiTrendChart({ refreshTrigger }: CoiTrendChartProps) {
         }
 
         if (showSpot && spotData && spotData.timestamps && spotData.prices) {
-            const spotSeriesData = spotData.timestamps.map((ts: number, i: number) => ({
-                time: ts / 1000 as any,
-                value: spotData.prices[i],
-            }));
+            const spotSeriesData = spotData.timestamps.map((ts: number, i: number) => {
+                return toValidSpotPoint(ts / 1000, spotData.prices[i]);
+            }).filter((p: { time: any; value: number } | null): p is { time: any; value: number } => p !== null);
             spotSeriesData.sort((a: any, b: any) => (a.time as number) - (b.time as number));
             spotSeriesDataRef.current = spotSeriesData;
             spotSeriesRef.current.setData(spotSeriesDataRef.current);
