@@ -704,7 +704,8 @@ export default function NiftyChart() {
                           const y = self._series.priceToCoordinate(lvl.price)
                           if (y == null) return
                           ctx.strokeStyle = lvl.color
-                          ctx.lineWidth = Math.max(1, lvl.lineWidth) * vs
+                          // Force every line to render at exactly 1 CSS pixel wide.
+                          ctx.lineWidth = 1 * vs
                           if (lvl.dashed) ctx.setLineDash([4 * vs, 4 * vs])
                           else ctx.setLineDash([])
                           ctx.beginPath()
@@ -766,7 +767,7 @@ export default function NiftyChart() {
       const bases = [basePrice - 1, basePrice, basePrice + 1]
       const fromTime = dayArr[0].time
       // For all days except the last, end at the next day's first bar.
-      // For the most recent day, leave `to` null so the line extends to the chart edge.
+      // For the most recent day, end at the last candle of that day.
       const toTime = d < days.length - 1 ? dayGroups[days[d + 1]][0].time : dayArr[dayArr.length - 1].time
 
       const levels: any[] = []
@@ -775,7 +776,6 @@ export default function NiftyChart() {
           levels.push({
             price: (b + factor) * (b + factor),
             color: LEVEL_COLORS[idx],
-            lineWidth: 1,
             dashed: false,
           })
         })
@@ -783,7 +783,6 @@ export default function NiftyChart() {
       levels.push({
         price: basePrice * basePrice,
         color: '#AAAAAA',
-        lineWidth: 1,
         dashed: false,
       })
       const MID_FACTORS = [0.199, 0.643]
@@ -792,7 +791,6 @@ export default function NiftyChart() {
           levels.push({
             price: (b + factor) * (b + factor),
             color: MID_COLOR,
-            lineWidth: 1,
             dashed: true,
           })
         })
@@ -1127,7 +1125,7 @@ export default function NiftyChart() {
   }
 
   return (
-    <div className="h-[calc(100vh-56px)] w-full p-0">
+    <div className="h-full w-full p-0">
       <Card className="flex h-full w-full flex-col overflow-hidden rounded-none border-0 bg-card">
         <div className="shrink-0 flex flex-wrap items-center gap-1.5 border-b px-2 py-1.5">
           <div className="flex items-center gap-1">
