@@ -47,6 +47,22 @@ type IndicatorSeriesBucket = {
   markerSeries: Array<{ plotKey: string; primitive: { setMarkers: (markers: any[]) => void } }>
 }
 
+// Compact number formatter: 2500 -> "2.5k", 15000 -> "15k", 1.2M -> "1.2M"
+function formatCompact(n: number): string {
+  if (!Number.isFinite(n)) return '0'
+  const abs = Math.abs(n)
+  const sign = n < 0 ? '-' : ''
+  if (abs >= 1_000_000) {
+    const v = abs / 1_000_000
+    return `${sign}${v >= 10 ? Math.round(v) : v.toFixed(1)}M`
+  }
+  if (abs >= 1_000) {
+    const v = abs / 1_000
+    return `${sign}${v >= 10 ? Math.round(v) : v.toFixed(1)}k`
+  }
+  return `${sign}${Math.round(abs)}`
+}
+
 export default function NiftyChart() {
   const chartContainerRef = useRef<HTMLDivElement | null>(null)
   const chartRef = useRef<IChartApi | null>(null)
@@ -651,8 +667,8 @@ export default function NiftyChart() {
                           ctx.font = '8px Arial'
                           const ceLabelX = ceLeft ? ceX - 28 : ceX + ceW + 4
                           const peLabelX = peLeft ? peX - 28 : peX + peW + 4
-                          ctx.fillText(String(Math.abs(ceVal)), ceLabelX, y - 4)
-                          ctx.fillText(String(Math.abs(peVal)), peLabelX, y + 8)
+                          ctx.fillText(formatCompact(ceVal), ceLabelX, y - 4)
+                          ctx.fillText(formatCompact(peVal), peLabelX, y + 8)
                         }
                       })
                     })
