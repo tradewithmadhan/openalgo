@@ -96,7 +96,7 @@ export default function NiftyChart() {
   const [indicatorSearch, setIndicatorSearch] = useState('')
   const [activeIndicators, setActiveIndicators] = useState<IndicatorInstance[]>([
     { key: 'sma-0', indicatorId: 'sma' },
-    { key: 'rsi-0', indicatorId: 'rsi' },
+    //{ key: 'rsi-0', indicatorId: 'rsi' },
   ])
   const [indicatorInputs, setIndicatorInputs] = useState<Record<string, Record<string, unknown>>>({})
   const [expandedIndicatorKey, setExpandedIndicatorKey] = useState<string | null>(null)
@@ -184,8 +184,8 @@ export default function NiftyChart() {
         textColor: isDark ? '#a6adbb' : '#333',
       },
       grid: {
-        vertLines: { color: isDark ? 'rgba(166,173,187,0.1)' : 'rgba(0,0,0,0.1)' },
-        horzLines: { color: isDark ? 'rgba(166,173,187,0.1)' : 'rgba(0,0,0,0.1)' },
+        vertLines: { color: 'transparent' },
+        horzLines: { color: 'transparent' },
       },
       timeScale: {
         timeVisible: true,
@@ -767,7 +767,7 @@ export default function NiftyChart() {
       const fromTime = dayArr[0].time
       // For all days except the last, end at the next day's first bar.
       // For the most recent day, leave `to` null so the line extends to the chart edge.
-      const toTime = d < days.length - 1 ? dayGroups[days[d + 1]][0].time : null
+      const toTime = d < days.length - 1 ? dayGroups[days[d + 1]][0].time : dayArr[dayArr.length - 1].time
 
       const levels: any[] = []
       bases.forEach((b) => {
