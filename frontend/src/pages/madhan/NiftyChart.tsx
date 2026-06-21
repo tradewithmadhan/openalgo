@@ -77,7 +77,7 @@ export default function NiftyChart() {
   const oiShowValuesRef = useRef(true)
   const coiShowStrikeRef = useRef(true)
   const coiShowValuesRef = useRef(true)
-  const sqrtPriceLinesRef = useRef<any[]>([])
+  const sqrtPrimitiveRef = useRef<any>(null)
   const sqrtActiveRef = useRef(false)
 
   const [interval, setIntervalValue] = useState('5m')
@@ -355,7 +355,7 @@ export default function NiftyChart() {
         drawingManagerRef.current = null
       }
       indicatorSeriesRef.current.clear()
-      sqrtPriceLinesRef.current = []
+      sqrtPrimitiveRef.current = null
       chart.remove()
       chartRef.current = null
       setChartReady(false)
@@ -659,26 +659,86 @@ export default function NiftyChart() {
   }
 
   const clearSqrtPriceLines = () => {
-    if (!candleRef.current) {
-      sqrtPriceLinesRef.current = []
-      return
+    if (sqrtPrimitiveRef.current) {
+      sqrtPrimitiveRef.current.setData([])
     }
-    for (const line of sqrtPriceLinesRef.current) {
-      try {
-        candleRef.current.removePriceLine(line)
-      } catch {
-        // ignore stale lines
-      }
-    }
-    sqrtPriceLinesRef.current = []
   }
 
   const applySqrtLevels = (data: Candle[]) => {
-    if (!candleRef.current) return
-    clearSqrtPriceLines()
-    if (!sqrtActiveRef.current || !data.length) return
+    const seriesAny = candleRef.current as any
+    const chartAny = chartRef.current as any
+    if (!seriesAny || !chartAny) return
 
-    // Identify current day's first candle open (matches PineJS Std.open semantics).
+    // Lazily create the primitive that draws day-bounded horizontal segments.
+    if (!sqrtPrimitiveRef.current) {
+      const primitive = new (class {
+        _data: any[]
+        _series: any
+        _timeScale: any
+        _show: boolean
+        constructor(series: any, timeScale: any) {
+          this._data = []
+          this._series = series
+          this._timeScale = timeScale
+          this._show = true
+        }
+        paneViews() {
+          const self = this
+          return [
+            {
+              renderer() {
+                return {
+                  draw(target: any) {
+                    if (!self._show || !self._data?.length) return
+                    target.useBitmapCoordinateSpace((scope: any) => {
+                      const ctx = scope.context
+                      const ts = scope.horizontalPixelRatio
+                      const vs = scope.verticalPixelRatio
+                      const chartWidth = scope.bitmapSize.width
+                      self._data.forEach((seg: any) => {
+                        const x1 = self._timeScale.timeToCoordinate(seg.from)
+                        if (x1 == null) return
+                        const x2 = seg.to != null ? self._timeScale.timeToCoordinate(seg.to) : null
+                        const rightX = x2 != null ? x2 * ts : chartWidth
+                        seg.levels.forEach((lvl: any) => {
+                          const y = self._series.priceToCoordinate(lvl.price)
+                          if (y == null) return
+                          ctx.strokeStyle = lvl.color
+                          ctx.lineWidth = Math.max(1, lvl.lineWidth) * vs
+                          if (lvl.dashed) ctx.setLineDash([4 * vs, 4 * vs])
+                          else ctx.setLineDash([])
+                          ctx.beginPath()
+                          ctx.moveTo(x1 * ts, y * vs)
+                          ctx.lineTo(rightX, y * vs)
+                          ctx.stroke()
+                        })
+                      })
+                      ctx.setLineDash([])
+                    })
+                  },
+                }
+              },
+            },
+          ]
+        }
+        setData(v: any[]) {
+          this._data = v || []
+        }
+        toggle() {
+          this._show = !this._show
+          return this._show
+        }
+      })(seriesAny, chartAny.timeScale())
+      seriesAny.attachPrimitive(primitive)
+      sqrtPrimitiveRef.current = primitive
+    }
+
+    if (!sqrtActiveRef.current || !data.length) {
+      sqrtPrimitiveRef.current.setData([])
+      return
+    }
+
+    // Group candles by trading day (local date).
     const dayGroups: Record<string, Candle[]> = {}
     data.forEach((c) => {
       const key = new Date(c.time * 1000).toDateString()
@@ -686,73 +746,61 @@ export default function NiftyChart() {
       dayGroups[key].push(c)
     })
     const days = Object.keys(dayGroups).sort((a, b) => +new Date(a) - +new Date(b))
-    if (!days.length) return
+    if (!days.length) {
+      sqrtPrimitiveRef.current.setData([])
+      return
+    }
     Object.values(dayGroups).forEach((arr) => arr.sort((a, b) => a.time - b.time))
-    const currentDay = dayGroups[days[days.length - 1]]
-    const dayOpen = currentDay[0]?.open
-    if (!Number.isFinite(dayOpen) || dayOpen <= 0) return
-
-    const basePrice = Math.floor(Math.sqrt(dayOpen))
-    const i8 = basePrice - 1
-    const i9 = basePrice
-    const i10 = basePrice + 1
 
     const LEVEL_FACTORS = [0.398, 0.5, 0.786, 0.888]
     const LEVEL_COLORS = ['#fa031c', '#0df214', '#fa031c', '#0df214']
     const MID_COLOR = '#071ff7'
 
-    const levelQ = (base: number, factor: number) => (base + factor) * (base + factor)
+    const segments: any[] = []
+    for (let d = 0; d < days.length; d++) {
+      const dayArr = dayGroups[days[d]]
+      const dayOpen = dayArr[0]?.open
+      if (!Number.isFinite(dayOpen) || dayOpen <= 0) continue
 
-    const series = candleRef.current
-    const bases = [
-      { b: i8, prefix: 'i-1' },
-      { b: i9, prefix: 'i' },
-      { b: i10, prefix: 'i+1' },
-    ]
+      const basePrice = Math.floor(Math.sqrt(dayOpen))
+      const bases = [basePrice - 1, basePrice, basePrice + 1]
+      const fromTime = dayArr[0].time
+      // For all days except the last, end at the next day's first bar.
+      // For the most recent day, leave `to` null so the line extends to the chart edge.
+      const toTime = d < days.length - 1 ? dayGroups[days[d + 1]][0].time : null
 
-    // Major levels (solid lines, alternating red/green)
-    bases.forEach(({ b }) => {
-      LEVEL_FACTORS.forEach((factor, idx) => {
-        const price = levelQ(b, factor)
-        const line = series.createPriceLine({
-          price,
-          color: LEVEL_COLORS[idx],
-          lineWidth: 1,
-          lineStyle: 0,
-          axisLabelVisible: false,
-          title: '',
+      const levels: any[] = []
+      bases.forEach((b) => {
+        LEVEL_FACTORS.forEach((factor, idx) => {
+          levels.push({
+            price: (b + factor) * (b + factor),
+            color: LEVEL_COLORS[idx],
+            lineWidth: 1,
+            dashed: false,
+          })
         })
-        sqrtPriceLinesRef.current.push(line)
       })
-    })
-
-    // Base price line (gray, solid)
-    const baseLine = series.createPriceLine({
-      price: basePrice * basePrice,
-      color: '#AAAAAA',
-      lineWidth: 1,
-      lineStyle: 0,
-      axisLabelVisible: false,
-      title: '',
-    })
-    sqrtPriceLinesRef.current.push(baseLine)
-
-    // Mid levels (dashed, blue) - use MID factors 0.199 and 0.643
-    const MID_FACTORS = [0.199, 0.643]
-    bases.forEach(({ b }) => {
-      MID_FACTORS.forEach((factor) => {
-        const price = levelQ(b, factor)
-        const line = series.createPriceLine({
-          price,
-          color: MID_COLOR,
-          lineWidth: 1,
-          lineStyle: 2, // dashed
-          axisLabelVisible: false,
-          title: '',
+      levels.push({
+        price: basePrice * basePrice,
+        color: '#AAAAAA',
+        lineWidth: 1,
+        dashed: false,
+      })
+      const MID_FACTORS = [0.199, 0.643]
+      bases.forEach((b) => {
+        MID_FACTORS.forEach((factor) => {
+          levels.push({
+            price: (b + factor) * (b + factor),
+            color: MID_COLOR,
+            lineWidth: 1,
+            dashed: true,
+          })
         })
-        sqrtPriceLinesRef.current.push(line)
       })
-    })
+      segments.push({ from: fromTime, to: toTime, levels })
+    }
+
+    sqrtPrimitiveRef.current.setData(segments)
   }
 
   const refreshChartData = async () => {
