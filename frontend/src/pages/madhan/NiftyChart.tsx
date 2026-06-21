@@ -384,6 +384,76 @@ export default function NiftyChart() {
     return 60
   }
 
+  // Aggregate 1-minute candles into the user-selected interval, bucketing on
+  // 00:00 IST of each trading day. This prevents the 09:08 pre-open candle
+  // from being merged with the previous day's last candle by naive
+  // Unix-time bucketing.
+  const aggregateCandlesByDay = (candles: Candle[], selectedInterval: string): Candle[] => {
+    if (!candles.length) return candles
+    const intervalSec = getIntervalSeconds(selectedInterval)
+    if (intervalSec <= 60) {
+      return [...candles].sort((a, b) => a.time - b.time)
+    }
+
+    // IST is UTC+5:30.
+    const IST_OFFSET_SEC = 5 * 3600 + 30 * 60
+    const istDateKey = (ts: number) => {
+      const parts = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'Asia/Kolkata',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+      }).format(new Date(ts * 1000))
+      return parts // YYYY-MM-DD
+    }
+    const istMidnightTs = (ts: number) => {
+      const [y, m, d] = istDateKey(ts).split('-').map(Number)
+      // Midnight IST = (UTC date at y/m/d 00:00) minus 5h30m to align IST.
+      return Math.floor(Date.UTC(y, m - 1, d) / 1000) - IST_OFFSET_SEC
+    }
+
+    // Group by IST calendar date.
+    const groups = new Map<string, Candle[]>()
+    for (const c of candles) {
+      const key = istDateKey(c.time)
+      const arr = groups.get(key)
+      if (arr) arr.push(c)
+      else groups.set(key, [c])
+    }
+
+    const aggregated: Candle[] = []
+    for (const key of Array.from(groups.keys()).sort()) {
+      const dayCandles = [...(groups.get(key) || [])].sort((a, b) => a.time - b.time)
+      if (!dayCandles.length) continue
+
+      const dayStartTs = istMidnightTs(dayCandles[0].time)
+      const buckets = new Map<number, Candle>()
+      for (const c of dayCandles) {
+        const offset = c.time - dayStartTs
+        const bucketOffset = Math.floor(offset / intervalSec) * intervalSec
+        const bucketTs = dayStartTs + bucketOffset
+        const existing = buckets.get(bucketTs)
+        if (existing) {
+          if (c.high > existing.high) existing.high = c.high
+          if (c.low < existing.low) existing.low = c.low
+          existing.close = c.close
+        } else {
+          buckets.set(bucketTs, {
+            time: bucketTs,
+            open: c.open,
+            high: c.high,
+            low: c.low,
+            close: c.close,
+          })
+        }
+      }
+      for (const bk of Array.from(buckets.keys()).sort((a, b) => a - b)) {
+        aggregated.push(buckets.get(bk)!)
+      }
+    }
+    return aggregated
+  }
+
   const toSeriesData = (plot: unknown, bars: Bar[], preserveWhitespace = false) => {
     if (!Array.isArray(plot)) return []
     return plot
@@ -803,9 +873,12 @@ export default function NiftyChart() {
 
   const refreshChartData = async () => {
     if (!candleRef.current || !ema34Ref.current || !ema55Ref.current) return
-    const res = await fetch(`/madhan/nifty_live_data?interval=${interval}&_=${Date.now()}`)
+    // Always pull 1-minute data and aggregate locally so the 09:08 pre-open
+    // candle of today is never merged with the previous day's last candle.
+    const res = await fetch(`/madhan/nifty_live_data?interval=1m&_=${Date.now()}`)
     const json = await res.json()
-    const data: Candle[] = json?.data || []
+    const rawData: Candle[] = json?.data || []
+    const data = aggregateCandlesByDay(rawData, interval)
     priceDataRef.current = data
     candleRef.current.setData(data as any)
     ema34Ref.current.setData(calculateEMA(data, 34) as any)
