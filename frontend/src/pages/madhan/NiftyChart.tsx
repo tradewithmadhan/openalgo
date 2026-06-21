@@ -77,6 +77,8 @@ export default function NiftyChart() {
   const oiShowValuesRef = useRef(true)
   const coiShowStrikeRef = useRef(true)
   const coiShowValuesRef = useRef(true)
+  const sqrtPriceLinesRef = useRef<any[]>([])
+  const sqrtActiveRef = useRef(false)
 
   const [interval, setIntervalValue] = useState('5m')
   const [oiActive, setOiActive] = useState(true)
@@ -84,6 +86,7 @@ export default function NiftyChart() {
   const [emaActive, setEmaActive] = useState(false)
   const [dayOpenActive, setDayOpenActive] = useState(false)
   const [prevOhlcActive, setPrevOhlcActive] = useState(false)
+  const [sqrtActive, setSqrtActive] = useState(false)
   const [oiX, setOiX] = useState(100)
   const [coiX, setCoiX] = useState(80)
   const [oiShowStrike, setOiShowStrike] = useState(false)
@@ -352,6 +355,7 @@ export default function NiftyChart() {
         drawingManagerRef.current = null
       }
       indicatorSeriesRef.current.clear()
+      sqrtPriceLinesRef.current = []
       chart.remove()
       chartRef.current = null
       setChartReady(false)
@@ -654,6 +658,103 @@ export default function NiftyChart() {
     optionVolumeRef.current.setData(aggregated as any)
   }
 
+  const clearSqrtPriceLines = () => {
+    if (!candleRef.current) {
+      sqrtPriceLinesRef.current = []
+      return
+    }
+    for (const line of sqrtPriceLinesRef.current) {
+      try {
+        candleRef.current.removePriceLine(line)
+      } catch {
+        // ignore stale lines
+      }
+    }
+    sqrtPriceLinesRef.current = []
+  }
+
+  const applySqrtLevels = (data: Candle[]) => {
+    if (!candleRef.current) return
+    clearSqrtPriceLines()
+    if (!sqrtActiveRef.current || !data.length) return
+
+    // Identify current day's first candle open (matches PineJS Std.open semantics).
+    const dayGroups: Record<string, Candle[]> = {}
+    data.forEach((c) => {
+      const key = new Date(c.time * 1000).toDateString()
+      if (!dayGroups[key]) dayGroups[key] = []
+      dayGroups[key].push(c)
+    })
+    const days = Object.keys(dayGroups).sort((a, b) => +new Date(a) - +new Date(b))
+    if (!days.length) return
+    Object.values(dayGroups).forEach((arr) => arr.sort((a, b) => a.time - b.time))
+    const currentDay = dayGroups[days[days.length - 1]]
+    const dayOpen = currentDay[0]?.open
+    if (!Number.isFinite(dayOpen) || dayOpen <= 0) return
+
+    const basePrice = Math.floor(Math.sqrt(dayOpen))
+    const i8 = basePrice - 1
+    const i9 = basePrice
+    const i10 = basePrice + 1
+
+    const LEVEL_FACTORS = [0.398, 0.5, 0.786, 0.888]
+    const LEVEL_COLORS = ['#fa031c', '#0df214', '#fa031c', '#0df214']
+    const MID_COLOR = '#071ff7'
+
+    const levelQ = (base: number, factor: number) => (base + factor) * (base + factor)
+
+    const series = candleRef.current
+    const bases = [
+      { b: i8, prefix: 'i-1' },
+      { b: i9, prefix: 'i' },
+      { b: i10, prefix: 'i+1' },
+    ]
+
+    // Major levels (solid lines, alternating red/green)
+    bases.forEach(({ b }) => {
+      LEVEL_FACTORS.forEach((factor, idx) => {
+        const price = levelQ(b, factor)
+        const line = series.createPriceLine({
+          price,
+          color: LEVEL_COLORS[idx],
+          lineWidth: 1,
+          lineStyle: 0,
+          axisLabelVisible: false,
+          title: '',
+        })
+        sqrtPriceLinesRef.current.push(line)
+      })
+    })
+
+    // Base price line (gray, solid)
+    const baseLine = series.createPriceLine({
+      price: basePrice * basePrice,
+      color: '#AAAAAA',
+      lineWidth: 1,
+      lineStyle: 0,
+      axisLabelVisible: false,
+      title: '',
+    })
+    sqrtPriceLinesRef.current.push(baseLine)
+
+    // Mid levels (dashed, blue) - use MID factors 0.199 and 0.643
+    const MID_FACTORS = [0.199, 0.643]
+    bases.forEach(({ b }) => {
+      MID_FACTORS.forEach((factor) => {
+        const price = levelQ(b, factor)
+        const line = series.createPriceLine({
+          price,
+          color: MID_COLOR,
+          lineWidth: 1,
+          lineStyle: 2, // dashed
+          axisLabelVisible: false,
+          title: '',
+        })
+        sqrtPriceLinesRef.current.push(line)
+      })
+    })
+  }
+
   const refreshChartData = async () => {
     if (!candleRef.current || !ema34Ref.current || !ema55Ref.current) return
     const res = await fetch(`/madhan/nifty_live_data?interval=${interval}&_=${Date.now()}`)
@@ -665,6 +766,7 @@ export default function NiftyChart() {
     ema55Ref.current.setData(calculateEMA(data, 55) as any)
     updateIndicatorSeries(data)
     addHorizontalLines(data)
+    applySqrtLevels(data)
     await Promise.all([fetchOiProfiles(), fetchOptionCombinedVolume()])
   }
 
@@ -878,6 +980,16 @@ export default function NiftyChart() {
   }, [prevOhlcActive])
 
   useEffect(() => {
+    sqrtActiveRef.current = sqrtActive
+    if (!candleRef.current) return
+    if (sqrtActive) {
+      applySqrtLevels(priceDataRef.current)
+    } else {
+      clearSqrtPriceLines()
+    }
+  }, [sqrtActive])
+
+  useEffect(() => {
     oiXRef.current = oiX
     oiShowStrikeRef.current = oiShowStrike
     oiShowValuesRef.current = oiShowValues
@@ -989,6 +1101,7 @@ export default function NiftyChart() {
           <Button variant={emaActive ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={() => setEmaActive((v) => !v)}>EMA</Button>
           <Button variant={dayOpenActive ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={() => setDayOpenActive((v) => !v)}>Day Open</Button>
           <Button variant={prevOhlcActive ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={() => setPrevOhlcActive((v) => !v)}>Prev OHLC</Button>
+          <Button variant={sqrtActive ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={() => setSqrtActive((v) => !v)}>SQRT</Button>
           <Button variant={showIndicatorPanel ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={() => setShowIndicatorPanel((v) => !v)}>Indicators</Button>
           <Button variant={showDrawingPanel ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={() => setShowDrawingPanel((v) => !v)}>Drawings</Button>
           <div className="flex items-center gap-1">
