@@ -23,7 +23,9 @@ import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { useMarketData } from '@/hooks/useMarketData'
 import { Zap, ZapOff, RefreshCw } from 'lucide-react'
-import DrawingToolbar from './DrawingToolbar'
+import DrawingToolbar, { TEXT_DRAWING_TYPES } from './DrawingToolbar'
+import DrawingListPanel from './DrawingListPanel'
+import TextEditorModal from './TextEditorModal'
 
 type Candle = {
   time: number
@@ -126,6 +128,8 @@ export default function NiftyChart() {
   const [lineWidth, setLineWidth] = useState(2)
   const [selectedDrawingId, setSelectedDrawingId] = useState<string | null>(null)
   const [selectedDrawing, setSelectedDrawing] = useState<IDrawing | null>(null)
+  const [showDrawingList, setShowDrawingList] = useState(true)
+  const [editingTextDrawing, setEditingTextDrawing] = useState<IDrawing | null>(null)
   const [chartReady, setChartReady] = useState(false)
   const wsSymbols = useMemo(() => [{ symbol: 'NIFTY', exchange: 'NSE_INDEX' }], [])
   const { data: wsData, isConnected, isConnecting, error: wsError, connect: wsConnect } = useMarketData({
@@ -401,6 +405,23 @@ export default function NiftyChart() {
     chart.subscribeClick(handleChartClick)
     chart.subscribeCrosshairMove(handleChartCrosshairMove)
 
+    const handleChartDblClick = (e: MouseEvent) => {
+      const tool = activeDrawingToolRef.current
+      if (tool) return
+      if (!drawingManagerRef.current || !chartContainerRef.current) return
+      const rect = chartContainerRef.current.getBoundingClientRect()
+      const x = e.clientX - rect.left
+      const y = e.clientY - rect.top
+      const hit = drawingManagerRef.current.hitTest({ x, y })
+      if (hit && TEXT_DRAWING_TYPES.includes(hit.type)) {
+        e.preventDefault()
+        e.stopPropagation()
+        drawingManagerRef.current.selectDrawing(hit.id)
+        setEditingTextDrawing(hit)
+      }
+    }
+    chartContainerRef.current.addEventListener('dblclick', handleChartDblClick)
+
     const resizeObserver = new ResizeObserver(() => {
       if (!chartContainerRef.current || !chartRef.current) return
       chartRef.current.applyOptions({
@@ -416,6 +437,9 @@ export default function NiftyChart() {
       resizeObserver.disconnect()
       chart.unsubscribeClick(handleChartClick)
       chart.unsubscribeCrosshairMove(handleChartCrosshairMove)
+      if (chartContainerRef.current) {
+        chartContainerRef.current.removeEventListener('dblclick', handleChartDblClick)
+      }
       if (drawingManagerRef.current) {
         drawingManagerRef.current.detach()
         drawingManagerRef.current = null
@@ -1252,6 +1276,25 @@ export default function NiftyChart() {
     setSelectedDrawing(null)
   }
 
+  const selectDrawingFromList = (id: string) => {
+    if (!drawingManagerRef.current) return
+    drawingManagerRef.current.selectDrawing(id)
+  }
+
+  const deleteDrawingFromList = (id: string) => {
+    if (!drawingManagerRef.current) return
+    drawingManagerRef.current.removeDrawing(id)
+    if (selectedDrawingId === id) {
+      setSelectedDrawingId(null)
+      setSelectedDrawing(null)
+    }
+  }
+
+  const handleTextEditorSave = () => {
+    setEditingTextDrawing(null)
+    drawingManagerRef.current?.deselectAll()
+  }
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.key === 'Delete' || e.key === 'Backspace') && selectedDrawingId && drawingManagerRef.current) {
@@ -1365,116 +1408,127 @@ export default function NiftyChart() {
           </div>
         </div>
         <div className="min-h-0 flex flex-1 overflow-hidden">
-          {(showDrawingPanel || showIndicatorPanel) && (
+          {showDrawingPanel && (
+            <DrawingToolbar
+              drawingManager={drawingManagerRef.current}
+              activeTool={activeDrawingTool}
+              onToolSelect={handleToolSelect}
+              drawingColor={drawingColor}
+              onColorChange={setDrawingColor}
+              lineWidth={lineWidth}
+              onLineWidthChange={setLineWidth}
+              onClearAll={clearDrawings}
+              selectedDrawingId={selectedDrawingId}
+              selectedDrawing={selectedDrawing}
+              onDeleteSelected={deleteSelectedDrawing}
+              onDeselect={deselectDrawing}
+            />
+          )}
+          {showIndicatorPanel && (
             <div className="h-full w-[320px] shrink-0 overflow-auto border-r bg-card/40 p-2">
-              {showDrawingPanel && (
-                <DrawingToolbar
-                  drawingManager={drawingManagerRef.current}
-                  activeTool={activeDrawingTool}
-                  onToolSelect={handleToolSelect}
-                  drawingColor={drawingColor}
-                  onColorChange={setDrawingColor}
-                  lineWidth={lineWidth}
-                  onLineWidthChange={setLineWidth}
-                  onClearAll={clearDrawings}
-                  selectedDrawingId={selectedDrawingId}
-                  selectedDrawing={selectedDrawing}
-                  onDeleteSelected={deleteSelectedDrawing}
-                  onDeselect={deselectDrawing}
-                />
-              )}
-              {showIndicatorPanel && (
-                <div className="space-y-2 rounded border p-2">
-                  <Label className="text-xs font-semibold">Indicators</Label>
-                  <Input className="h-7 text-[11px]" value={indicatorSearch} placeholder="Search indicators" onChange={(e) => setIndicatorSearch(e.target.value)} />
-                  <div className="max-h-36 space-y-1 overflow-auto rounded border p-1">
-                    {availableIndicators.slice(0, 200).map((item) => {
-                      const active = activeIndicators.some((x) => x.indicatorId === item.id)
-                      return (
-                        <button
-                          key={item.id}
-                          type="button"
-                          className={`w-full rounded px-2 py-1 text-left text-[11px] ${active ? 'bg-primary/20' : 'hover:bg-accent'}`}
-                          onClick={() => {
-                            addIndicator(item.id)
-                          }}
-                        >
-                          {item.shortName} ({item.id}) {active ? '• Added' : ''}
-                        </button>
-                      )
-                    })}
-                  </div>
-                  <div className="space-y-2">
-                    {activeIndicators.map((indicator, index) => {
-                      const entry = getIndicatorById(indicator.indicatorId)
-                      if (!entry) return null
-                      const expanded = expandedIndicatorKey === indicator.key
-                      const config = Array.isArray(entry.inputConfig) ? entry.inputConfig : []
-                      const values = indicatorInputs[indicator.key] || {}
-                      return (
-                        <div key={indicator.key} className="rounded border p-2">
-                          <div className="flex items-center justify-between gap-2">
-                            <button type="button" className="text-left text-[11px] font-semibold" onClick={() => setExpandedIndicatorKey(expanded ? null : indicator.key)}>{entry.name} #{index + 1}</button>
-                            <Button variant="secondary" size="sm" className="h-6 px-2 text-[10px]" onClick={() => removeIndicator(indicator.key)}>Remove</Button>
-                          </div>
-                          {expanded && (
-                            <div className="mt-2 space-y-2">
-                              {config.map((input: any) => {
-                                const value = values[input.id] ?? input.defval
-                                const inputType = String(input.type || '')
-                                if (inputType === 'bool') {
-                                  return (
-                                    <div key={input.id} className="flex items-center justify-between gap-2">
-                                      <Label className="text-[11px]">{input.title || input.id}</Label>
-                                      <Checkbox checked={Boolean(value)} onCheckedChange={(v) => updateIndicatorInput(indicator.key, input.id, !!v)} />
-                                    </div>
-                                  )
-                                }
-                                if (inputType === 'source' || Array.isArray(input.options)) {
-                                  const options = input.options || ['open', 'high', 'low', 'close']
-                                  return (
-                                    <div key={input.id} className="space-y-1">
-                                      <Label className="text-[11px]">{input.title || input.id}</Label>
-                                      <Select value={String(value)} onValueChange={(val) => updateIndicatorInput(indicator.key, input.id, val)}>
-                                        <SelectTrigger className="h-7 text-[11px]"><SelectValue /></SelectTrigger>
-                                        <SelectContent>
-                                          {options.map((option: string) => (
-                                            <SelectItem key={option} value={String(option)}>{String(option)}</SelectItem>
-                                          ))}
-                                        </SelectContent>
-                                      </Select>
-                                    </div>
-                                  )
-                                }
+              <div className="space-y-2 rounded border p-2">
+                <Label className="text-xs font-semibold">Indicators</Label>
+                <Input className="h-7 text-[11px]" value={indicatorSearch} placeholder="Search indicators" onChange={(e) => setIndicatorSearch(e.target.value)} />
+                <div className="max-h-36 space-y-1 overflow-auto rounded border p-1">
+                  {availableIndicators.slice(0, 200).map((item) => {
+                    const active = activeIndicators.some((x) => x.indicatorId === item.id)
+                    return (
+                      <button
+                        key={item.id}
+                        type="button"
+                        className={`w-full rounded px-2 py-1 text-left text-[11px] ${active ? 'bg-primary/20' : 'hover:bg-accent'}`}
+                        onClick={() => {
+                          addIndicator(item.id)
+                        }}
+                      >
+                        {item.shortName} ({item.id}) {active ? '• Added' : ''}
+                      </button>
+                    )
+                  })}
+                </div>
+                <div className="space-y-2">
+                  {activeIndicators.map((indicator, index) => {
+                    const entry = getIndicatorById(indicator.indicatorId)
+                    if (!entry) return null
+                    const expanded = expandedIndicatorKey === indicator.key
+                    const config = Array.isArray(entry.inputConfig) ? entry.inputConfig : []
+                    const values = indicatorInputs[indicator.key] || {}
+                    return (
+                      <div key={indicator.key} className="rounded border p-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <button type="button" className="text-left text-[11px] font-semibold" onClick={() => setExpandedIndicatorKey(expanded ? null : indicator.key)}>{entry.name} #{index + 1}</button>
+                          <Button variant="secondary" size="sm" className="h-6 px-2 text-[10px]" onClick={() => removeIndicator(indicator.key)}>Remove</Button>
+                        </div>
+                        {expanded && (
+                          <div className="mt-2 space-y-2">
+                            {config.map((input: any) => {
+                              const value = values[input.id] ?? input.defval
+                              const inputType = String(input.type || '')
+                              if (inputType === 'bool') {
+                                return (
+                                  <div key={input.id} className="flex items-center justify-between gap-2">
+                                    <Label className="text-[11px]">{input.title || input.id}</Label>
+                                    <Checkbox checked={Boolean(value)} onCheckedChange={(v) => updateIndicatorInput(indicator.key, input.id, !!v)} />
+                                  </div>
+                                )
+                              }
+                              if (inputType === 'source' || Array.isArray(input.options)) {
+                                const options = input.options || ['open', 'high', 'low', 'close']
                                 return (
                                   <div key={input.id} className="space-y-1">
                                     <Label className="text-[11px]">{input.title || input.id}</Label>
-                                    <Input
-                                      type="number"
-                                      className="h-7 text-[11px]"
-                                      value={String(value ?? '')}
-                                      onChange={(e) => {
-                                        const raw = e.target.value
-                                        const num = inputType === 'int' ? Number.parseInt(raw || '0', 10) : Number.parseFloat(raw || '0')
-                                        if (!Number.isNaN(num)) updateIndicatorInput(indicator.key, input.id, num)
-                                      }}
-                                    />
+                                    <Select value={String(value)} onValueChange={(val) => updateIndicatorInput(indicator.key, input.id, val)}>
+                                      <SelectTrigger className="h-7 text-[11px]"><SelectValue /></SelectTrigger>
+                                      <SelectContent>
+                                        {options.map((option: string) => (
+                                          <SelectItem key={option} value={String(option)}>{String(option)}</SelectItem>
+                                        ))}
+                                      </SelectContent>
+                                    </Select>
                                   </div>
                                 )
-                              })}
-                            </div>
-                          )}
-                        </div>
-                      )
-                    })}
-                  </div>
+                              }
+                              return (
+                                <div key={input.id} className="space-y-1">
+                                  <Label className="text-[11px]">{input.title || input.id}</Label>
+                                  <Input
+                                    type="number"
+                                    className="h-7 text-[11px]"
+                                    value={String(value ?? '')}
+                                    onChange={(e) => {
+                                      const raw = e.target.value
+                                      const num = inputType === 'int' ? Number.parseInt(raw || '0', 10) : Number.parseFloat(raw || '0')
+                                      if (!Number.isNaN(num)) updateIndicatorInput(indicator.key, input.id, num)
+                                    }}
+                                  />
+                                </div>
+                              )
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
                 </div>
-              )}
+              </div>
             </div>
           )}
           <div ref={chartContainerRef} className="min-h-0 w-full flex-1" />
+          {showDrawingList && (
+            <DrawingListPanel
+              drawingManager={drawingManagerRef.current}
+              selectedDrawingId={selectedDrawingId}
+              onSelect={selectDrawingFromList}
+              onDelete={deleteDrawingFromList}
+            />
+          )}
         </div>
       </Card>
+      <TextEditorModal
+        drawing={editingTextDrawing}
+        onSave={handleTextEditorSave}
+        onClose={() => setEditingTextDrawing(null)}
+      />
     </div>
   )
 }

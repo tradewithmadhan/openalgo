@@ -1,9 +1,25 @@
-import { useState } from 'react'
-import { getToolRegistry, type DrawingCategory, type IDrawing, type DrawingManager } from 'lightweight-charts-drawing'
+import { useState, useRef, useEffect } from 'react'
+import { getToolRegistry, type IDrawing, type DrawingManager } from 'lightweight-charts-drawing'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Trash2, X } from 'lucide-react'
+import {
+  Minus,
+  Trash2,
+  X,
+  ChevronRight,
+  Move,
+  Square,
+  Type,
+  TrendingUp,
+  GitBranch,
+  Target,
+  Diamond,
+  ArrowUpRight,
+  ArrowDownRight,
+  Ruler,
+  Pen,
+} from 'lucide-react'
 
 interface DrawingToolbarProps {
   drawingManager: DrawingManager | null
@@ -20,30 +36,114 @@ interface DrawingToolbarProps {
   onDeselect: () => void
 }
 
-const CATEGORY_LABELS: Record<DrawingCategory, string> = {
-  line: 'Lines',
-  channel: 'Channels',
-  fibonacci: 'Fibonacci',
-  gann: 'Gann',
-  pitchfork: 'Pitchforks',
-  shape: 'Shapes',
-  annotation: 'Annotations',
-  trading: 'Trading',
-  forecasting: 'Forecasting',
-  measurement: 'Measurement',
+interface ToolGroup {
+  id: string
+  label: string
+  icon: React.ReactNode
+  tools: string[]
+  defaultTool: string
 }
 
-const CATEGORY_ORDER: DrawingCategory[] = [
-  'line',
-  'channel',
-  'fibonacci',
-  'gann',
-  'pitchfork',
-  'shape',
-  'annotation',
-  'trading',
-  'measurement',
+const TOOL_GROUPS: ToolGroup[] = [
+  {
+    id: 'lines',
+    label: 'Trend Lines',
+    icon: <TrendingUp className="h-4 w-4" />,
+    tools: ['trend-line', 'ray', 'info-line', 'extended-line', 'trend-angle'],
+    defaultTool: 'trend-line',
+  },
+  {
+    id: 'horizontal',
+    label: 'Horizontal/Vertical',
+    icon: <Minus className="h-4 w-4" />,
+    tools: ['horizontal-line', 'horizontal-ray', 'vertical-line', 'cross-line'],
+    defaultTool: 'horizontal-ray',
+  },
+  {
+    id: 'channels',
+    label: 'Channels',
+    icon: <GitBranch className="h-4 w-4" />,
+    tools: ['parallel-channel', 'regression-trend', 'flat-top-bottom', 'disjoint-channel'],
+    defaultTool: 'parallel-channel',
+  },
+  {
+    id: 'pitchforks',
+    label: 'Pitchforks',
+    icon: <GitBranch className="h-4 w-4 rotate-180" />,
+    tools: ['andrews-pitchfork', 'schiff-pitchfork', 'modified-schiff-pitchfork', 'inside-pitchfork'],
+    defaultTool: 'andrews-pitchfork',
+  },
+  {
+    id: 'fib',
+    label: 'Fibonacci',
+    icon: <span className="text-xs font-bold">F</span>,
+    tools: [
+      'fib-retracement', 'fib-extension', 'fib-channel', 'fib-time-zone',
+      'fib-speed-fan', 'fib-time-extension', 'fib-circles', 'fib-spiral',
+      'fib-arcs', 'fib-wedge', 'pitchfan',
+    ],
+    defaultTool: 'fib-retracement',
+  },
+  {
+    id: 'gann',
+    label: 'Gann',
+    icon: <span className="text-xs font-bold">G</span>,
+    tools: ['gann-box', 'gann-fan', 'gann-square-fixed', 'gann-square'],
+    defaultTool: 'gann-box',
+  },
+  {
+    id: 'shapes',
+    label: 'Shapes',
+    icon: <Square className="h-4 w-4" />,
+    tools: ['rectangle', 'circle', 'triangle', 'ellipse', 'arc', 'path', 'polyline', 'curve', 'double-curve', 'rotated-rectangle'],
+    defaultTool: 'rectangle',
+  },
+  {
+    id: 'arrows',
+    label: 'Arrows & Markers',
+    icon: <ArrowUpRight className="h-4 w-4" />,
+    tools: ['arrow', 'arrow-marker', 'arrow-mark-up', 'arrow-mark-down'],
+    defaultTool: 'arrow',
+  },
+  {
+    id: 'brush',
+    label: 'Brush & Highlight',
+    icon: <Pen className="h-4 w-4" />,
+    tools: ['brush', 'highlighter'],
+    defaultTool: 'brush',
+  },
+  {
+    id: 'annotations',
+    label: 'Text & Annotations',
+    icon: <Type className="h-4 w-4" />,
+    tools: [
+      'text-annotation', 'callout', 'anchored-text', 'note', 'price-note',
+      'price-label', 'flag-mark', 'pin', 'comment', 'signpost', 'table',
+    ],
+    defaultTool: 'text-annotation',
+  },
+  {
+    id: 'measurement',
+    label: 'Measurement',
+    icon: <Ruler className="h-4 w-4" />,
+    tools: ['price-range', 'date-range', 'date-price-range'],
+    defaultTool: 'price-range',
+  },
+  {
+    id: 'trading',
+    label: 'Trading',
+    icon: <Target className="h-4 w-4" />,
+    tools: ['long-position', 'short-position', 'forecast', 'bars-pattern', 'projection'],
+    defaultTool: 'long-position',
+  },
 ]
+
+const TEXT_DRAWING_TYPES = [
+  'text-annotation', 'callout', 'anchored-text', 'note', 'price-note',
+  'flag-mark', 'pin', 'comment', 'signpost', 'table',
+]
+
+export { TEXT_DRAWING_TYPES }
 
 export default function DrawingToolbar({
   drawingManager,
@@ -60,131 +160,88 @@ export default function DrawingToolbar({
   onDeselect,
 }: DrawingToolbarProps) {
   const registry = getToolRegistry()
-  const categories = registry.getCategories().filter((c) => CATEGORY_ORDER.includes(c))
-  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
+  const [openFlyout, setOpenFlyout] = useState<string | null>(null)
+  const flyoutRef = useRef<HTMLDivElement>(null)
 
-  const toggleCategory = (cat: string) => {
-    setCollapsed((prev) => ({ ...prev, [cat]: !prev[cat] }))
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (flyoutRef.current && !flyoutRef.current.contains(e.target as HTMLElement)) {
+        setOpenFlyout(null)
+      }
+    }
+    if (openFlyout) {
+      document.addEventListener('mousedown', handleClickOutside)
+      return () => document.removeEventListener('mousedown', handleClickOutside)
+    }
+  }, [openFlyout])
+
+  const handleGroupClick = (group: ToolGroup) => {
+    if (activeTool && group.tools.includes(activeTool)) {
+      onToolSelect(null)
+    } else {
+      onToolSelect(group.defaultTool)
+    }
+    setOpenFlyout(null)
   }
 
+  const handleFlyoutToggle = (groupId: string, e: React.MouseEvent) => {
+    e.stopPropagation()
+    setOpenFlyout(openFlyout === groupId ? null : groupId)
+  }
+
+  const handleFlyoutToolSelect = (toolType: string) => {
+    onToolSelect(toolType)
+    setOpenFlyout(null)
+  }
+
+  const getToolName = (type: string) => registry.get(type)?.name ?? type
+
   return (
-    <div className="space-y-3">
-      <Label className="text-xs font-semibold">Drawing Tools</Label>
-
-      <div className="space-y-1">
-        <Label className="text-[11px]">Color</Label>
-        <Input
-          type="color"
-          className="h-7 w-full p-1"
-          value={drawingColor}
-          onChange={(e) => onColorChange(e.target.value)}
-        />
-      </div>
-
-      <div className="space-y-1">
-        <Label className="text-[11px]">Line Width</Label>
-        <div className="flex gap-1">
-          {[1, 2, 3].map((w) => (
-            <Button
-              key={w}
-              variant={lineWidth === w ? 'default' : 'outline'}
-              size="sm"
-              className="h-7 w-8 px-0 text-[11px]"
-              onClick={() => onLineWidthChange(w)}
-            >
-              {w}px
-            </Button>
-          ))}
-        </div>
-      </div>
-
-      {selectedDrawingId && selectedDrawing && (
-        <div className="space-y-2 rounded border border-yellow-500/30 bg-yellow-500/5 p-2">
-          <div className="flex items-center justify-between">
-            <Label className="text-[11px] font-medium text-yellow-600 dark:text-yellow-400">
-              Selected: {selectedDrawing.type}
-            </Label>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-5 w-5 p-0"
-              onClick={onDeselect}
-            >
-              <X className="h-3 w-3" />
-            </Button>
-          </div>
-          <div className="flex gap-1">
-            <Label className="text-[10px] text-muted-foreground">
-              {selectedDrawing.anchors.length} anchor{selectedDrawing.anchors.length !== 1 ? 's' : ''}
-            </Label>
-          </div>
-          <div className="flex gap-1">
-            <Label className="text-[11px]">Color</Label>
-            <Input
-              type="color"
-              className="h-6 w-12 p-0.5"
-              value={selectedDrawing.style.lineColor}
-              onChange={(e) => {
-                selectedDrawing.updateStyle({ lineColor: e.target.value })
-                drawingManager?.deselectAll()
-              }}
-            />
-            <Label className="text-[11px]">Width</Label>
-            <div className="flex gap-0.5">
-              {[1, 2, 3].map((w) => (
-                <Button
-                  key={w}
-                  variant={selectedDrawing.style.lineWidth === w ? 'default' : 'outline'}
-                  size="sm"
-                  className="h-6 w-6 px-0 text-[10px]"
-                  onClick={() => {
-                    selectedDrawing.updateStyle({ lineWidth: w })
-                    drawingManager?.deselectAll()
-                  }}
-                >
-                  {w}
-                </Button>
-              ))}
-            </div>
-          </div>
-          <Button
-            variant="destructive"
-            size="sm"
-            className="h-7 w-full text-[11px]"
-            onClick={onDeleteSelected}
-          >
-            <Trash2 className="mr-1 h-3 w-3" /> Delete Drawing
-          </Button>
-        </div>
-      )}
-
-      <div className="space-y-1 overflow-auto" style={{ maxHeight: 'calc(100vh - 420px)' }}>
-        {CATEGORY_ORDER.filter((cat) => categories.includes(cat)).map((cat) => {
-          const tools = registry.getByCategory(cat)
-          if (tools.length === 0) return null
-          const isCollapsed = collapsed[cat]
+    <div className="flex h-full flex-col border-r bg-[#1e222d]">
+      <div className="flex flex-col gap-0.5 p-1">
+        {TOOL_GROUPS.map((group) => {
+          const isActive = activeTool !== null && group.tools.includes(activeTool)
           return (
-            <div key={cat} className="rounded border">
-              <button
-                className="flex w-full items-center justify-between px-2 py-1 text-[11px] font-medium hover:bg-muted/50"
-                onClick={() => toggleCategory(cat)}
-              >
-                {CATEGORY_LABELS[cat] || cat}
-                <span className="text-[9px] text-muted-foreground">{isCollapsed ? '\u25BC' : '\u25B2'}</span>
-              </button>
-              {!isCollapsed && (
-                <div className="flex flex-wrap gap-1 border-t px-1.5 py-1.5">
-                  {tools.map((tool) => (
-                    <Button
-                      key={tool.type}
-                      variant={activeTool === tool.type ? 'default' : 'outline'}
-                      size="sm"
-                      className="h-6 px-1.5 text-[10px]"
-                      title={`${tool.name} (${tool.requiredAnchors} anchor${tool.requiredAnchors !== 1 ? 's' : ''})`}
-                      onClick={() => onToolSelect(activeTool === tool.type ? null : tool.type)}
+            <div key={group.id} className="relative" ref={openFlyout === group.id ? flyoutRef : undefined}>
+              <div className="flex">
+                <button
+                  className={`flex h-7 w-7 items-center justify-center rounded transition-colors ${
+                    isActive
+                      ? 'bg-[#2962ff] text-white'
+                      : 'text-[#787b86] hover:bg-[#2a2e39] hover:text-[#d1d4dc]'
+                  }`}
+                  title={group.label}
+                  onClick={() => handleGroupClick(group)}
+                >
+                  {group.icon}
+                </button>
+                {group.tools.length > 1 && (
+                  <button
+                    className="flex w-3 items-center justify-center text-[#787b86] hover:text-[#d1d4dc]"
+                    onClick={(e) => handleFlyoutToggle(group.id, e)}
+                  >
+                    <ChevronRight className="h-2.5 w-2.5" />
+                  </button>
+                )}
+              </div>
+
+              {openFlyout === group.id && (
+                <div className="absolute left-full top-0 z-50 ml-1 min-w-[160px] rounded border border-[#2a2e39] bg-[#1e222d] py-1 shadow-xl">
+                  <div className="px-2 py-1 text-[10px] font-semibold uppercase text-[#787b86]">
+                    {group.label}
+                  </div>
+                  {group.tools.map((toolType) => (
+                    <button
+                      key={toolType}
+                      className={`flex w-full items-center px-3 py-1.5 text-left text-[12px] transition-colors ${
+                        activeTool === toolType
+                          ? 'bg-[#2962ff] text-white'
+                          : 'text-[#d1d4dc] hover:bg-[#2a2e39]'
+                      }`}
+                      onClick={() => handleFlyoutToolSelect(toolType)}
                     >
-                      {tool.name}
-                    </Button>
+                      {getToolName(toolType)}
+                    </button>
                   ))}
                 </div>
               )}
@@ -193,14 +250,40 @@ export default function DrawingToolbar({
         })}
       </div>
 
-      <Button
-        variant="outline"
-        size="sm"
-        className="h-7 w-full text-[11px]"
-        onClick={onClearAll}
-      >
-        Clear All Drawings
-      </Button>
+      <div className="mt-auto border-t border-[#2a2e39] p-1">
+        <div className="flex flex-col gap-1">
+          <div className="flex items-center gap-1 px-1">
+            <Input
+              type="color"
+              className="h-6 w-6 cursor-pointer border-0 p-0"
+              value={drawingColor}
+              onChange={(e) => onColorChange(e.target.value)}
+              title="Drawing Color"
+            />
+          </div>
+          <div className="flex gap-0.5 px-1">
+            {[1, 2, 3].map((w) => (
+              <button
+                key={w}
+                className={`flex h-5 w-5 items-center justify-center rounded text-[9px] ${
+                  lineWidth === w ? 'bg-[#2962ff] text-white' : 'text-[#787b86] hover:bg-[#2a2e39]'
+                }`}
+                onClick={() => onLineWidthChange(w)}
+                title={`${w}px`}
+              >
+                {w}
+              </button>
+            ))}
+          </div>
+          <button
+            className="flex h-7 items-center justify-center rounded text-[#787b86] hover:bg-[#f23645] hover:text-white"
+            title="Clear All Drawings"
+            onClick={onClearAll}
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      </div>
     </div>
   )
 }
