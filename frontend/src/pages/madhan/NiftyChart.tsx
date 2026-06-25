@@ -322,9 +322,20 @@ export default function NiftyChart() {
       chart.applyOptions({ handleScroll: { pressedMouseMove: true } })
     })
 
+    const padAnchors = (anchors: { time: Time; price: number }[], required: number) => {
+      if (anchors.length >= required) return anchors
+      const padded = [...anchors]
+      const last = anchors[anchors.length - 1]
+      while (padded.length < required) padded.push({ ...last })
+      return padded
+    }
+
     const createDrawingPreview = (toolType: string, id: string, anchors: { time: Time; price: number }[]) => {
       const registry = getToolRegistry()
-      const drawing = registry.createDrawing(toolType, id, anchors, { lineColor: drawingColorRef.current, lineWidth: lineWidthRef.current })
+      const toolDef = registry.get(toolType)
+      const required = toolDef?.requiredAnchors ?? anchors.length
+      const padded = padAnchors(anchors, required)
+      const drawing = registry.createDrawing(toolType, id, padded, { lineColor: drawingColorRef.current, lineWidth: lineWidthRef.current })
       if (drawing) drawing.setState('editing' as any)
       return drawing
     }
