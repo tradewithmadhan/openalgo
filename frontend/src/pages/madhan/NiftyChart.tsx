@@ -22,7 +22,8 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { useMarketData } from '@/hooks/useMarketData'
-import { Zap, ZapOff, RefreshCw } from 'lucide-react'
+import { Zap, ZapOff, RefreshCw, Sun, Moon } from 'lucide-react'
+import { useThemeStore } from '@/stores/themeStore'
 import DrawingToolbar, { TEXT_DRAWING_TYPES } from './DrawingToolbar'
 import DrawingListPanel from './DrawingListPanel'
 import TextEditorModal from './TextEditorModal'
@@ -141,6 +142,7 @@ export default function NiftyChart() {
     mode: 'LTP',
     enabled: true,
   })
+  const { mode: themeMode, toggleMode } = useThemeStore()
 
   useEffect(() => {
     activeDrawingToolRef.current = activeDrawingTool
@@ -1329,7 +1331,7 @@ export default function NiftyChart() {
 
   return (
     <div className="h-full w-full p-0">
-      <Card className="flex h-full w-full flex-col overflow-hidden rounded-none border-0 bg-card">
+      <Card className="flex h-full w-full flex-col overflow-hidden rounded-none border-0 py-0 bg-card">
         <div className="shrink-0 flex flex-wrap items-center gap-1.5 border-b px-2 py-1.5">
           <div className="flex items-center gap-1">
             <Label className="text-[11px]">Interval</Label>
@@ -1393,6 +1395,15 @@ export default function NiftyChart() {
             </div>
           </div>
           <div className="flex items-center gap-1.5 ml-auto">
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 w-7 px-0"
+              onClick={toggleMode}
+              title={themeMode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+            >
+              {themeMode === 'dark' ? <Sun className="h-3.5 w-3.5" /> : <Moon className="h-3.5 w-3.5" />}
+            </Button>
             <div className="flex items-center gap-1" title={wsError || (isConnected ? 'Connected' : isConnecting ? 'Connecting...' : 'Disconnected')}>
               {isConnected ? (
                 <Zap className="h-3 w-3 text-yellow-500 fill-yellow-500" />

@@ -1,6 +1,8 @@
 import { useState, useRef, useEffect } from 'react'
 import { getToolRegistry } from 'lightweight-charts-drawing'
 import { Trash2, ChevronRight } from 'lucide-react'
+import { useThemeStore } from '@/stores/themeStore'
+import { chartTheme } from './chartTheme'
 
 interface DrawingToolbarProps {
   activeTool: string | null
@@ -256,6 +258,8 @@ export default function DrawingToolbar({
   onToggleCollapse,
 }: DrawingToolbarProps) {
   const registry = getToolRegistry()
+  const { mode } = useThemeStore()
+  const t = chartTheme[mode]
   const [openFlyout, setOpenFlyout] = useState<string | null>(null)
   const flyoutRef = useRef<HTMLDivElement>(null)
 
@@ -294,10 +298,11 @@ export default function DrawingToolbar({
 
   if (collapsed) {
     return (
-      <div className="relative flex h-full w-[5px] shrink-0 items-center border-r border-[#2a2e39] bg-[#1e222d]">
+      <div className="relative flex h-full w-[5px] shrink-0 items-center" style={{ borderRight: `1px solid ${t.border}`, backgroundColor: t.panel }}>
         <button
           onClick={onToggleCollapse}
-          className="absolute left-0 top-1/2 z-10 flex h-12 w-5 -translate-y-1/2 items-center justify-center rounded-r bg-[#1e222d] text-[#787b86] shadow-md hover:bg-[#2a2e39] hover:text-[#d1d4dc]"
+          className="absolute left-0 top-1/2 z-10 flex h-12 w-5 -translate-y-1/2 items-center justify-center rounded-r shadow-md"
+          style={{ backgroundColor: t.panel, color: t.textSecondary }}
           title="Show Drawings"
         >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-3 w-3">
@@ -309,7 +314,7 @@ export default function DrawingToolbar({
   }
 
   return (
-    <div className="flex h-full w-[52px] shrink-0 flex-col border-r border-[#2a2e39] bg-[#1e222d]">
+    <div className="flex h-full w-[52px] shrink-0 flex-col" style={{ borderRight: `1px solid ${t.border}`, backgroundColor: t.panel }}>
       <div className="flex flex-col gap-0.5 p-1">
         {TOOL_GROUPS.map((group) => {
           const isActive = activeTool !== null && group.tools.includes(activeTool)
@@ -317,11 +322,11 @@ export default function DrawingToolbar({
             <div key={group.id} className="relative" ref={openFlyout === group.id ? flyoutRef : undefined}>
               <div className="flex items-center">
                 <button
-                  className={`flex h-8 w-8 items-center justify-center rounded transition-colors ${
-                    isActive
-                      ? 'bg-[#2962ff] text-white'
-                      : 'text-[#787b86] hover:bg-[#2a2e39] hover:text-[#d1d4dc]'
-                  }`}
+                  className="flex h-8 w-8 items-center justify-center rounded transition-colors"
+                  style={{
+                    backgroundColor: isActive ? t.active : undefined,
+                    color: isActive ? '#fff' : t.textSecondary,
+                  }}
                   title={group.label}
                   onClick={() => handleGroupClick(group)}
                 >
@@ -329,7 +334,8 @@ export default function DrawingToolbar({
                 </button>
                 {group.tools.length > 1 && (
                   <button
-                    className="flex w-2.5 items-center justify-center text-[#787b86] hover:text-[#d1d4dc]"
+                    className="flex w-2.5 items-center justify-center"
+                    style={{ color: t.textSecondary }}
                     onClick={(e) => handleFlyoutToggle(group.id, e)}
                   >
                     <ChevronRight className="h-2 w-2" />
@@ -338,18 +344,24 @@ export default function DrawingToolbar({
               </div>
 
               {openFlyout === group.id && (
-                <div className="absolute left-full top-0 z-50 ml-1 min-w-[180px] rounded border border-[#2a2e39] bg-[#1e222d] py-1 shadow-xl">
-                  <div className="border-b border-[#2a2e39] px-2 py-1 text-[10px] font-semibold uppercase text-[#787b86]">
+                <div
+                  className="absolute left-full top-0 z-50 ml-1 min-w-[180px] rounded py-1 shadow-xl"
+                  style={{ border: `1px solid ${t.border}`, backgroundColor: t.panel }}
+                >
+                  <div
+                    className="px-2 py-1 text-[10px] font-semibold uppercase"
+                    style={{ borderBottom: `1px solid ${t.border}`, color: t.textSecondary }}
+                  >
                     {group.label}
                   </div>
                   {group.tools.map((toolType) => (
                     <button
                       key={toolType}
-                      className={`flex w-full items-center justify-between px-3 py-1.5 text-left text-[12px] transition-colors ${
-                        activeTool === toolType
-                          ? 'bg-[#2962ff] text-white'
-                          : 'text-[#d1d4dc] hover:bg-[#2a2e39]'
-                      }`}
+                      className="flex w-full items-center justify-between px-3 py-1.5 text-left text-[12px] transition-colors"
+                      style={{
+                        backgroundColor: activeTool === toolType ? t.active : undefined,
+                        color: activeTool === toolType ? '#fff' : t.text,
+                      }}
                       onClick={() => handleFlyoutToolSelect(toolType)}
                     >
                       <span>{getToolName(toolType)}</span>
@@ -362,11 +374,12 @@ export default function DrawingToolbar({
         })}
       </div>
 
-      <div className="mt-auto border-t border-[#2a2e39] p-1">
+      <div className="mt-auto p-1" style={{ borderTop: `1px solid ${t.border}` }}>
         <div className="flex flex-col items-center gap-1.5 py-1">
           <input
             type="color"
-            className="h-6 w-6 cursor-pointer rounded border border-[#363a45] bg-transparent p-0"
+            className="h-6 w-6 cursor-pointer rounded bg-transparent p-0"
+            style={{ border: `1px solid ${t.badge}` }}
             value={drawingColor}
             onChange={(e) => onColorChange(e.target.value)}
             title="Drawing Color"
@@ -375,9 +388,11 @@ export default function DrawingToolbar({
             {[1, 2, 3].map((w) => (
               <button
                 key={w}
-                className={`flex h-5 w-5 items-center justify-center rounded text-[9px] ${
-                  lineWidth === w ? 'bg-[#2962ff] text-white' : 'text-[#787b86] hover:bg-[#2a2e39]'
-                }`}
+                className="flex h-5 w-5 items-center justify-center rounded text-[9px]"
+                style={{
+                  backgroundColor: lineWidth === w ? t.active : undefined,
+                  color: lineWidth === w ? '#fff' : t.textSecondary,
+                }}
                 onClick={() => onLineWidthChange(w)}
                 title={`${w}px`}
               >
@@ -386,9 +401,12 @@ export default function DrawingToolbar({
             ))}
           </div>
           <button
-            className="flex h-7 w-7 items-center justify-center rounded text-[#787b86] hover:bg-[#f23645] hover:text-white"
+            className="flex h-7 w-7 items-center justify-center rounded"
+            style={{ color: t.textSecondary }}
             title="Clear All Drawings"
             onClick={onClearAll}
+            onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = t.danger; e.currentTarget.style.color = '#fff' }}
+            onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.color = t.textSecondary }}
           >
             <Trash2 className="h-3.5 w-3.5" />
           </button>
