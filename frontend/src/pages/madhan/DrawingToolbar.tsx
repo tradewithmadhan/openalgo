@@ -1,28 +1,21 @@
 import { useState, useRef, useEffect } from 'react'
-import { getToolRegistry, type IDrawing, type DrawingManager } from 'lightweight-charts-drawing'
-import { Button } from '@/components/ui/button'
+import { getToolRegistry } from 'lightweight-charts-drawing'
 import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import {
   Minus,
   Trash2,
-  X,
   ChevronRight,
-  Move,
   Square,
   Type,
   TrendingUp,
   GitBranch,
   Target,
-  Diamond,
   ArrowUpRight,
-  ArrowDownRight,
   Ruler,
   Pen,
 } from 'lucide-react'
 
 interface DrawingToolbarProps {
-  drawingManager: DrawingManager | null
   activeTool: string | null
   onToolSelect: (toolType: string | null) => void
   drawingColor: string
@@ -30,10 +23,6 @@ interface DrawingToolbarProps {
   lineWidth: number
   onLineWidthChange: (width: number) => void
   onClearAll: () => void
-  selectedDrawingId: string | null
-  selectedDrawing: IDrawing | null
-  onDeleteSelected: () => void
-  onDeselect: () => void
 }
 
 interface ToolGroup {
@@ -146,7 +135,6 @@ const TEXT_DRAWING_TYPES = [
 export { TEXT_DRAWING_TYPES }
 
 export default function DrawingToolbar({
-  drawingManager,
   activeTool,
   onToolSelect,
   drawingColor,
@@ -154,10 +142,6 @@ export default function DrawingToolbar({
   lineWidth,
   onLineWidthChange,
   onClearAll,
-  selectedDrawingId,
-  selectedDrawing,
-  onDeleteSelected,
-  onDeselect,
 }: DrawingToolbarProps) {
   const registry = getToolRegistry()
   const [openFlyout, setOpenFlyout] = useState<string | null>(null)

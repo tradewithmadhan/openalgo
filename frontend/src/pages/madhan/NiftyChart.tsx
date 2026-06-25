@@ -127,8 +127,8 @@ export default function NiftyChart() {
   const [drawingColor, setDrawingColor] = useState('#3b82f6')
   const [lineWidth, setLineWidth] = useState(2)
   const [selectedDrawingId, setSelectedDrawingId] = useState<string | null>(null)
-  const [selectedDrawing, setSelectedDrawing] = useState<IDrawing | null>(null)
-  const [showDrawingList, setShowDrawingList] = useState(true)
+  const [, setSelectedDrawing] = useState<IDrawing | null>(null)
+  const [showDrawingList] = useState(true)
   const [editingTextDrawing, setEditingTextDrawing] = useState<IDrawing | null>(null)
   const [chartReady, setChartReady] = useState(false)
   const wsSymbols = useMemo(() => [{ symbol: 'NIFTY', exchange: 'NSE_INDEX' }], [])
@@ -1262,20 +1262,6 @@ export default function NiftyChart() {
     }
   }
 
-  const deleteSelectedDrawing = () => {
-    if (!drawingManagerRef.current || !selectedDrawingId) return
-    drawingManagerRef.current.removeDrawing(selectedDrawingId)
-    setSelectedDrawingId(null)
-    setSelectedDrawing(null)
-  }
-
-  const deselectDrawing = () => {
-    if (!drawingManagerRef.current) return
-    drawingManagerRef.current.deselectAll()
-    setSelectedDrawingId(null)
-    setSelectedDrawing(null)
-  }
-
   const selectDrawingFromList = (id: string) => {
     if (!drawingManagerRef.current) return
     drawingManagerRef.current.selectDrawing(id)
@@ -1410,7 +1396,6 @@ export default function NiftyChart() {
         <div className="min-h-0 flex flex-1 overflow-hidden">
           {showDrawingPanel && (
             <DrawingToolbar
-              drawingManager={drawingManagerRef.current}
               activeTool={activeDrawingTool}
               onToolSelect={handleToolSelect}
               drawingColor={drawingColor}
@@ -1418,10 +1403,6 @@ export default function NiftyChart() {
               lineWidth={lineWidth}
               onLineWidthChange={setLineWidth}
               onClearAll={clearDrawings}
-              selectedDrawingId={selectedDrawingId}
-              selectedDrawing={selectedDrawing}
-              onDeleteSelected={deleteSelectedDrawing}
-              onDeselect={deselectDrawing}
             />
           )}
           {showIndicatorPanel && (
