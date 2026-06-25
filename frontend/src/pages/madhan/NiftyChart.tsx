@@ -1407,6 +1407,7 @@ export default function NiftyChart() {
                   lineWidth={lineWidth}
                   onLineWidthChange={setLineWidth}
                   onClearAll={clearDrawings}
+                  onClose={() => setShowDrawingPanel(false)}
                 />
               )}
               {showIndicatorPanel && (
@@ -1511,6 +1512,7 @@ export default function NiftyChart() {
                 selectedDrawingId={selectedDrawingId}
                 onSelect={selectDrawingFromList}
                 onDelete={deleteDrawingFromList}
+                onClose={() => setShowDrawingList(false)}
               />
             ) : undefined
           }

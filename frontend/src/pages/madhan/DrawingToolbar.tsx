@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { getToolRegistry } from 'lightweight-charts-drawing'
-import { Trash2, ChevronRight } from 'lucide-react'
+import { Trash2, ChevronRight, X } from 'lucide-react'
 
 interface DrawingToolbarProps {
   activeTool: string | null
@@ -10,6 +10,7 @@ interface DrawingToolbarProps {
   lineWidth: number
   onLineWidthChange: (width: number) => void
   onClearAll: () => void
+  onClose: () => void
 }
 
 function IconTrendLine() {
@@ -250,6 +251,7 @@ export default function DrawingToolbar({
   lineWidth,
   onLineWidthChange,
   onClearAll,
+  onClose,
 }: DrawingToolbarProps) {
   const registry = getToolRegistry()
   const [openFlyout, setOpenFlyout] = useState<string | null>(null)
@@ -289,7 +291,14 @@ export default function DrawingToolbar({
   const getToolName = (type: string) => registry.get(type)?.name ?? type
 
   return (
-    <div className="flex h-full w-[44px] shrink-0 flex-col border-r bg-[#1e222d]">
+    <div className="flex h-full w-[44px] shrink-0 flex-col border-r border-[#2a2e39] bg-[#1e222d]">
+      <button
+        onClick={onClose}
+        className="flex h-8 w-8 items-center justify-center rounded text-[#787b86] hover:bg-[#2a2e39] hover:text-[#d1d4dc]"
+        title="Hide Drawings"
+      >
+        <X className="h-3.5 w-3.5" />
+      </button>
       <div className="flex flex-col gap-0.5 p-1">
         {TOOL_GROUPS.map((group) => {
           const isActive = activeTool !== null && group.tools.includes(activeTool)

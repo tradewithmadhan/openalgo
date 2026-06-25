@@ -1,11 +1,12 @@
 import { getToolRegistry, type IDrawing, type DrawingManager } from 'lightweight-charts-drawing'
-import { X, Layers, ChevronRight } from 'lucide-react'
+import { X, ChevronRight, Layers } from 'lucide-react'
 
 interface DrawingListPanelProps {
   drawingManager: DrawingManager | null
   selectedDrawingId: string | null
   onSelect: (id: string) => void
   onDelete: (id: string) => void
+  onClose: () => void
 }
 
 export default function DrawingListPanel({
@@ -13,6 +14,7 @@ export default function DrawingListPanel({
   selectedDrawingId,
   onSelect,
   onDelete,
+  onClose,
 }: DrawingListPanelProps) {
   const registry = getToolRegistry()
   if (!drawingManager) return null
@@ -21,15 +23,22 @@ export default function DrawingListPanel({
   const getName = (d: IDrawing) => registry.get(d.type)?.name ?? d.type
 
   return (
-    <div className="flex h-full w-[200px] shrink-0 flex-col border-l bg-[#1e222d]">
+    <div className="flex h-full w-[200px] shrink-0 flex-col border-l border-[#2a2e39] bg-[#1e222d]">
       <div className="flex items-center justify-between border-b border-[#2a2e39] px-2 py-1.5">
         <div className="flex items-center gap-1.5">
           <Layers className="h-3 w-3 text-[#787b86]" />
           <span className="text-[11px] font-medium text-[#d1d4dc]">Object Tree</span>
+          <span className="rounded bg-[#363a45] px-1.5 py-0.5 text-[9px] text-[#787b86]">
+            {drawings.length}
+          </span>
         </div>
-        <span className="rounded bg-[#363a45] px-1.5 py-0.5 text-[9px] text-[#787b86]">
-          {drawings.length}
-        </span>
+        <button
+          onClick={onClose}
+          className="rounded p-0.5 text-[#787b86] hover:bg-[#2a2e39] hover:text-[#d1d4dc]"
+          title="Hide Object Tree"
+        >
+          <X className="h-3 w-3" />
+        </button>
       </div>
       <div className="flex-1 overflow-auto p-1">
         {drawings.length === 0 ? (
