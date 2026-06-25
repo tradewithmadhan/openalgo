@@ -26,6 +26,7 @@ import { Zap, ZapOff, RefreshCw } from 'lucide-react'
 import DrawingToolbar, { TEXT_DRAWING_TYPES } from './DrawingToolbar'
 import DrawingListPanel from './DrawingListPanel'
 import TextEditorModal from './TextEditorModal'
+import ChartLayout from './ChartLayout'
 
 type Candle = {
   time: number
@@ -128,7 +129,7 @@ export default function NiftyChart() {
   const [lineWidth, setLineWidth] = useState(2)
   const [selectedDrawingId, setSelectedDrawingId] = useState<string | null>(null)
   const [, setSelectedDrawing] = useState<IDrawing | null>(null)
-  const [showDrawingList] = useState(true)
+  const [showDrawingList, setShowDrawingList] = useState(false)
   const [editingTextDrawing, setEditingTextDrawing] = useState<IDrawing | null>(null)
   const [chartReady, setChartReady] = useState(false)
   const wsSymbols = useMemo(() => [{ symbol: 'NIFTY', exchange: 'NSE_INDEX' }], [])
@@ -1347,6 +1348,7 @@ export default function NiftyChart() {
           <Button variant={sqrtActive ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={() => setSqrtActive((v) => !v)}>SQRT</Button>
           <Button variant={showIndicatorPanel ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={() => setShowIndicatorPanel((v) => !v)}>Indicators</Button>
           <Button variant={showDrawingPanel ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={() => setShowDrawingPanel((v) => !v)}>Drawings</Button>
+          <Button variant={showDrawingList ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={() => setShowDrawingList((v) => !v)}>Object Tree</Button>
           <div className="flex items-center gap-1.5 rounded border px-1.5 py-0.5">
             <Button variant={oiActive ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={toggleOi}>OI</Button>
             <Label className="text-[11px]">X%</Label>
@@ -1393,117 +1395,128 @@ export default function NiftyChart() {
             )}
           </div>
         </div>
-        <div className="min-h-0 flex flex-1 overflow-hidden">
-          {showDrawingPanel && (
-            <DrawingToolbar
-              activeTool={activeDrawingTool}
-              onToolSelect={handleToolSelect}
-              drawingColor={drawingColor}
-              onColorChange={setDrawingColor}
-              lineWidth={lineWidth}
-              onLineWidthChange={setLineWidth}
-              onClearAll={clearDrawings}
-            />
-          )}
-          {showIndicatorPanel && (
-            <div className="h-full w-[320px] shrink-0 overflow-auto border-r bg-card/40 p-2">
-              <div className="space-y-2 rounded border p-2">
-                <Label className="text-xs font-semibold">Indicators</Label>
-                <Input className="h-7 text-[11px]" value={indicatorSearch} placeholder="Search indicators" onChange={(e) => setIndicatorSearch(e.target.value)} />
-                <div className="max-h-36 space-y-1 overflow-auto rounded border p-1">
-                  {availableIndicators.slice(0, 200).map((item) => {
-                    const active = activeIndicators.some((x) => x.indicatorId === item.id)
-                    return (
-                      <button
-                        key={item.id}
-                        type="button"
-                        className={`w-full rounded px-2 py-1 text-left text-[11px] ${active ? 'bg-primary/20' : 'hover:bg-accent'}`}
-                        onClick={() => {
-                          addIndicator(item.id)
-                        }}
-                      >
-                        {item.shortName} ({item.id}) {active ? '• Added' : ''}
-                      </button>
-                    )
-                  })}
-                </div>
-                <div className="space-y-2">
-                  {activeIndicators.map((indicator, index) => {
-                    const entry = getIndicatorById(indicator.indicatorId)
-                    if (!entry) return null
-                    const expanded = expandedIndicatorKey === indicator.key
-                    const config = Array.isArray(entry.inputConfig) ? entry.inputConfig : []
-                    const values = indicatorInputs[indicator.key] || {}
-                    return (
-                      <div key={indicator.key} className="rounded border p-2">
-                        <div className="flex items-center justify-between gap-2">
-                          <button type="button" className="text-left text-[11px] font-semibold" onClick={() => setExpandedIndicatorKey(expanded ? null : indicator.key)}>{entry.name} #{index + 1}</button>
-                          <Button variant="secondary" size="sm" className="h-6 px-2 text-[10px]" onClick={() => removeIndicator(indicator.key)}>Remove</Button>
-                        </div>
-                        {expanded && (
-                          <div className="mt-2 space-y-2">
-                            {config.map((input: any) => {
-                              const value = values[input.id] ?? input.defval
-                              const inputType = String(input.type || '')
-                              if (inputType === 'bool') {
-                                return (
-                                  <div key={input.id} className="flex items-center justify-between gap-2">
-                                    <Label className="text-[11px]">{input.title || input.id}</Label>
-                                    <Checkbox checked={Boolean(value)} onCheckedChange={(v) => updateIndicatorInput(indicator.key, input.id, !!v)} />
-                                  </div>
-                                )
-                              }
-                              if (inputType === 'source' || Array.isArray(input.options)) {
-                                const options = input.options || ['open', 'high', 'low', 'close']
-                                return (
-                                  <div key={input.id} className="space-y-1">
-                                    <Label className="text-[11px]">{input.title || input.id}</Label>
-                                    <Select value={String(value)} onValueChange={(val) => updateIndicatorInput(indicator.key, input.id, val)}>
-                                      <SelectTrigger className="h-7 text-[11px]"><SelectValue /></SelectTrigger>
-                                      <SelectContent>
-                                        {options.map((option: string) => (
-                                          <SelectItem key={option} value={String(option)}>{String(option)}</SelectItem>
-                                        ))}
-                                      </SelectContent>
-                                    </Select>
-                                  </div>
-                                )
-                              }
-                              return (
-                                <div key={input.id} className="space-y-1">
-                                  <Label className="text-[11px]">{input.title || input.id}</Label>
-                                  <Input
-                                    type="number"
-                                    className="h-7 text-[11px]"
-                                    value={String(value ?? '')}
-                                    onChange={(e) => {
-                                      const raw = e.target.value
-                                      const num = inputType === 'int' ? Number.parseInt(raw || '0', 10) : Number.parseFloat(raw || '0')
-                                      if (!Number.isNaN(num)) updateIndicatorInput(indicator.key, input.id, num)
-                                    }}
-                                  />
-                                </div>
-                              )
-                            })}
+        <ChartLayout
+          leftToolbar={
+            <>
+              {showDrawingPanel && (
+                <DrawingToolbar
+                  activeTool={activeDrawingTool}
+                  onToolSelect={handleToolSelect}
+                  drawingColor={drawingColor}
+                  onColorChange={setDrawingColor}
+                  lineWidth={lineWidth}
+                  onLineWidthChange={setLineWidth}
+                  onClearAll={clearDrawings}
+                />
+              )}
+              {showIndicatorPanel && (
+                <div className="h-full w-[260px] shrink-0 overflow-auto border-r bg-[#1e222d] p-2">
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-medium text-[#d1d4dc]">Indicators</span>
+                    </div>
+                    <Input className="h-7 border-[#2a2e39] bg-[#131722] text-[11px] text-[#d1d4dc]" value={indicatorSearch} placeholder="Search..." onChange={(e) => setIndicatorSearch(e.target.value)} />
+                    <div className="max-h-40 space-y-0.5 overflow-auto rounded border border-[#2a2e39] bg-[#131722] p-1">
+                      {availableIndicators.slice(0, 200).map((item) => {
+                        const active = activeIndicators.some((x) => x.indicatorId === item.id)
+                        return (
+                          <button
+                            key={item.id}
+                            type="button"
+                            className={`w-full rounded px-2 py-1 text-left text-[11px] ${
+                              active ? 'bg-[#2962ff]/20 text-[#d1d4dc]' : 'text-[#787b86] hover:bg-[#2a2e39] hover:text-[#d1d4dc]'
+                            }`}
+                            onClick={() => addIndicator(item.id)}
+                          >
+                            {item.shortName} {active && <span className="text-[#2962ff]">+</span>}
+                          </button>
+                        )
+                      })}
+                    </div>
+                    <div className="space-y-1">
+                      {activeIndicators.map((indicator, index) => {
+                        const entry = getIndicatorById(indicator.indicatorId)
+                        if (!entry) return null
+                        const expanded = expandedIndicatorKey === indicator.key
+                        const config = Array.isArray(entry.inputConfig) ? entry.inputConfig : []
+                        const values = indicatorInputs[indicator.key] || {}
+                        return (
+                          <div key={indicator.key} className="rounded border border-[#2a2e39] bg-[#131722] p-1.5">
+                            <div className="flex items-center justify-between">
+                              <button type="button" className="text-left text-[11px] text-[#d1d4dc]" onClick={() => setExpandedIndicatorKey(expanded ? null : indicator.key)}>
+                                {entry.name} #{index + 1}
+                              </button>
+                              <button className="text-[10px] text-[#f23645] hover:text-[#ff5259]" onClick={() => removeIndicator(indicator.key)}>x</button>
+                            </div>
+                            {expanded && (
+                              <div className="mt-2 space-y-1.5 border-t border-[#2a2e39] pt-2">
+                                {config.map((input: any) => {
+                                  const value = values[input.id] ?? input.defval
+                                  const inputType = String(input.type || '')
+                                  if (inputType === 'bool') {
+                                    return (
+                                      <div key={input.id} className="flex items-center justify-between">
+                                        <span className="text-[10px] text-[#787b86]">{input.title || input.id}</span>
+                                        <Checkbox checked={Boolean(value)} onCheckedChange={(v) => updateIndicatorInput(indicator.key, input.id, !!v)} />
+                                      </div>
+                                    )
+                                  }
+                                  if (inputType === 'source' || Array.isArray(input.options)) {
+                                    const options = input.options || ['open', 'high', 'low', 'close']
+                                    return (
+                                      <div key={input.id}>
+                                        <span className="text-[10px] text-[#787b86]">{input.title || input.id}</span>
+                                        <Select value={String(value)} onValueChange={(val) => updateIndicatorInput(indicator.key, input.id, val)}>
+                                          <SelectTrigger className="mt-0.5 h-6 border-[#2a2e39] bg-[#1e222d] text-[10px] text-[#d1d4dc]"><SelectValue /></SelectTrigger>
+                                          <SelectContent>
+                                            {options.map((option: string) => (
+                                              <SelectItem key={option} value={String(option)}>{String(option)}</SelectItem>
+                                            ))}
+                                          </SelectContent>
+                                        </Select>
+                                      </div>
+                                    )
+                                  }
+                                  return (
+                                    <div key={input.id}>
+                                      <span className="text-[10px] text-[#787b86]">{input.title || input.id}</span>
+                                      <Input
+                                        type="number"
+                                        className="mt-0.5 h-6 border-[#2a2e39] bg-[#1e222d] text-[10px] text-[#d1d4dc]"
+                                        value={String(value ?? '')}
+                                        onChange={(e) => {
+                                          const raw = e.target.value
+                                          const num = inputType === 'int' ? Number.parseInt(raw || '0', 10) : Number.parseFloat(raw || '0')
+                                          if (!Number.isNaN(num)) updateIndicatorInput(indicator.key, input.id, num)
+                                        }}
+                                      />
+                                    </div>
+                                  )
+                                })}
+                              </div>
+                            )}
                           </div>
-                        )}
-                      </div>
-                    )
-                  })}
+                        )
+                      })}
+                    </div>
+                  </div>
                 </div>
-              </div>
-            </div>
-          )}
-          <div ref={chartContainerRef} className="min-h-0 min-w-0 flex-1" />
-          {showDrawingList && (
-            <DrawingListPanel
-              drawingManager={drawingManagerRef.current}
-              selectedDrawingId={selectedDrawingId}
-              onSelect={selectDrawingFromList}
-              onDelete={deleteDrawingFromList}
-            />
-          )}
-        </div>
+              )}
+            </>
+          }
+          rightPanel={
+            showDrawingList ? (
+              <DrawingListPanel
+                drawingManager={drawingManagerRef.current}
+                selectedDrawingId={selectedDrawingId}
+                onSelect={selectDrawingFromList}
+                onDelete={deleteDrawingFromList}
+              />
+            ) : undefined
+          }
+        >
+          <div ref={chartContainerRef} className="h-full w-full" />
+        </ChartLayout>
       </Card>
       <TextEditorModal
         drawing={editingTextDrawing}
