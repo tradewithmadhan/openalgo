@@ -324,13 +324,19 @@ export default function NiftyChart() {
 
     const createDrawingPreview = (toolType: string, id: string, anchors: { time: Time; price: number }[]) => {
       const registry = getToolRegistry()
-      return registry.createDrawing(toolType, id, anchors, { lineColor: drawingColorRef.current, lineWidth: lineWidthRef.current })
+      const drawing = registry.createDrawing(toolType, id, anchors, { lineColor: drawingColorRef.current, lineWidth: lineWidthRef.current })
+      if (drawing) drawing.setState('editing' as any)
+      return drawing
     }
 
     const finalizeDrawing = (toolType: string, id: string, anchors: { time: Time; price: number }[]) => {
       if (!drawingManagerRef.current) return
-      const drawing = createDrawingPreview(toolType, id, anchors)
-      if (drawing) drawingManagerRef.current.addDrawing(drawing)
+      const registry = getToolRegistry()
+      const drawing = registry.createDrawing(toolType, id, anchors, { lineColor: drawingColorRef.current, lineWidth: lineWidthRef.current })
+      if (drawing) {
+        drawing.setState('normal' as any)
+        drawingManagerRef.current.addDrawing(drawing)
+      }
     }
 
     const handleChartClick = (param: any) => {
@@ -356,8 +362,12 @@ export default function NiftyChart() {
       const required = toolDef.requiredAnchors
 
       if (required === 1) {
-        const drawing = createDrawingPreview(tool, `${tool}-${Date.now()}`, [anchor])
-        if (drawing) drawingManagerRef.current.addDrawing(drawing)
+        const registry = getToolRegistry()
+        const drawing = registry.createDrawing(tool, `${tool}-${Date.now()}`, [anchor], { lineColor: drawingColorRef.current, lineWidth: lineWidthRef.current })
+        if (drawing) {
+          drawing.setState('normal' as any)
+          drawingManagerRef.current.addDrawing(drawing)
+        }
         drawingManagerRef.current.setActiveTool(null)
         setActiveDrawingTool(null)
         chart.applyOptions({ handleScroll: { pressedMouseMove: true } })
