@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import type { IDrawing } from 'lightweight-charts-drawing'
+import { useThemeStore } from '@/stores/themeStore'
+import { chartTheme } from './chartTheme'
 
 interface TextEditorModalProps {
   drawing: IDrawing | null
@@ -40,6 +42,8 @@ const TYPE_TITLES: Record<string, string> = {
 export default function TextEditorModal({ drawing, onSave, onClose }: TextEditorModalProps) {
   const [text, setText] = useState('')
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const { mode } = useThemeStore()
+  const t = chartTheme[mode]
 
   useEffect(() => {
     if (drawing) {
@@ -74,26 +78,29 @@ export default function TextEditorModal({ drawing, onSave, onClose }: TextEditor
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
       onClick={(e) => { if (e.target === e.currentTarget) onClose() }}
     >
-      <div className="w-[350px] rounded-lg border border-[#2a2e39] bg-[#1e222d] p-4 shadow-xl">
-        <h3 className="mb-3 text-sm font-medium text-white">{title}</h3>
+      <div className="w-[350px] rounded-lg p-4 shadow-xl" style={{ border: `1px solid ${t.border}`, backgroundColor: t.panel }}>
+        <h3 className="mb-3 text-sm font-medium" style={{ color: t.text }}>{title}</h3>
         <textarea
           ref={textareaRef}
-          className="w-full min-h-[80px] rounded border border-[#2a2e39] bg-[#131722] p-2 text-[13px] text-[#d1d4dc] outline-none focus:border-[#2962ff]"
+          className="w-full min-h-[80px] rounded p-2 text-[13px] outline-none"
+          style={{ border: `1px solid ${t.border}`, backgroundColor: t.panelDarker, color: t.text }}
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={handleKeyDown}
           placeholder="Enter text..."
         />
-        <div className="mt-1 text-[10px] text-[#787b86]">Enter to save, Shift+Enter for newline, Escape to cancel</div>
+        <div className="mt-1 text-[10px]" style={{ color: t.textSecondary }}>Enter to save, Shift+Enter for newline, Escape to cancel</div>
         <div className="mt-3 flex justify-end gap-2">
           <button
-            className="rounded bg-[#363a45] px-3 py-1.5 text-[12px] text-[#d1d4dc] hover:bg-[#4a4e59]"
+            className="rounded px-3 py-1.5 text-[12px]"
+            style={{ backgroundColor: t.badge, color: t.text }}
             onClick={onClose}
           >
             Cancel
           </button>
           <button
-            className="rounded bg-[#2962ff] px-3 py-1.5 text-[12px] text-white hover:bg-[#1e53e4]"
+            className="rounded px-3 py-1.5 text-[12px] text-white"
+            style={{ backgroundColor: t.active }}
             onClick={handleSave}
           >
             Save

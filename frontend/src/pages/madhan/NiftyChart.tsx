@@ -24,6 +24,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { useMarketData } from '@/hooks/useMarketData'
 import { Zap, ZapOff, RefreshCw, Sun, Moon } from 'lucide-react'
 import { useThemeStore } from '@/stores/themeStore'
+import { chartTheme } from './chartTheme'
 import DrawingToolbar, { TEXT_DRAWING_TYPES } from './DrawingToolbar'
 import DrawingListPanel from './DrawingListPanel'
 import TextEditorModal from './TextEditorModal'
@@ -136,6 +137,7 @@ export default function NiftyChart() {
   const [widgetBarCollapsed, setWidgetBarCollapsed] = useState(false)
   const [editingTextDrawing, setEditingTextDrawing] = useState<IDrawing | null>(null)
   const [chartReady, setChartReady] = useState(false)
+  const [crosshairOHLCV, setCrosshairOHLCV] = useState<{ time: string; open: number; high: number; low: number; close: number; volume?: number } | null>(null)
   const wsSymbols = useMemo(() => [{ symbol: 'NIFTY', exchange: 'NSE_INDEX' }], [])
   const { data: wsData, isConnected, isConnecting, error: wsError, connect: wsConnect } = useMarketData({
     symbols: wsSymbols,
@@ -143,6 +145,7 @@ export default function NiftyChart() {
     enabled: true,
   })
   const { mode: themeMode, toggleMode } = useThemeStore()
+  const t = chartTheme[themeMode]
 
   useEffect(() => {
     activeDrawingToolRef.current = activeDrawingTool
@@ -411,6 +414,36 @@ export default function NiftyChart() {
     chart.subscribeClick(handleChartClick)
     chart.subscribeCrosshairMove(handleChartCrosshairMove)
 
+    const handleCrosshairOHLCV = (param: any) => {
+      if (!param?.time) {
+        if (priceDataRef.current.length > 0) {
+          const last = priceDataRef.current[priceDataRef.current.length - 1]
+          setCrosshairOHLCV({
+            time: new Date(last.time * 1000).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: false }),
+            open: last.open,
+            high: last.high,
+            low: last.low,
+            close: last.close,
+          })
+        } else {
+          setCrosshairOHLCV(null)
+        }
+        return
+      }
+      const ts = param.time as number
+      const candle = priceDataRef.current.find((c) => c.time === ts)
+      if (candle) {
+        setCrosshairOHLCV({
+          time: new Date(candle.time * 1000).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: false }),
+          open: candle.open,
+          high: candle.high,
+          low: candle.low,
+          close: candle.close,
+        })
+      }
+    }
+    chart.subscribeCrosshairMove(handleCrosshairOHLCV)
+
     const handleChartDblClick = (e: MouseEvent) => {
       const tool = activeDrawingToolRef.current
       if (tool) return
@@ -443,6 +476,7 @@ export default function NiftyChart() {
       resizeObserver.disconnect()
       chart.unsubscribeClick(handleChartClick)
       chart.unsubscribeCrosshairMove(handleChartCrosshairMove)
+      chart.unsubscribeCrosshairMove(handleCrosshairOHLCV)
       if (chartContainerRef.current) {
         chartContainerRef.current.removeEventListener('dblclick', handleChartDblClick)
       }
@@ -982,6 +1016,17 @@ export default function NiftyChart() {
     updateIndicatorSeries(data)
     addHorizontalLines(data)
     applySqrtLevels(data)
+
+    if (!crosshairOHLCV && data.length > 0) {
+      const last = data[data.length - 1]
+      setCrosshairOHLCV({
+        time: new Date(last.time * 1000).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: false }),
+        open: last.open,
+        high: last.high,
+        low: last.low,
+        close: last.close,
+      })
+    }
     await Promise.all([fetchOiProfiles(), fetchOptionCombinedVolume()])
   }
 
@@ -1433,25 +1478,27 @@ export default function NiftyChart() {
                 />
               )}
               {showIndicatorPanel && (
-                <div className="h-full w-[260px] shrink-0 overflow-auto border-r bg-[#1e222d] p-2">
+                <div className="h-full w-[260px] shrink-0 overflow-auto p-2" style={{ borderRight: `1px solid ${t.border}`, backgroundColor: t.panel }}>
                   <div className="space-y-2">
                     <div className="flex items-center justify-between">
-                      <span className="text-[11px] font-medium text-[#d1d4dc]">Indicators</span>
+                      <span className="text-[11px] font-medium" style={{ color: t.text }}>Indicators</span>
                     </div>
-                    <Input className="h-7 border-[#2a2e39] bg-[#131722] text-[11px] text-[#d1d4dc]" value={indicatorSearch} placeholder="Search..." onChange={(e) => setIndicatorSearch(e.target.value)} />
-                    <div className="max-h-40 space-y-0.5 overflow-auto rounded border border-[#2a2e39] bg-[#131722] p-1">
+                    <Input className="h-7 text-[11px]" style={{ borderColor: t.border, backgroundColor: t.panelDarker, color: t.text }} value={indicatorSearch} placeholder="Search..." onChange={(e) => setIndicatorSearch(e.target.value)} />
+                    <div className="max-h-40 space-y-0.5 overflow-auto rounded p-1" style={{ border: `1px solid ${t.border}`, backgroundColor: t.panelDarker }}>
                       {availableIndicators.slice(0, 200).map((item) => {
                         const active = activeIndicators.some((x) => x.indicatorId === item.id)
                         return (
                           <button
                             key={item.id}
                             type="button"
-                            className={`w-full rounded px-2 py-1 text-left text-[11px] ${
-                              active ? 'bg-[#2962ff]/20 text-[#d1d4dc]' : 'text-[#787b86] hover:bg-[#2a2e39] hover:text-[#d1d4dc]'
-                            }`}
+                            className="w-full rounded px-2 py-1 text-left text-[11px]"
+                            style={{
+                              backgroundColor: active ? t.activeBg : undefined,
+                              color: active ? t.text : t.textSecondary,
+                            }}
                             onClick={() => addIndicator(item.id)}
                           >
-                            {item.shortName} {active && <span className="text-[#2962ff]">+</span>}
+                            {item.shortName} {active && <span style={{ color: t.active }}>+</span>}
                           </button>
                         )
                       })}
@@ -1464,22 +1511,22 @@ export default function NiftyChart() {
                         const config = Array.isArray(entry.inputConfig) ? entry.inputConfig : []
                         const values = indicatorInputs[indicator.key] || {}
                         return (
-                          <div key={indicator.key} className="rounded border border-[#2a2e39] bg-[#131722] p-1.5">
+                          <div key={indicator.key} className="rounded p-1.5" style={{ border: `1px solid ${t.border}`, backgroundColor: t.panelDarker }}>
                             <div className="flex items-center justify-between">
-                              <button type="button" className="text-left text-[11px] text-[#d1d4dc]" onClick={() => setExpandedIndicatorKey(expanded ? null : indicator.key)}>
+                              <button type="button" className="text-left text-[11px]" style={{ color: t.text }} onClick={() => setExpandedIndicatorKey(expanded ? null : indicator.key)}>
                                 {entry.name} #{index + 1}
                               </button>
-                              <button className="text-[10px] text-[#f23645] hover:text-[#ff5259]" onClick={() => removeIndicator(indicator.key)}>x</button>
+                              <button className="text-[10px]" style={{ color: t.danger }} onClick={() => removeIndicator(indicator.key)}>x</button>
                             </div>
                             {expanded && (
-                              <div className="mt-2 space-y-1.5 border-t border-[#2a2e39] pt-2">
+                              <div className="mt-2 space-y-1.5 pt-2" style={{ borderTop: `1px solid ${t.border}` }}>
                                 {config.map((input: any) => {
                                   const value = values[input.id] ?? input.defval
                                   const inputType = String(input.type || '')
                                   if (inputType === 'bool') {
                                     return (
                                       <div key={input.id} className="flex items-center justify-between">
-                                        <span className="text-[10px] text-[#787b86]">{input.title || input.id}</span>
+                                        <span className="text-[10px]" style={{ color: t.textSecondary }}>{input.title || input.id}</span>
                                         <Checkbox checked={Boolean(value)} onCheckedChange={(v) => updateIndicatorInput(indicator.key, input.id, !!v)} />
                                       </div>
                                     )
@@ -1488,9 +1535,9 @@ export default function NiftyChart() {
                                     const options = input.options || ['open', 'high', 'low', 'close']
                                     return (
                                       <div key={input.id}>
-                                        <span className="text-[10px] text-[#787b86]">{input.title || input.id}</span>
+                                        <span className="text-[10px]" style={{ color: t.textSecondary }}>{input.title || input.id}</span>
                                         <Select value={String(value)} onValueChange={(val) => updateIndicatorInput(indicator.key, input.id, val)}>
-                                          <SelectTrigger className="mt-0.5 h-6 border-[#2a2e39] bg-[#1e222d] text-[10px] text-[#d1d4dc]"><SelectValue /></SelectTrigger>
+                                          <SelectTrigger className="mt-0.5 h-6 text-[10px]" style={{ borderColor: t.border, backgroundColor: t.panel, color: t.text }}><SelectValue /></SelectTrigger>
                                           <SelectContent>
                                             {options.map((option: string) => (
                                               <SelectItem key={option} value={String(option)}>{String(option)}</SelectItem>
@@ -1502,10 +1549,11 @@ export default function NiftyChart() {
                                   }
                                   return (
                                     <div key={input.id}>
-                                      <span className="text-[10px] text-[#787b86]">{input.title || input.id}</span>
+                                      <span className="text-[10px]" style={{ color: t.textSecondary }}>{input.title || input.id}</span>
                                       <Input
                                         type="number"
-                                        className="mt-0.5 h-6 border-[#2a2e39] bg-[#1e222d] text-[10px] text-[#d1d4dc]"
+                                        className="mt-0.5 h-6 text-[10px]"
+                                        style={{ borderColor: t.border, backgroundColor: t.panel, color: t.text }}
                                         value={String(value ?? '')}
                                         onChange={(e) => {
                                           const raw = e.target.value
@@ -1540,6 +1588,21 @@ export default function NiftyChart() {
                   onDelete={deleteDrawingFromList}
                 />
               </WidgetBar>
+            ) : undefined
+          }
+          bottomBar={
+            crosshairOHLCV ? (
+              <div
+                className="flex shrink-0 items-center gap-3 px-3 py-1 text-[11px]"
+                style={{ borderTop: `1px solid ${t.border}`, backgroundColor: t.panelDarker, color: t.textSecondary }}
+              >
+                <span style={{ color: t.textMuted }}>{crosshairOHLCV.time}</span>
+                <span>O <span style={{ color: t.text }}>{crosshairOHLCV.open.toFixed(2)}</span></span>
+                <span>H <span style={{ color: t.text }}>{crosshairOHLCV.high.toFixed(2)}</span></span>
+                <span>L <span style={{ color: t.text }}>{crosshairOHLCV.low.toFixed(2)}</span></span>
+                <span>C <span style={{ color: t.text }}>{crosshairOHLCV.close.toFixed(2)}</span></span>
+                <span className="ml-auto" style={{ color: t.textMuted }}>NIFTY 50</span>
+              </div>
             ) : undefined
           }
         >
