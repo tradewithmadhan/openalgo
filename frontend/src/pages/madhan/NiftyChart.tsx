@@ -13,7 +13,7 @@ import {
   type Time,
 } from 'lightweight-charts'
 import { indicatorRegistry } from 'lightweight-charts-indicators'
-import { DrawingManager, HorizontalRay, TrendLine } from 'lightweight-charts-drawing'
+import { DrawingManager, getToolRegistry, type IDrawing } from 'lightweight-charts-drawing'
 import type { Bar } from 'oakscriptjs'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -23,6 +23,7 @@ import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { useMarketData } from '@/hooks/useMarketData'
 import { Zap, ZapOff, RefreshCw } from 'lucide-react'
+import DrawingToolbar from './DrawingToolbar'
 
 type Candle = {
   time: number
@@ -81,10 +82,11 @@ export default function NiftyChart() {
   const oiPrimitiveRef = useRef<any>(null)
   const coiPrimitiveRef = useRef<any>(null)
   const drawingManagerRef = useRef<DrawingManager | null>(null)
-  const trendStartAnchorRef = useRef<{ time: Time; price: number } | null>(null)
-  const trendPreviewIdRef = useRef<string | null>(null)
-  const activeDrawingToolRef = useRef<'trend-line' | 'horizontal-ray' | null>(null)
+  const drawingAnchorsRef = useRef<{ time: Time; price: number }[]>([])
+  const drawingPreviewIdRef = useRef<string | null>(null)
+  const activeDrawingToolRef = useRef<string | null>(null)
   const drawingColorRef = useRef('#3b82f6')
+  const lineWidthRef = useRef(2)
   const priceDataRef = useRef<Candle[]>([])
   const updaterRef = useRef<number | null>(null)
   const timeoutRef = useRef<number | null>(null)
@@ -119,8 +121,11 @@ export default function NiftyChart() {
   const [expandedIndicatorKey, setExpandedIndicatorKey] = useState<string | null>(null)
   const [showIndicatorPanel, setShowIndicatorPanel] = useState(false)
   const [showDrawingPanel, setShowDrawingPanel] = useState(false)
-  const [activeDrawingTool, setActiveDrawingTool] = useState<'trend-line' | 'horizontal-ray' | null>(null)
+  const [activeDrawingTool, setActiveDrawingTool] = useState<string | null>(null)
   const [drawingColor, setDrawingColor] = useState('#3b82f6')
+  const [lineWidth, setLineWidth] = useState(2)
+  const [selectedDrawingId, setSelectedDrawingId] = useState<string | null>(null)
+  const [selectedDrawing, setSelectedDrawing] = useState<IDrawing | null>(null)
   const [chartReady, setChartReady] = useState(false)
   const wsSymbols = useMemo(() => [{ symbol: 'NIFTY', exchange: 'NSE_INDEX' }], [])
   const { data: wsData, isConnected, isConnecting, error: wsError, connect: wsConnect } = useMarketData({
@@ -131,12 +136,16 @@ export default function NiftyChart() {
 
   useEffect(() => {
     activeDrawingToolRef.current = activeDrawingTool
-    if (!activeDrawingTool) trendStartAnchorRef.current = null
+    if (!activeDrawingTool) drawingAnchorsRef.current = []
   }, [activeDrawingTool])
 
   useEffect(() => {
     drawingColorRef.current = drawingColor
   }, [drawingColor])
+
+  useEffect(() => {
+    lineWidthRef.current = lineWidth
+  }, [lineWidth])
 
   useEffect(() => {
     setIndicatorInputs((prev) => {
@@ -285,58 +294,110 @@ export default function NiftyChart() {
     const drawingManager = new DrawingManager()
     drawingManager.attach(chart, candle, chartContainerRef.current)
     drawingManagerRef.current = drawingManager
+
+    drawingManager.on('drawing:selected', (event) => {
+      if (event.drawingId) {
+        const d = drawingManager.getDrawing(event.drawingId)
+        setSelectedDrawingId(event.drawingId)
+        setSelectedDrawing(d ?? null)
+        chart.applyOptions({ handleScroll: { pressedMouseMove: false } })
+      }
+    })
+    drawingManager.on('drawing:deselected', () => {
+      setSelectedDrawingId(null)
+      setSelectedDrawing(null)
+      chart.applyOptions({ handleScroll: { pressedMouseMove: true } })
+    })
+
+    const createDrawingPreview = (toolType: string, id: string, anchors: { time: Time; price: number }[]) => {
+      const registry = getToolRegistry()
+      return registry.createDrawing(toolType, id, anchors, { lineColor: drawingColorRef.current, lineWidth: lineWidthRef.current })
+    }
+
+    const finalizeDrawing = (id: string, anchors: { time: Time; price: number }[]) => {
+      if (!drawingManagerRef.current) return
+      const drawing = createDrawingPreview(id, id, anchors)
+      if (drawing) drawingManagerRef.current.addDrawing(drawing)
+    }
+
     const handleChartClick = (param: any) => {
       const tool = activeDrawingToolRef.current
-    if (!drawingManagerRef.current || !param?.point) return
-    if (!tool) {
+      if (!drawingManagerRef.current || !param?.point) return
+      if (!tool) {
         const hit = drawingManagerRef.current.hitTest({ x: param.point.x, y: param.point.y })
-      if (hit) {
-        drawingManagerRef.current.selectDrawing(hit.id)
-        chart.applyOptions({ handleScroll: { pressedMouseMove: false } })
-      } else {
-        drawingManagerRef.current.deselectAll()
-        chart.applyOptions({ handleScroll: { pressedMouseMove: true } })
+        if (hit) {
+          drawingManagerRef.current.selectDrawing(hit.id)
+        } else {
+          drawingManagerRef.current.deselectAll()
+        }
+        return
       }
-      return
-    }
       if (param?.time == null) return
       const price = candle.coordinateToPrice(param.point.y)
       if (price == null) return
       const anchor = { time: param.time as Time, price }
-      if (tool === 'horizontal-ray') {
-      drawingManagerRef.current.addDrawing(new HorizontalRay(`hr-${Date.now()}`, [anchor], { lineColor: drawingColorRef.current, lineWidth: 2 }))
+
+      const registry = getToolRegistry()
+      const toolDef = registry.get(tool)
+      if (!toolDef) return
+      const required = toolDef.requiredAnchors
+
+      if (required === 1) {
+        const drawing = createDrawingPreview(tool, `${tool}-${Date.now()}`, [anchor])
+        if (drawing) drawingManagerRef.current.addDrawing(drawing)
         drawingManagerRef.current.setActiveTool(null)
         setActiveDrawingTool(null)
         chart.applyOptions({ handleScroll: { pressedMouseMove: true } })
         return
       }
-      if (!trendStartAnchorRef.current) {
-        trendStartAnchorRef.current = anchor
-        const previewId = `tl-preview-${Date.now()}`
-        trendPreviewIdRef.current = previewId
-        drawingManagerRef.current.addDrawing(new TrendLine(previewId, [anchor, anchor], { lineColor: drawingColorRef.current, lineWidth: 2 }))
+
+      drawingAnchorsRef.current.push(anchor)
+
+      if (drawingAnchorsRef.current.length === 1 && required >= 2) {
+        const previewId = `draw-preview-${Date.now()}`
+        drawingPreviewIdRef.current = previewId
+        const drawing = createDrawingPreview(tool, previewId, [anchor, anchor])
+        if (drawing) drawingManagerRef.current.addDrawing(drawing)
         return
       }
-      if (trendPreviewIdRef.current) {
-        drawingManagerRef.current.removeDrawing(trendPreviewIdRef.current)
-        trendPreviewIdRef.current = null
+
+      if (drawingAnchorsRef.current.length < required) {
+        if (drawingPreviewIdRef.current) {
+          drawingManagerRef.current.removeDrawing(drawingPreviewIdRef.current)
+          drawingPreviewIdRef.current = null
+        }
+        const previewId = `draw-preview-${Date.now()}`
+        drawingPreviewIdRef.current = previewId
+        const drawing = createDrawingPreview(tool, previewId, [...drawingAnchorsRef.current, anchor])
+        if (drawing) drawingManagerRef.current.addDrawing(drawing)
+        return
       }
-      drawingManagerRef.current.addDrawing(new TrendLine(`tl-${Date.now()}`, [trendStartAnchorRef.current, anchor], { lineColor: drawingColorRef.current, lineWidth: 2 }))
-      trendStartAnchorRef.current = null
+
+      if (drawingPreviewIdRef.current) {
+        drawingManagerRef.current.removeDrawing(drawingPreviewIdRef.current)
+        drawingPreviewIdRef.current = null
+      }
+      finalizeDrawing(`${tool}-${Date.now()}`, [...drawingAnchorsRef.current])
+      drawingAnchorsRef.current = []
       drawingManagerRef.current.setActiveTool(null)
       setActiveDrawingTool(null)
       chart.applyOptions({ handleScroll: { pressedMouseMove: true } })
     }
+
     const handleChartCrosshairMove = (param: any) => {
-      if (activeDrawingToolRef.current !== 'trend-line') return
-      if (!drawingManagerRef.current || !trendStartAnchorRef.current || !trendPreviewIdRef.current || !param?.point || param?.time == null) return
+      const tool = activeDrawingToolRef.current
+      if (!tool || !drawingManagerRef.current || !drawingPreviewIdRef.current || drawingAnchorsRef.current.length === 0 || !param?.point || param?.time == null) return
+      const registry = getToolRegistry()
+      const toolDef = registry.get(tool)
+      if (!toolDef || toolDef.requiredAnchors < 2) return
       const price = candle.coordinateToPrice(param.point.y)
       if (price == null) return
-      drawingManagerRef.current.removeDrawing(trendPreviewIdRef.current)
-      drawingManagerRef.current.addDrawing(
-        new TrendLine(trendPreviewIdRef.current, [trendStartAnchorRef.current, { time: param.time as Time, price }], { lineColor: drawingColorRef.current, lineWidth: 2 })
-      )
+      drawingManagerRef.current.removeDrawing(drawingPreviewIdRef.current)
+      const previewAnchors = [...drawingAnchorsRef.current, { time: param.time as Time, price }]
+      const drawing = createDrawingPreview(tool, drawingPreviewIdRef.current, previewAnchors)
+      if (drawing) drawingManagerRef.current.addDrawing(drawing)
     }
+
     chart.subscribeClick(handleChartClick)
     chart.subscribeCrosshairMove(handleChartCrosshairMove)
 
@@ -1149,18 +1210,17 @@ export default function NiftyChart() {
     repaintOverlay()
   }
 
-  const setDrawingTool = (tool: 'trend-line' | 'horizontal-ray') => {
+  const handleToolSelect = (toolType: string | null) => {
     if (!drawingManagerRef.current) return
-    const nextTool = activeDrawingTool === tool ? null : tool
-    if (trendPreviewIdRef.current) {
-      drawingManagerRef.current.removeDrawing(trendPreviewIdRef.current)
-      trendPreviewIdRef.current = null
+    if (drawingPreviewIdRef.current) {
+      drawingManagerRef.current.removeDrawing(drawingPreviewIdRef.current)
+      drawingPreviewIdRef.current = null
     }
-    trendStartAnchorRef.current = null
-    drawingManagerRef.current.setActiveTool(nextTool)
-    setActiveDrawingTool(nextTool)
+    drawingAnchorsRef.current = []
+    drawingManagerRef.current.setActiveTool(toolType)
+    setActiveDrawingTool(toolType)
     if (chartRef.current) {
-      chartRef.current.applyOptions({ handleScroll: { pressedMouseMove: nextTool == null } })
+      chartRef.current.applyOptions({ handleScroll: { pressedMouseMove: toolType == null } })
     }
   }
 
@@ -1168,13 +1228,45 @@ export default function NiftyChart() {
     if (!drawingManagerRef.current) return
     drawingManagerRef.current.clearAll()
     drawingManagerRef.current.setActiveTool(null)
-    trendStartAnchorRef.current = null
-    trendPreviewIdRef.current = null
+    drawingAnchorsRef.current = []
+    drawingPreviewIdRef.current = null
     setActiveDrawingTool(null)
+    setSelectedDrawingId(null)
+    setSelectedDrawing(null)
     if (chartRef.current) {
       chartRef.current.applyOptions({ handleScroll: { pressedMouseMove: true } })
     }
   }
+
+  const deleteSelectedDrawing = () => {
+    if (!drawingManagerRef.current || !selectedDrawingId) return
+    drawingManagerRef.current.removeDrawing(selectedDrawingId)
+    setSelectedDrawingId(null)
+    setSelectedDrawing(null)
+  }
+
+  const deselectDrawing = () => {
+    if (!drawingManagerRef.current) return
+    drawingManagerRef.current.deselectAll()
+    setSelectedDrawingId(null)
+    setSelectedDrawing(null)
+  }
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedDrawingId && drawingManagerRef.current) {
+        if ((e.target as HTMLElement).tagName === 'INPUT' || (e.target as HTMLElement).tagName === 'TEXTAREA') return
+        drawingManagerRef.current.removeDrawing(selectedDrawingId)
+        setSelectedDrawingId(null)
+        setSelectedDrawing(null)
+      }
+      if (e.key === 'Escape' && activeDrawingTool) {
+        handleToolSelect(null)
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [selectedDrawingId, activeDrawingTool])
 
   const addIndicator = (indicatorId: string) => {
     const nextIndex = activeIndicators.filter((item) => item.indicatorId === indicatorId).length
@@ -1276,19 +1368,20 @@ export default function NiftyChart() {
           {(showDrawingPanel || showIndicatorPanel) && (
             <div className="h-full w-[320px] shrink-0 overflow-auto border-r bg-card/40 p-2">
               {showDrawingPanel && (
-                <div className="mb-2 space-y-2 rounded border p-2">
-                  <Label className="text-xs font-semibold">Drawings</Label>
-                  <div className="space-y-1">
-                    <Label className="text-[11px]">Color</Label>
-                    <Input type="color" className="h-7 w-full p-1" value={drawingColor} onChange={(e) => setDrawingColor(e.target.value)} />
-                  </div>
-                  <div className="flex flex-wrap gap-1">
-                    <Button variant={activeDrawingTool === 'trend-line' ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={() => setDrawingTool('trend-line')}>Trendline</Button>
-                    <Button variant={activeDrawingTool === 'horizontal-ray' ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={() => setDrawingTool('horizontal-ray')}>Horizontal Ray</Button>
-                    <Button variant="outline" size="sm" className="h-7 px-2 text-[11px]" onClick={clearDrawings}>Clear</Button>
-                  </div>
-                  <Label className="text-[11px] text-muted-foreground">Draw once, tool exits automatically.</Label>
-                </div>
+                <DrawingToolbar
+                  drawingManager={drawingManagerRef.current}
+                  activeTool={activeDrawingTool}
+                  onToolSelect={handleToolSelect}
+                  drawingColor={drawingColor}
+                  onColorChange={setDrawingColor}
+                  lineWidth={lineWidth}
+                  onLineWidthChange={setLineWidth}
+                  onClearAll={clearDrawings}
+                  selectedDrawingId={selectedDrawingId}
+                  selectedDrawing={selectedDrawing}
+                  onDeleteSelected={deleteSelectedDrawing}
+                  onDeselect={deselectDrawing}
+                />
               )}
               {showIndicatorPanel && (
                 <div className="space-y-2 rounded border p-2">
