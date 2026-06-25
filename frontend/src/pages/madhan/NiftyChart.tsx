@@ -1494,7 +1494,7 @@ export default function NiftyChart() {
               </div>
             </div>
           )}
-          <div ref={chartContainerRef} className="min-h-0 w-full flex-1" />
+          <div ref={chartContainerRef} className="min-h-0 min-w-0 flex-1" />
           {showDrawingList && (
             <DrawingListPanel
               drawingManager={drawingManagerRef.current}
