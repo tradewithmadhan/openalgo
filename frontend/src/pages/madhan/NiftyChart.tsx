@@ -1332,7 +1332,7 @@ export default function NiftyChart() {
   return (
     <div className="h-full w-full p-0">
       <Card className="flex h-full w-full flex-col overflow-hidden rounded-none border-0 py-0 bg-card">
-        <div className="shrink-0 flex flex-wrap items-center gap-1.5 border-b px-2 py-1.5">
+        <div className="shrink-0 flex flex-wrap items-center gap-1.5 px-2 py-1.5">
           <div className="flex items-center gap-1">
             <Label className="text-[11px]">Interval</Label>
             <Select value={interval} onValueChange={setIntervalValue}>
@@ -1360,14 +1360,7 @@ export default function NiftyChart() {
               setDrawingToolbarCollapsed(false)
             }
           }}>Drawings</Button>
-          <Button variant={showDrawingList ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={() => {
-            if (showDrawingList) {
-              setWidgetBarCollapsed((v) => !v)
-            } else {
-              setShowDrawingList(true)
-              setWidgetBarCollapsed(false)
-            }
-          }}>Object Tree</Button>
+          <Button variant={showDrawingList ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={() => setShowDrawingList((v) => !v)}>Object Tree</Button>
           <div className="flex items-center gap-1.5 rounded border px-1.5 py-0.5">
             <Button variant={oiActive ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={toggleOi}>OI</Button>
             <Label className="text-[11px]">X%</Label>
