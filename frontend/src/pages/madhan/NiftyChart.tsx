@@ -314,9 +314,9 @@ export default function NiftyChart() {
       return registry.createDrawing(toolType, id, anchors, { lineColor: drawingColorRef.current, lineWidth: lineWidthRef.current })
     }
 
-    const finalizeDrawing = (id: string, anchors: { time: Time; price: number }[]) => {
+    const finalizeDrawing = (toolType: string, id: string, anchors: { time: Time; price: number }[]) => {
       if (!drawingManagerRef.current) return
-      const drawing = createDrawingPreview(id, id, anchors)
+      const drawing = createDrawingPreview(toolType, id, anchors)
       if (drawing) drawingManagerRef.current.addDrawing(drawing)
     }
 
@@ -377,7 +377,7 @@ export default function NiftyChart() {
         drawingManagerRef.current.removeDrawing(drawingPreviewIdRef.current)
         drawingPreviewIdRef.current = null
       }
-      finalizeDrawing(`${tool}-${Date.now()}`, [...drawingAnchorsRef.current])
+      finalizeDrawing(tool, `${tool}-${Date.now()}`, [...drawingAnchorsRef.current])
       drawingAnchorsRef.current = []
       drawingManagerRef.current.setActiveTool(null)
       setActiveDrawingTool(null)
