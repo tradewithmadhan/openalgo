@@ -39,8 +39,8 @@ export default function WidgetBar({ collapsed, onToggleCollapse, children }: Wid
   }
 
   return (
-    <div className="flex h-full w-[346px] shrink-0 border-l border-[#2a2e39] bg-[#1e222d]">
-      <div className="flex w-[45px] shrink-0 flex-col items-center border-r border-[#2a2e39] bg-[#131722]">
+    <div className="flex h-full w-[346px] shrink-0 flex-row-reverse border-l border-[#2a2e39] bg-[#1e222d]">
+      <div className="flex w-[45px] shrink-0 flex-col items-center border-l border-[#2a2e39] bg-[#131722]">
         {WIDGET_TABS.map((tab) => (
           <button
             key={tab.id}

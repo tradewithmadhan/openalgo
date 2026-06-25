@@ -294,7 +294,7 @@ export default function DrawingToolbar({
 
   if (collapsed) {
     return (
-      <div className="relative flex h-full w-[5px] shrink-0 items-center border-r border-[#2a2e39] bg-[#131722]">
+      <div className="relative flex h-full w-[5px] shrink-0 items-center border-r border-[#2a2e39] bg-[#1e222d]">
         <button
           onClick={onToggleCollapse}
           className="absolute left-0 top-1/2 z-10 flex h-12 w-5 -translate-y-1/2 items-center justify-center rounded-r bg-[#1e222d] text-[#787b86] shadow-md hover:bg-[#2a2e39] hover:text-[#d1d4dc]"
