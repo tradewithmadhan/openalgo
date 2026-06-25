@@ -27,6 +27,7 @@ import DrawingToolbar, { TEXT_DRAWING_TYPES } from './DrawingToolbar'
 import DrawingListPanel from './DrawingListPanel'
 import TextEditorModal from './TextEditorModal'
 import ChartLayout from './ChartLayout'
+import WidgetBar from './WidgetBar'
 
 type Candle = {
   time: number
@@ -124,12 +125,14 @@ export default function NiftyChart() {
   const [expandedIndicatorKey, setExpandedIndicatorKey] = useState<string | null>(null)
   const [showIndicatorPanel, setShowIndicatorPanel] = useState(false)
   const [showDrawingPanel, setShowDrawingPanel] = useState(false)
+  const [drawingToolbarCollapsed, setDrawingToolbarCollapsed] = useState(false)
   const [activeDrawingTool, setActiveDrawingTool] = useState<string | null>(null)
   const [drawingColor, setDrawingColor] = useState('#3b82f6')
   const [lineWidth, setLineWidth] = useState(2)
   const [selectedDrawingId, setSelectedDrawingId] = useState<string | null>(null)
   const [, setSelectedDrawing] = useState<IDrawing | null>(null)
   const [showDrawingList, setShowDrawingList] = useState(false)
+  const [widgetBarCollapsed, setWidgetBarCollapsed] = useState(false)
   const [editingTextDrawing, setEditingTextDrawing] = useState<IDrawing | null>(null)
   const [chartReady, setChartReady] = useState(false)
   const wsSymbols = useMemo(() => [{ symbol: 'NIFTY', exchange: 'NSE_INDEX' }], [])
@@ -1347,8 +1350,22 @@ export default function NiftyChart() {
           <Button variant={prevOhlcActive ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={() => setPrevOhlcActive((v) => !v)}>Prev OHLC</Button>
           <Button variant={sqrtActive ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={() => setSqrtActive((v) => !v)}>SQRT</Button>
           <Button variant={showIndicatorPanel ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={() => setShowIndicatorPanel((v) => !v)}>Indicators</Button>
-          <Button variant={showDrawingPanel ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={() => setShowDrawingPanel((v) => !v)}>Drawings</Button>
-          <Button variant={showDrawingList ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={() => setShowDrawingList((v) => !v)}>Object Tree</Button>
+          <Button variant={showDrawingPanel ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={() => {
+            if (showDrawingPanel) {
+              setDrawingToolbarCollapsed((v) => !v)
+            } else {
+              setShowDrawingPanel(true)
+              setDrawingToolbarCollapsed(false)
+            }
+          }}>Drawings</Button>
+          <Button variant={showDrawingList ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={() => {
+            if (showDrawingList) {
+              setWidgetBarCollapsed((v) => !v)
+            } else {
+              setShowDrawingList(true)
+              setWidgetBarCollapsed(false)
+            }
+          }}>Object Tree</Button>
           <div className="flex items-center gap-1.5 rounded border px-1.5 py-0.5">
             <Button variant={oiActive ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={toggleOi}>OI</Button>
             <Label className="text-[11px]">X%</Label>
@@ -1407,7 +1424,8 @@ export default function NiftyChart() {
                   lineWidth={lineWidth}
                   onLineWidthChange={setLineWidth}
                   onClearAll={clearDrawings}
-                  onClose={() => setShowDrawingPanel(false)}
+                  collapsed={drawingToolbarCollapsed}
+                  onToggleCollapse={() => setDrawingToolbarCollapsed((v) => !v)}
                 />
               )}
               {showIndicatorPanel && (
@@ -1507,13 +1525,17 @@ export default function NiftyChart() {
           }
           rightPanel={
             showDrawingList ? (
-              <DrawingListPanel
-                drawingManager={drawingManagerRef.current}
-                selectedDrawingId={selectedDrawingId}
-                onSelect={selectDrawingFromList}
-                onDelete={deleteDrawingFromList}
-                onClose={() => setShowDrawingList(false)}
-              />
+              <WidgetBar
+                collapsed={widgetBarCollapsed}
+                onToggleCollapse={() => setWidgetBarCollapsed((v) => !v)}
+              >
+                <DrawingListPanel
+                  drawingManager={drawingManagerRef.current}
+                  selectedDrawingId={selectedDrawingId}
+                  onSelect={selectDrawingFromList}
+                  onDelete={deleteDrawingFromList}
+                />
+              </WidgetBar>
             ) : undefined
           }
         >

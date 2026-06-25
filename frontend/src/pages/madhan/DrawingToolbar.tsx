@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { getToolRegistry } from 'lightweight-charts-drawing'
-import { Trash2, ChevronRight, X } from 'lucide-react'
+import { Trash2, ChevronRight } from 'lucide-react'
 
 interface DrawingToolbarProps {
   activeTool: string | null
@@ -10,7 +10,8 @@ interface DrawingToolbarProps {
   lineWidth: number
   onLineWidthChange: (width: number) => void
   onClearAll: () => void
-  onClose: () => void
+  collapsed: boolean
+  onToggleCollapse: () => void
 }
 
 function IconTrendLine() {
@@ -251,7 +252,8 @@ export default function DrawingToolbar({
   lineWidth,
   onLineWidthChange,
   onClearAll,
-  onClose,
+  collapsed,
+  onToggleCollapse,
 }: DrawingToolbarProps) {
   const registry = getToolRegistry()
   const [openFlyout, setOpenFlyout] = useState<string | null>(null)
@@ -290,15 +292,24 @@ export default function DrawingToolbar({
 
   const getToolName = (type: string) => registry.get(type)?.name ?? type
 
+  if (collapsed) {
+    return (
+      <div className="relative flex h-full w-[5px] shrink-0 items-center border-r border-[#2a2e39] bg-[#131722]">
+        <button
+          onClick={onToggleCollapse}
+          className="absolute left-0 top-1/2 z-10 flex h-12 w-5 -translate-y-1/2 items-center justify-center rounded-r bg-[#1e222d] text-[#787b86] shadow-md hover:bg-[#2a2e39] hover:text-[#d1d4dc]"
+          title="Show Drawings"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-3 w-3">
+            <polyline points="9,18 15,12 9,6" />
+          </svg>
+        </button>
+      </div>
+    )
+  }
+
   return (
-    <div className="flex h-full w-[44px] shrink-0 flex-col border-r border-[#2a2e39] bg-[#1e222d]">
-      <button
-        onClick={onClose}
-        className="flex h-8 w-8 items-center justify-center rounded text-[#787b86] hover:bg-[#2a2e39] hover:text-[#d1d4dc]"
-        title="Hide Drawings"
-      >
-        <X className="h-3.5 w-3.5" />
-      </button>
+    <div className="flex h-full w-[52px] shrink-0 flex-col border-r border-[#2a2e39] bg-[#1e222d]">
       <div className="flex flex-col gap-0.5 p-1">
         {TOOL_GROUPS.map((group) => {
           const isActive = activeTool !== null && group.tools.includes(activeTool)

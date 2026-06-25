@@ -6,7 +6,6 @@ interface DrawingListPanelProps {
   selectedDrawingId: string | null
   onSelect: (id: string) => void
   onDelete: (id: string) => void
-  onClose: () => void
 }
 
 export default function DrawingListPanel({
@@ -14,7 +13,6 @@ export default function DrawingListPanel({
   selectedDrawingId,
   onSelect,
   onDelete,
-  onClose,
 }: DrawingListPanelProps) {
   const registry = getToolRegistry()
   if (!drawingManager) return null
@@ -23,7 +21,7 @@ export default function DrawingListPanel({
   const getName = (d: IDrawing) => registry.get(d.type)?.name ?? d.type
 
   return (
-    <div className="flex h-full w-[200px] shrink-0 flex-col border-l border-[#2a2e39] bg-[#1e222d]">
+    <div className="flex h-full min-w-0 flex-1 flex-col overflow-hidden">
       <div className="flex items-center justify-between border-b border-[#2a2e39] px-2 py-1.5">
         <div className="flex items-center gap-1.5">
           <Layers className="h-3 w-3 text-[#787b86]" />
@@ -32,13 +30,6 @@ export default function DrawingListPanel({
             {drawings.length}
           </span>
         </div>
-        <button
-          onClick={onClose}
-          className="rounded p-0.5 text-[#787b86] hover:bg-[#2a2e39] hover:text-[#d1d4dc]"
-          title="Hide Object Tree"
-        >
-          <X className="h-3 w-3" />
-        </button>
       </div>
       <div className="flex-1 overflow-auto p-1">
         {drawings.length === 0 ? (
