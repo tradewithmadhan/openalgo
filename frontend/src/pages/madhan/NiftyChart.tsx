@@ -254,28 +254,16 @@ export default function NiftyChart() {
       lastValueVisible: false,
       crosshairMarkerVisible: false,
     })
-    const chartAny = chart as any
     let optionVolumeSeries: ISeriesApi<'Histogram'> | null = null
-    if (typeof chartAny.addPane === 'function') {
-      const volumePane = chartAny.addPane()
-      if (volumePane && typeof volumePane.setHeight === 'function') {
-        volumePane.setHeight(140)
-      }
-      if (volumePane && typeof volumePane.addSeries === 'function') {
-        optionVolumeSeries = volumePane.addSeries(HistogramSeries, {
-          title: 'CE+PE Volume',
-          color: 'rgba(59, 130, 246, 1)',
-          priceFormat: { type: 'volume' },
-        }) as ISeriesApi<'Histogram'>
-      }
-    }
-    if (!optionVolumeSeries) {
-      optionVolumeSeries = chart.addSeries(HistogramSeries, {
-        title: 'CE+PE Volume',
-        color: 'rgba(59, 130, 246, 1)',
-        priceFormat: { type: 'volume' },
-      })
-    }
+    optionVolumeSeries = chart.addSeries(HistogramSeries, {
+      title: 'CE+PE Volume',
+      color: 'rgba(59, 130, 246, 1)',
+      priceFormat: { type: 'volume' },
+      priceScaleId: 'volume',
+    })
+    chart.priceScale('volume').applyOptions({
+      scaleMargins: { top: 0.8, bottom: 0 },
+    })
     const dayOpen = chart.addSeries(LineSeries, { color: '#00FF00', lineWidth: 1, title: 'Day Open' })
     const prevOpen = chart.addSeries(LineSeries, { color: '#FFA500', lineWidth: 1, title: 'Prev Open' })
     const prevHigh = chart.addSeries(LineSeries, { color: '#0000FF', lineWidth: 1, title: 'Prev High' })
