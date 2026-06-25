@@ -1220,14 +1220,38 @@ export default function NiftyChart() {
               </SelectContent>
             </Select>
           </div>
-          <Button variant={oiActive ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={toggleOi}>OI</Button>
-          <Button variant={coiActive ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={toggleCoi}>COI</Button>
           <Button variant={emaActive ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={() => setEmaActive((v) => !v)}>EMA</Button>
           <Button variant={dayOpenActive ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={() => setDayOpenActive((v) => !v)}>Day Open</Button>
           <Button variant={prevOhlcActive ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={() => setPrevOhlcActive((v) => !v)}>Prev OHLC</Button>
           <Button variant={sqrtActive ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={() => setSqrtActive((v) => !v)}>SQRT</Button>
           <Button variant={showIndicatorPanel ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={() => setShowIndicatorPanel((v) => !v)}>Indicators</Button>
           <Button variant={showDrawingPanel ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={() => setShowDrawingPanel((v) => !v)}>Drawings</Button>
+          <div className="flex items-center gap-1.5 rounded border px-1.5 py-0.5">
+            <Button variant={oiActive ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={toggleOi}>OI</Button>
+            <Label className="text-[11px]">X%</Label>
+            <Input type="number" min={0} max={100} className="h-7 w-14 px-1 text-[11px]" value={oiX} onChange={(e) => setOiX(Number(e.target.value || 0))} />
+            <div className="flex items-center gap-1">
+              <Checkbox checked={oiShowStrike} onCheckedChange={(v) => setOiShowStrike(!!v)} />
+              <Label className="text-[11px]">Labels</Label>
+            </div>
+            <div className="flex items-center gap-1">
+              <Checkbox checked={oiShowValues} onCheckedChange={(v) => setOiShowValues(!!v)} />
+              <Label className="text-[11px]">Values</Label>
+            </div>
+          </div>
+          <div className="flex items-center gap-1.5 rounded border px-1.5 py-0.5">
+            <Button variant={coiActive ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={toggleCoi}>COI</Button>
+            <Label className="text-[11px]">X%</Label>
+            <Input type="number" min={0} max={100} className="h-7 w-14 px-1 text-[11px]" value={coiX} onChange={(e) => setCoiX(Number(e.target.value || 0))} />
+            <div className="flex items-center gap-1">
+              <Checkbox checked={coiShowStrike} onCheckedChange={(v) => setCoiShowStrike(!!v)} />
+              <Label className="text-[11px]">Labels</Label>
+            </div>
+            <div className="flex items-center gap-1">
+              <Checkbox checked={coiShowValues} onCheckedChange={(v) => setCoiShowValues(!!v)} />
+              <Label className="text-[11px]">Values</Label>
+            </div>
+          </div>
           <div className="flex items-center gap-1.5 ml-auto">
             <div className="flex items-center gap-1" title={wsError || (isConnected ? 'Connected' : isConnecting ? 'Connecting...' : 'Disconnected')}>
               {isConnected ? (
@@ -1246,30 +1270,6 @@ export default function NiftyChart() {
                 <RefreshCw className="mr-1 h-3 w-3" /> Reconnect
               </Button>
             )}
-          </div>
-          <div className="flex items-center gap-1">
-            <Label className="text-[11px]">OI X %</Label>
-            <Input type="number" min={0} max={100} className="h-7 w-14 px-1 text-[11px]" value={oiX} onChange={(e) => setOiX(Number(e.target.value || 0))} />
-          </div>
-          <div className="flex items-center gap-1">
-            <Checkbox checked={oiShowStrike} onCheckedChange={(v) => setOiShowStrike(!!v)} />
-            <Label className="text-[11px]">OI Labels</Label>
-          </div>
-          <div className="flex items-center gap-1">
-            <Checkbox checked={oiShowValues} onCheckedChange={(v) => setOiShowValues(!!v)} />
-            <Label className="text-[11px]">OI Values</Label>
-          </div>
-          <div className="flex items-center gap-1">
-            <Label className="text-[11px]">COI X %</Label>
-            <Input type="number" min={0} max={100} className="h-7 w-14 px-1 text-[11px]" value={coiX} onChange={(e) => setCoiX(Number(e.target.value || 0))} />
-          </div>
-          <div className="flex items-center gap-1">
-            <Checkbox checked={coiShowStrike} onCheckedChange={(v) => setCoiShowStrike(!!v)} />
-            <Label className="text-[11px]">COI Labels</Label>
-          </div>
-          <div className="flex items-center gap-1">
-            <Checkbox checked={coiShowValues} onCheckedChange={(v) => setCoiShowValues(!!v)} />
-            <Label className="text-[11px]">COI Values</Label>
           </div>
         </div>
         <div className="min-h-0 flex flex-1 overflow-hidden">
