@@ -1397,7 +1397,7 @@ export default function NiftyChart() {
 
   return (
     <div className="h-full w-full p-0">
-      <Card className="flex h-full w-full flex-col overflow-hidden rounded-none border-0 py-0 bg-card">
+      <Card className="flex h-full w-full flex-col overflow-hidden rounded-none border-0 py-0 gap-0 bg-card">
         <div className="shrink-0 flex flex-wrap items-center gap-1.5 px-2 py-1.5">
           <div className="flex items-center gap-1">
             <Label className="text-[11px]">Interval</Label>
