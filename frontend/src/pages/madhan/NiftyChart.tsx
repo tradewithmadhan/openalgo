@@ -22,6 +22,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { useMarketData } from '@/hooks/useMarketData'
+import { Zap, ZapOff, RefreshCw } from 'lucide-react'
 
 type Candle = {
   time: number
@@ -122,7 +123,7 @@ export default function NiftyChart() {
   const [drawingColor, setDrawingColor] = useState('#3b82f6')
   const [chartReady, setChartReady] = useState(false)
   const wsSymbols = useMemo(() => [{ symbol: 'NIFTY', exchange: 'NSE_INDEX' }], [])
-  const { data: wsData } = useMarketData({
+  const { data: wsData, isConnected, isConnecting, error: wsError, connect: wsConnect } = useMarketData({
     symbols: wsSymbols,
     mode: 'LTP',
     enabled: true,
@@ -1227,6 +1228,25 @@ export default function NiftyChart() {
           <Button variant={sqrtActive ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={() => setSqrtActive((v) => !v)}>SQRT</Button>
           <Button variant={showIndicatorPanel ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={() => setShowIndicatorPanel((v) => !v)}>Indicators</Button>
           <Button variant={showDrawingPanel ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={() => setShowDrawingPanel((v) => !v)}>Drawings</Button>
+          <div className="flex items-center gap-1.5 ml-auto">
+            <div className="flex items-center gap-1" title={wsError || (isConnected ? 'Connected' : isConnecting ? 'Connecting...' : 'Disconnected')}>
+              {isConnected ? (
+                <Zap className="h-3 w-3 text-yellow-500 fill-yellow-500" />
+              ) : isConnecting ? (
+                <RefreshCw className="h-3 w-3 animate-spin text-blue-500" />
+              ) : (
+                <ZapOff className="h-3 w-3 text-red-500" />
+              )}
+              <span className="text-[10px] text-muted-foreground">
+                {isConnected ? 'Live' : isConnecting ? 'Connecting' : 'Offline'}
+              </span>
+            </div>
+            {!isConnected && !isConnecting && (
+              <Button variant="outline" size="sm" className="h-7 px-2 text-[11px]" onClick={() => wsConnect()}>
+                <RefreshCw className="mr-1 h-3 w-3" /> Reconnect
+              </Button>
+            )}
+          </div>
           <div className="flex items-center gap-1">
             <Label className="text-[11px]">OI X %</Label>
             <Input type="number" min={0} max={100} className="h-7 w-14 px-1 text-[11px]" value={oiX} onChange={(e) => setOiX(Number(e.target.value || 0))} />
