@@ -755,10 +755,10 @@ export class CrossPlotPrimitive {
   paneViews(): any[] {
     const self = this
     return [{
-      paneViews() {
-        return [{
-          zOrder: 'top',
-          renderer(target: any) {
+      zOrder: 'top',
+      renderer() {
+        return {
+          draw(target: any) {
             if (!self._show) return
             const data = self._data
             if (!data || data.length === 0) return
@@ -783,7 +783,7 @@ export class CrossPlotPrimitive {
               }
             })
           },
-        }]
+        }
       },
     }]
   }
