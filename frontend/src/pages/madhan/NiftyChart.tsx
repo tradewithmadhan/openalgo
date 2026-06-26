@@ -8,6 +8,7 @@ import {
   createSeriesMarkers,
   HistogramSeries,
   LineSeries,
+  LineType,
   type IChartApi,
   type ISeriesApi,
   type Time,
@@ -30,6 +31,7 @@ import DrawingListPanel from './DrawingListPanel'
 import TextEditorModal from './TextEditorModal'
 import ChartLayout from './ChartLayout'
 import WidgetBar from './WidgetBar'
+import IndicatorPanel from './IndicatorPanel'
 
 type Candle = {
   time: number
@@ -52,6 +54,7 @@ type IndicatorInstance = {
 type IndicatorSeriesBucket = {
   plotSeries: Map<string, ISeriesApi<any>>
   extraSeries: ISeriesApi<any>[]
+  fillSeries: ISeriesApi<any>[]
   markerSeries: Array<{ plotKey: string; primitive: { setMarkers: (markers: any[]) => void } }>
 }
 
@@ -118,7 +121,6 @@ export default function NiftyChart() {
   const [oiShowValues, setOiShowValues] = useState(false)
   const [coiShowStrike, setCoiShowStrike] = useState(false)
   const [coiShowValues, setCoiShowValues] = useState(false)
-  const [indicatorSearch, setIndicatorSearch] = useState('')
   const [activeIndicators, setActiveIndicators] = useState<IndicatorInstance[]>([
     { key: 'sma-0', indicatorId: 'sma' },
     //{ key: 'rsi-0', indicatorId: 'rsi' },
@@ -182,20 +184,6 @@ export default function NiftyChart() {
   const indicatorColors = useMemo(
     () => ['#8b5cf6', '#f59e0b', '#3b82f6', '#22c55e', '#ef4444', '#14b8a6', '#a855f7', '#f97316'],
     []
-  )
-
-  const availableIndicators = useMemo(
-    () =>
-      indicatorRegistry.filter((item) => {
-        const query = indicatorSearch.trim().toLowerCase()
-        if (!query) return true
-        return (
-          item.id.toLowerCase().includes(query) ||
-          item.name.toLowerCase().includes(query) ||
-          item.shortName.toLowerCase().includes(query)
-        )
-      }),
-    [indicatorSearch]
   )
 
   const getIndicatorById = useCallback((indicatorId: string) => {
@@ -682,7 +670,7 @@ export default function NiftyChart() {
           const style = String(plotConfig?.style || 'line')
           const series = bucket.plotSeries.get(plotKey)
           if (!series) continue
-          const preserveWhitespace = style === 'linebr'
+          const preserveWhitespace = style === 'linebr' || style === 'steplinebr'
           series.setData(toSeriesData(plot, bars, preserveWhitespace) as any)
           if (style === 'cross' || style === 'circles') {
             const markerEntry = bucket.markerSeries.find((item) => item.plotKey === plotKey)
@@ -1132,6 +1120,7 @@ export default function NiftyChart() {
     for (const bucket of existing.values()) {
       for (const series of bucket.plotSeries.values()) chart.removeSeries(series)
       for (const series of bucket.extraSeries) chart.removeSeries(series)
+      for (const series of bucket.fillSeries) chart.removeSeries(series)
     }
     existing.clear()
     indicatorPaneRef.current.clear()
@@ -1148,15 +1137,23 @@ export default function NiftyChart() {
         close: item.close,
         volume: 0,
       }))
-      let plots: Record<string, unknown> = {}
+      let calculateResult: any = null
       try {
-        plots = (entry.calculate(bars, inputs) as any)?.plots || {}
+        calculateResult = entry.calculate(bars, inputs)
       } catch {
-        plots = { plot0: [] }
+        calculateResult = { plots: { plot0: [] } }
       }
+      const plots = calculateResult?.plots || {}
       const plotConfigList = Array.isArray((entry as any).plotConfig) ? (entry as any).plotConfig : []
-      const plotKeys = Object.keys(plots).filter((key) => Array.isArray((plots as any)[key]))
-      if (!plotKeys.length) plotKeys.push('plot0')
+      const allPlotKeys = Object.keys(plots).filter((key) => Array.isArray((plots as any)[key]))
+      const visiblePlotKeys = allPlotKeys.filter((key) => {
+        const cfg = plotConfigList.find((p: any) => p?.id === key) || {}
+        if (cfg.display === 'none') return false
+        if (typeof cfg.lineWidth === 'number' && cfg.lineWidth <= 0) return false
+        return true
+      })
+      if (!visiblePlotKeys.length && allPlotKeys.length) visiblePlotKeys.push(allPlotKeys[0])
+      if (!visiblePlotKeys.length) visiblePlotKeys.push('plot0')
       const paletteOffset = i * 3
       const chartAny = chart as any
       const indicatorTitle = `${entry.shortName || instance.indicatorId.toUpperCase()} ${i + 1}`
@@ -1168,28 +1165,33 @@ export default function NiftyChart() {
       }
       const seriesByPlot = new Map<string, ISeriesApi<any>>()
       const extraSeries: ISeriesApi<any>[] = []
+      const fillSeriesList: ISeriesApi<any>[] = []
       const markerSeries: Array<{ plotKey: string; primitive: { setMarkers: (markers: any[]) => void } }> = []
-      plotKeys.forEach((plotKey, plotIndex) => {
+      visiblePlotKeys.forEach((plotKey, plotIndex) => {
         const cfg = plotConfigList.find((p: any) => p?.id === plotKey) || {}
         const color = cfg.color || indicatorColors[(paletteOffset + plotIndex) % indicatorColors.length]
         const title = `${indicatorTitle} ${cfg.title || plotKey}`
         const style = String(cfg.style || 'line')
         const lineWidth = (cfg.lineWidth ?? 1) as number
         const addTo = pane && typeof pane.addSeries === 'function' ? pane : chart
-        const series = style === 'columns' || style === 'histogram'
-          ? (addTo.addSeries(HistogramSeries, { title, color, lineWidth: lineWidth as any }) as ISeriesApi<any>)
-          : style === 'area'
-            ? (addTo.addSeries(AreaSeries, { title, lineColor: color, topColor: `${color}66`, bottomColor: `${color}11`, lineWidth: lineWidth as any }) as ISeriesApi<any>)
-            : style === 'cross' || style === 'circles'
-              ? (addTo.addSeries(LineSeries, {
-                  title,
-                  color: 'rgba(0,0,0,0)',
-                  lineWidth: 0 as const,
-                  priceLineVisible: false,
-                  lastValueVisible: false,
-                  crosshairMarkerVisible: false,
-                }) as ISeriesApi<any>)
-              : (addTo.addSeries(LineSeries, { title, color, lineWidth: lineWidth as any }) as ISeriesApi<any>)
+        let series: ISeriesApi<any>
+        if (style === 'columns' || style === 'histogram') {
+          series = addTo.addSeries(HistogramSeries, { title, color, lineWidth: lineWidth as any }) as ISeriesApi<any>
+        } else if (style === 'area') {
+          series = addTo.addSeries(AreaSeries, { title, lineColor: color, topColor: `${color}66`, bottomColor: `${color}11`, lineWidth: lineWidth as any }) as ISeriesApi<any>
+        } else if (style === 'cross' || style === 'circles') {
+          series = addTo.addSeries(LineSeries, {
+            title, color: 'rgba(0,0,0,0)', lineWidth: 0 as const,
+            priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+          }) as ISeriesApi<any>
+        } else {
+          const isStep = style === 'stepline' || style === 'steplinebr'
+          series = addTo.addSeries(LineSeries, {
+            title, color, lineWidth: lineWidth as any,
+            lineType: isStep ? (LineType as any).WithSteps : undefined,
+            priceLineVisible: false, lastValueVisible: false,
+          }) as ISeriesApi<any>
+        }
         seriesByPlot.set(plotKey, series)
         if (style === 'cross' || style === 'circles') {
           markerSeries.push({
@@ -1203,20 +1205,20 @@ export default function NiftyChart() {
       if (hlines.length && seriesByPlot.size > 0) {
         const firstSeries = seriesByPlot.values().next().value as ISeriesApi<any>
         hlines.forEach((hl: any) => {
-          const style = String(hl.linestyle || 'solid')
+          const ls = String(hl.linestyle || 'solid')
           firstSeries.createPriceLine({
             price: Number(hl.price ?? 0),
             color: String(hl.color || '#787B86'),
             lineWidth: 1,
-            lineStyle: style === 'dashed' ? 2 : style === 'dotted' ? 1 : 0,
+            lineStyle: ls === 'dashed' ? 2 : ls === 'dotted' ? 1 : 0,
             axisLabelVisible: false,
             title: hl.title || '',
           } as any)
         })
       }
 
-      const fills = Array.isArray((entry as any).fillConfig) ? (entry as any).fillConfig : []
-      fills.forEach((fill: any, fillIndex: number) => {
+      const registryFills = Array.isArray((entry as any).fillConfig) ? (entry as any).fillConfig : []
+      registryFills.forEach((fill: any, fillIndex: number) => {
         const h1 = hlines.find((h: any) => h.id === fill.plot1)
         const h2 = hlines.find((h: any) => h.id === fill.plot2)
         if (!h1 || !h2) return
@@ -1239,7 +1241,56 @@ export default function NiftyChart() {
         extraSeries.push(area)
       })
 
-      existing.set(instance.key, { plotSeries: seriesByPlot, extraSeries, markerSeries })
+      const calcFills = Array.isArray(calculateResult?.fills) ? calculateResult.fills : []
+      calcFills.forEach((fill: any, fillIndex: number) => {
+        const plot1Data = Array.isArray(plots[fill.plot1]) ? plots[fill.plot1] : null
+        const plot2Data = Array.isArray(plots[fill.plot2]) ? plots[fill.plot2] : null
+        if (!plot1Data || !plot2Data) return
+        const fillOpts = fill.options || {}
+        const transp = typeof fillOpts.transp === 'number' ? fillOpts.transp : 90
+        const alpha = Math.round(((100 - transp) / 100) * 255).toString(16).padStart(2, '0')
+        const fillColor = (fillOpts.color || '#2962FF') + alpha
+        const fillData: Array<{ time: number; value: number }> = []
+        for (let j = 0; j < priceDataRef.current.length; j++) {
+          const bar = priceDataRef.current[j]
+          const p1 = plot1Data[j]
+          const p2 = plot2Data[j]
+          const v1 = p1 && typeof p1 === 'object' && 'value' in p1 ? (p1 as any).value : typeof p1 === 'number' ? p1 : NaN
+          const v2 = p2 && typeof p2 === 'object' && 'value' in p2 ? (p2 as any).value : typeof p2 === 'number' ? p2 : NaN
+          if (!Number.isFinite(v1) || !Number.isFinite(v2)) continue
+          fillData.push({ time: bar.time as any, value: Math.max(v1, v2) })
+        }
+        if (!fillData.length) return
+        const lowerData = priceDataRef.current.map((bar, j) => {
+          const p1 = plot1Data[j]
+          const p2 = plot2Data[j]
+          const v1 = p1 && typeof p1 === 'object' && 'value' in p1 ? (p1 as any).value : typeof p1 === 'number' ? p1 : NaN
+          const v2 = p2 && typeof p2 === 'object' && 'value' in p2 ? (p2 as any).value : typeof p2 === 'number' ? p2 : NaN
+          if (!Number.isFinite(v1) || !Number.isFinite(v2)) return null
+          return { time: bar.time as any, value: Math.min(v1, v2) }
+        }).filter(Boolean)
+        if (!lowerData.length) return
+        const addTo = pane && typeof pane.addSeries === 'function' ? pane : chart
+        const area = addTo.addSeries(AreaSeries, {
+          title: `${indicatorTitle} Fill ${fillIndex + 1}`,
+          lineColor: 'transparent',
+          topColor: fillColor,
+          bottomColor: fillColor,
+          lineWidth: 0 as const,
+          priceLineVisible: false,
+          lastValueVisible: false,
+          crosshairMarkerVisible: false,
+        } as any) as ISeriesApi<any>
+        const mergedData = fillData.map((d, idx) => ({
+          time: d.time,
+          value: d.value,
+          ...(lowerData[idx] ? { baseValue: { type: 'price' as const, price: lowerData[idx]!.value } } : {}),
+        }))
+        area.setData(mergedData as any)
+        fillSeriesList.push(area)
+      })
+
+      existing.set(instance.key, { plotSeries: seriesByPlot, extraSeries, fillSeries: fillSeriesList, markerSeries })
     }
     updateIndicatorSeries(priceDataRef.current)
   }, [activeIndicators, indicatorColors, updateIndicatorSeries, chartReady, getIndicatorById, indicatorInputs])
@@ -1499,99 +1550,16 @@ export default function NiftyChart() {
                 />
               )}
               {showIndicatorPanel && (
-                <div className="h-full w-[260px] shrink-0 overflow-auto p-2" style={{ borderRight: `1px solid ${t.border}`, backgroundColor: t.panel }}>
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between">
-                      <span className="text-[11px] font-medium" style={{ color: t.text }}>Indicators</span>
-                    </div>
-                    <Input className="h-7 text-[11px]" style={{ borderColor: t.border, backgroundColor: t.panelDarker, color: t.text }} value={indicatorSearch} placeholder="Search..." onChange={(e) => setIndicatorSearch(e.target.value)} />
-                    <div className="max-h-40 space-y-0.5 overflow-auto rounded p-1" style={{ border: `1px solid ${t.border}`, backgroundColor: t.panelDarker }}>
-                      {availableIndicators.slice(0, 200).map((item) => {
-                        const active = activeIndicators.some((x) => x.indicatorId === item.id)
-                        return (
-                          <button
-                            key={item.id}
-                            type="button"
-                            className="w-full rounded px-2 py-1 text-left text-[11px]"
-                            style={{
-                              backgroundColor: active ? t.activeBg : undefined,
-                              color: active ? t.text : t.textSecondary,
-                            }}
-                            onClick={() => addIndicator(item.id)}
-                          >
-                            {item.shortName} {active && <span style={{ color: t.active }}>+</span>}
-                          </button>
-                        )
-                      })}
-                    </div>
-                    <div className="space-y-1">
-                      {activeIndicators.map((indicator, index) => {
-                        const entry = getIndicatorById(indicator.indicatorId)
-                        if (!entry) return null
-                        const expanded = expandedIndicatorKey === indicator.key
-                        const config = Array.isArray(entry.inputConfig) ? entry.inputConfig : []
-                        const values = indicatorInputs[indicator.key] || {}
-                        return (
-                          <div key={indicator.key} className="rounded p-1.5" style={{ border: `1px solid ${t.border}`, backgroundColor: t.panelDarker }}>
-                            <div className="flex items-center justify-between">
-                              <button type="button" className="text-left text-[11px]" style={{ color: t.text }} onClick={() => setExpandedIndicatorKey(expanded ? null : indicator.key)}>
-                                {entry.name} #{index + 1}
-                              </button>
-                              <button className="text-[10px]" style={{ color: t.danger }} onClick={() => removeIndicator(indicator.key)}>x</button>
-                            </div>
-                            {expanded && (
-                              <div className="mt-2 space-y-1.5 pt-2" style={{ borderTop: `1px solid ${t.border}` }}>
-                                {config.map((input: any) => {
-                                  const value = values[input.id] ?? input.defval
-                                  const inputType = String(input.type || '')
-                                  if (inputType === 'bool') {
-                                    return (
-                                      <div key={input.id} className="flex items-center justify-between">
-                                        <span className="text-[10px]" style={{ color: t.textSecondary }}>{input.title || input.id}</span>
-                                        <Checkbox checked={Boolean(value)} onCheckedChange={(v) => updateIndicatorInput(indicator.key, input.id, !!v)} />
-                                      </div>
-                                    )
-                                  }
-                                  if (inputType === 'source' || Array.isArray(input.options)) {
-                                    const options = input.options || ['open', 'high', 'low', 'close']
-                                    return (
-                                      <div key={input.id}>
-                                        <span className="text-[10px]" style={{ color: t.textSecondary }}>{input.title || input.id}</span>
-                                        <Select value={String(value)} onValueChange={(val) => updateIndicatorInput(indicator.key, input.id, val)}>
-                                          <SelectTrigger className="mt-0.5 h-6 text-[10px]" style={{ borderColor: t.border, backgroundColor: t.panel, color: t.text }}><SelectValue /></SelectTrigger>
-                                          <SelectContent>
-                                            {options.map((option: string) => (
-                                              <SelectItem key={option} value={String(option)}>{String(option)}</SelectItem>
-                                            ))}
-                                          </SelectContent>
-                                        </Select>
-                                      </div>
-                                    )
-                                  }
-                                  return (
-                                    <div key={input.id}>
-                                      <span className="text-[10px]" style={{ color: t.textSecondary }}>{input.title || input.id}</span>
-                                      <Input
-                                        type="number"
-                                        className="mt-0.5 h-6 text-[10px]"
-                                        style={{ borderColor: t.border, backgroundColor: t.panel, color: t.text }}
-                                        value={String(value ?? '')}
-                                        onChange={(e) => {
-                                          const raw = e.target.value
-                                          const num = inputType === 'int' ? Number.parseInt(raw || '0', 10) : Number.parseFloat(raw || '0')
-                                          if (!Number.isNaN(num)) updateIndicatorInput(indicator.key, input.id, num)
-                                        }}
-                                      />
-                                    </div>
-                                  )
-                                })}
-                              </div>
-                            )}
-                          </div>
-                        )
-                      })}
-                    </div>
-                  </div>
+                <div className="h-full w-[260px] shrink-0" style={{ borderRight: `1px solid ${t.border}` }}>
+                  <IndicatorPanel
+                    activeIndicators={activeIndicators}
+                    onAdd={addIndicator}
+                    onRemove={removeIndicator}
+                    expandedKey={expandedIndicatorKey}
+                    onToggleExpand={setExpandedIndicatorKey}
+                    inputs={indicatorInputs}
+                    onUpdateInput={updateIndicatorInput}
+                  />
                 </div>
               )}
             </>
