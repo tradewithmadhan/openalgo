@@ -145,8 +145,11 @@ export default function NiftyChart() {
   const [expandedIndicatorKey, setExpandedIndicatorKey] = useState<string | null>(null)
   const [showIndicatorPanel, setShowIndicatorPanel] = useState(false)
   const [indicatorPanelPos, setIndicatorPanelPos] = useState({ x: 80, y: 40 })
+  const [indicatorPanelWidth, setIndicatorPanelWidth] = useState(320)
   const [indicatorPanelDragging, setIndicatorPanelDragging] = useState(false)
+  const [indicatorPanelResizing, setIndicatorPanelResizing] = useState(false)
   const indicatorPanelDragStart = useRef<{ mx: number; my: number; px: number; py: number } | null>(null)
+  const indicatorPanelResizeStart = useRef<{ mx: number; w: number } | null>(null)
   const [showDrawingPanel, setShowDrawingPanel] = useState(false)
   const [drawingToolbarCollapsed, setDrawingToolbarCollapsed] = useState(false)
   const [activeDrawingTool, setActiveDrawingTool] = useState<string | null>(null)
@@ -1864,6 +1867,32 @@ export default function NiftyChart() {
     }
   }, [indicatorPanelDragging])
 
+  const handleIndicatorPanelResizeStart = (e: React.MouseEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    indicatorPanelResizeStart.current = { mx: e.clientX, w: indicatorPanelWidth }
+    setIndicatorPanelResizing(true)
+  }
+
+  useEffect(() => {
+    if (!indicatorPanelResizing) return
+    const onMove = (e: MouseEvent) => {
+      if (!indicatorPanelResizeStart.current) return
+      const dx = e.clientX - indicatorPanelResizeStart.current.mx
+      setIndicatorPanelWidth(Math.max(220, Math.min(600, indicatorPanelResizeStart.current.w + dx)))
+    }
+    const onUp = () => {
+      indicatorPanelResizeStart.current = null
+      setIndicatorPanelResizing(false)
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+    return () => {
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+    }
+  }, [indicatorPanelResizing])
+
   return (
     <div className="h-full w-full p-0">
       <Card className="flex h-full w-full flex-col overflow-hidden rounded-none border-0 py-0 gap-0 bg-card">
@@ -2040,7 +2069,7 @@ export default function NiftyChart() {
             style={{
               left: indicatorPanelPos.x,
               top: indicatorPanelPos.y,
-              width: 280,
+              width: indicatorPanelWidth,
               height: 480,
               backgroundColor: t.panel,
               border: `1px solid ${t.border}`,
@@ -2062,6 +2091,11 @@ export default function NiftyChart() {
               onTogglePlotVisibility={togglePlotVisibility}
               onClose={() => setShowIndicatorPanel(false)}
               onDragStart={handleIndicatorPanelDragStart}
+            />
+            <div
+              className="absolute right-0 top-0 h-full w-1.5 cursor-ew-resize hover:bg-blue-500/30"
+              style={{ borderRadius: '0 4px 4px 0' }}
+              onMouseDown={handleIndicatorPanelResizeStart}
             />
           </div>
         )}
