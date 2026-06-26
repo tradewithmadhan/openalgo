@@ -1,12 +1,14 @@
 import { useState, useMemo } from 'react'
 import { indicatorRegistry } from 'lightweight-charts-indicators'
-import { X, ChevronRight, Activity } from 'lucide-react'
+import { X, ChevronRight, Activity, Eye, EyeOff } from 'lucide-react'
 import { useThemeStore } from '@/stores/themeStore'
 import { chartTheme } from './chartTheme'
 
 export type IndicatorInstance = {
   key: string
   indicatorId: string
+  visible: boolean
+  plotVisibility: Record<string, boolean>
 }
 
 interface IndicatorPanelProps {
@@ -17,6 +19,8 @@ interface IndicatorPanelProps {
   onToggleExpand: (key: string | null) => void
   inputs: Record<string, Record<string, unknown>>
   onUpdateInput: (instanceKey: string, inputId: string, value: unknown) => void
+  onToggleVisibility: (instanceKey: string) => void
+  onTogglePlotVisibility: (instanceKey: string, plotKey: string) => void
 }
 
 export const INDICATOR_CATEGORIES = [
@@ -37,6 +41,8 @@ export default function IndicatorPanel({
   onToggleExpand,
   inputs,
   onUpdateInput,
+  onToggleVisibility,
+  onTogglePlotVisibility,
 }: IndicatorPanelProps) {
   const { mode } = useThemeStore()
   const t = chartTheme[mode]
@@ -100,13 +106,15 @@ export default function IndicatorPanel({
               const expanded = expandedKey === indicator.key
               const config = Array.isArray(entry.inputConfig) ? entry.inputConfig : []
               const values = inputs[indicator.key] || {}
+              const plotConfigList = Array.isArray((entry as any).plotConfig) ? (entry as any).plotConfig : []
+              const indicatorVisible = indicator.visible !== false
               return (
                 <div key={indicator.key} className="rounded p-1.5" style={{ border: `1px solid ${t.border}`, backgroundColor: t.panelDarker }}>
                   <div className="flex items-center justify-between">
                     <button
                       type="button"
                       className="flex flex-1 items-center gap-1 text-left text-[11px]"
-                      style={{ color: t.text }}
+                      style={{ color: indicatorVisible ? t.text : t.textMuted, opacity: indicatorVisible ? 1 : 0.5 }}
                       onClick={() => onToggleExpand(expanded ? null : indicator.key)}
                     >
                       <ChevronRight
@@ -116,14 +124,51 @@ export default function IndicatorPanel({
                       <span className="truncate">{entry.name}</span>
                       <span className="text-[9px]" style={{ color: t.textSecondary }}>{entry.shortName}</span>
                     </button>
-                    <button
-                      className="shrink-0 rounded p-0.5 text-[10px]"
-                      style={{ color: t.danger }}
-                      onClick={() => onRemove(indicator.key)}
-                    >
-                      <X className="h-3 w-3" />
-                    </button>
+                    <div className="flex items-center gap-0.5 shrink-0">
+                      <button
+                        className="rounded p-0.5 text-[10px]"
+                        style={{ color: indicatorVisible ? t.active : t.textMuted }}
+                        onClick={() => onToggleVisibility(indicator.key)}
+                        title={indicatorVisible ? 'Hide indicator' : 'Show indicator'}
+                      >
+                        {indicatorVisible ? <Eye className="h-3 w-3" /> : <EyeOff className="h-3 w-3" />}
+                      </button>
+                      <button
+                        className="rounded p-0.5 text-[10px]"
+                        style={{ color: t.danger }}
+                        onClick={() => onRemove(indicator.key)}
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </div>
                   </div>
+                  {expanded && plotConfigList.length > 1 && (
+                    <div className="mt-1.5 pt-1.5 space-y-1" style={{ borderTop: `1px solid ${t.border}` }}>
+                      <div className="px-1 text-[9px] font-semibold uppercase" style={{ color: t.textMuted }}>Levels</div>
+                      {plotConfigList.map((plot: any) => {
+                        if (!plot || !plot.id) return null
+                        if (plot.display === 'none') return null
+                        if (typeof plot.lineWidth === 'number' && plot.lineWidth <= 0) return null
+                        const plotVisible = indicator.plotVisibility[plot.id] !== false
+                        return (
+                          <div key={plot.id} className="flex items-center gap-1.5 px-1">
+                            <button
+                              className="shrink-0"
+                              style={{ color: plotVisible ? (plot.color || t.active) : t.textMuted, opacity: plotVisible ? 1 : 0.4 }}
+                              onClick={() => onTogglePlotVisibility(indicator.key, plot.id)}
+                              title={plotVisible ? `Hide ${plot.title || plot.id}` : `Show ${plot.title || plot.id}`}
+                            >
+                              {plotVisible ? <Eye className="h-2.5 w-2.5" /> : <EyeOff className="h-2.5 w-2.5" />}
+                            </button>
+                            <div className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: plot.color || t.active, opacity: plotVisible ? 1 : 0.3 }} />
+                            <span className="text-[10px] flex-1" style={{ color: plotVisible ? t.textSecondary : t.textMuted, opacity: plotVisible ? 1 : 0.5 }}>
+                              {plot.title || plot.id}
+                            </span>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
                   {expanded && config.length > 0 && (
                     <div className="mt-2 space-y-1.5 pt-2" style={{ borderTop: `1px solid ${t.border}` }}>
                       {config.map((input: any) => {

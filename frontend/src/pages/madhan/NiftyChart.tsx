@@ -49,6 +49,8 @@ type OIProfileResponse = {
 type IndicatorInstance = {
   key: string
   indicatorId: string
+  visible: boolean
+  plotVisibility: Record<string, boolean>
 }
 
 type IndicatorSeriesBucket = {
@@ -122,8 +124,7 @@ export default function NiftyChart() {
   const [coiShowStrike, setCoiShowStrike] = useState(false)
   const [coiShowValues, setCoiShowValues] = useState(false)
   const [activeIndicators, setActiveIndicators] = useState<IndicatorInstance[]>([
-    { key: 'sma-0', indicatorId: 'sma' },
-    //{ key: 'rsi-0', indicatorId: 'rsi' },
+    { key: 'sma-0', indicatorId: 'sma', visible: true, plotVisibility: {} },
   ])
   const [indicatorInputs, setIndicatorInputs] = useState<Record<string, Record<string, unknown>>>({})
   const [expandedIndicatorKey, setExpandedIndicatorKey] = useState<string | null>(null)
@@ -140,6 +141,7 @@ export default function NiftyChart() {
   const [editingTextDrawing, setEditingTextDrawing] = useState<IDrawing | null>(null)
   const [chartReady, setChartReady] = useState(false)
   const [crosshairOHLCV, setCrosshairOHLCV] = useState<{ time: string; open: number; high: number; low: number; close: number; volume?: number } | null>(null)
+  const [indicatorValues, setIndicatorValues] = useState<Record<string, Record<string, number>>>({})
   const wsSymbols = useMemo(() => [{ symbol: 'NIFTY', exchange: 'NSE_INDEX' }], [])
   const { data: wsData, isConnected, isConnecting, error: wsError, connect: wsConnect } = useMarketData({
     symbols: wsSymbols,
@@ -653,10 +655,13 @@ export default function NiftyChart() {
       close: item.close,
       volume: 0,
     }))
+    const newValues: Record<string, Record<string, number>> = {}
     for (const instance of activeIndicators) {
+      if (instance.visible === false) continue
       const entry = getIndicatorById(instance.indicatorId)
       const bucket = indicatorSeriesRef.current.get(instance.key)
       if (!entry || !bucket) continue
+      const instanceValues: Record<string, number> = {}
       try {
         const inputs = indicatorInputs[instance.key] || entry.defaultInputs || {}
         const result = entry.calculate(bars, inputs) as any
@@ -676,6 +681,14 @@ export default function NiftyChart() {
             const markerEntry = bucket.markerSeries.find((item) => item.plotKey === plotKey)
             markerEntry?.primitive.setMarkers(toMarkerData(plot, bars, style === 'cross' ? 'cross' : 'circle', String(plotConfig?.color || '#2962FF')))
           }
+          // Track last non-NaN value for status bar
+          for (let k = plot.length - 1; k >= 0; k--) {
+            const point = plot[k] as any
+            if (point && typeof point === 'object' && typeof point.value === 'number' && Number.isFinite(point.value)) {
+              instanceValues[plotKey] = point.value
+              break
+            }
+          }
           livePlotKeys.add(plotKey)
         }
         for (const [plotKey, series] of bucket.plotSeries.entries()) {
@@ -692,7 +705,9 @@ export default function NiftyChart() {
           markerEntry.primitive.setMarkers([])
         }
       }
+      if (Object.keys(instanceValues).length) newValues[instance.key] = instanceValues
     }
+    setIndicatorValues(newValues)
   }, [activeIndicators, getIndicatorById, indicatorInputs])
 
   const addHorizontalLines = (data: Candle[]) => {
@@ -1150,6 +1165,8 @@ export default function NiftyChart() {
         const cfg = plotConfigList.find((p: any) => p?.id === key) || {}
         if (cfg.display === 'none') return false
         if (typeof cfg.lineWidth === 'number' && cfg.lineWidth <= 0) return false
+        const plotVisible = instance.plotVisibility[key]
+        if (plotVisible === false) return false
         return true
       })
       if (!visiblePlotKeys.length && allPlotKeys.length) visiblePlotKeys.push(allPlotKeys[0])
@@ -1241,56 +1258,20 @@ export default function NiftyChart() {
         extraSeries.push(area)
       })
 
-      const calcFills = Array.isArray(calculateResult?.fills) ? calculateResult.fills : []
-      calcFills.forEach((fill: any, fillIndex: number) => {
-        const plot1Data = Array.isArray(plots[fill.plot1]) ? plots[fill.plot1] : null
-        const plot2Data = Array.isArray(plots[fill.plot2]) ? plots[fill.plot2] : null
-        if (!plot1Data || !plot2Data) return
-        const fillOpts = fill.options || {}
-        const transp = typeof fillOpts.transp === 'number' ? fillOpts.transp : 90
-        const alpha = Math.round(((100 - transp) / 100) * 255).toString(16).padStart(2, '0')
-        const fillColor = (fillOpts.color || '#2962FF') + alpha
-        const fillData: Array<{ time: number; value: number }> = []
-        for (let j = 0; j < priceDataRef.current.length; j++) {
-          const bar = priceDataRef.current[j]
-          const p1 = plot1Data[j]
-          const p2 = plot2Data[j]
-          const v1 = p1 && typeof p1 === 'object' && 'value' in p1 ? (p1 as any).value : typeof p1 === 'number' ? p1 : NaN
-          const v2 = p2 && typeof p2 === 'object' && 'value' in p2 ? (p2 as any).value : typeof p2 === 'number' ? p2 : NaN
-          if (!Number.isFinite(v1) || !Number.isFinite(v2)) continue
-          fillData.push({ time: bar.time as any, value: Math.max(v1, v2) })
-        }
-        if (!fillData.length) return
-        const lowerData = priceDataRef.current.map((bar, j) => {
-          const p1 = plot1Data[j]
-          const p2 = plot2Data[j]
-          const v1 = p1 && typeof p1 === 'object' && 'value' in p1 ? (p1 as any).value : typeof p1 === 'number' ? p1 : NaN
-          const v2 = p2 && typeof p2 === 'object' && 'value' in p2 ? (p2 as any).value : typeof p2 === 'number' ? p2 : NaN
-          if (!Number.isFinite(v1) || !Number.isFinite(v2)) return null
-          return { time: bar.time as any, value: Math.min(v1, v2) }
-        }).filter(Boolean)
-        if (!lowerData.length) return
-        const addTo = pane && typeof pane.addSeries === 'function' ? pane : chart
-        const area = addTo.addSeries(AreaSeries, {
-          title: `${indicatorTitle} Fill ${fillIndex + 1}`,
-          lineColor: 'transparent',
-          topColor: fillColor,
-          bottomColor: fillColor,
-          lineWidth: 0 as const,
-          priceLineVisible: false,
-          lastValueVisible: false,
-          crosshairMarkerVisible: false,
-        } as any) as ISeriesApi<any>
-        const mergedData = fillData.map((d, idx) => ({
-          time: d.time,
-          value: d.value,
-          ...(lowerData[idx] ? { baseValue: { type: 'price' as const, price: lowerData[idx]!.value } } : {}),
-        }))
-        area.setData(mergedData as any)
-        fillSeriesList.push(area)
-      })
-
       existing.set(instance.key, { plotSeries: seriesByPlot, extraSeries, fillSeries: fillSeriesList, markerSeries })
+
+      // Apply indicator-level and per-plot visibility
+      const indicatorVisible = instance.visible !== false
+      for (const [plotKey, series] of seriesByPlot.entries()) {
+        const plotVisible = instance.plotVisibility[plotKey] !== false
+        series.applyOptions({ visible: indicatorVisible && plotVisible })
+      }
+      for (const series of extraSeries) {
+        series.applyOptions({ visible: indicatorVisible })
+      }
+      for (const series of fillSeriesList) {
+        series.applyOptions({ visible: indicatorVisible })
+      }
     }
     updateIndicatorSeries(priceDataRef.current)
   }, [activeIndicators, indicatorColors, updateIndicatorSeries, chartReady, getIndicatorById, indicatorInputs])
@@ -1344,6 +1325,25 @@ export default function NiftyChart() {
       repaintOverlay()
     }
   }, [coiX, coiShowStrike, coiShowValues])
+
+  // Handle indicator visibility toggling at runtime
+  useEffect(() => {
+    for (const instance of activeIndicators) {
+      const bucket = indicatorSeriesRef.current.get(instance.key)
+      if (!bucket) continue
+      const indicatorVisible = instance.visible !== false
+      for (const [plotKey, series] of bucket.plotSeries.entries()) {
+        const plotVisible = instance.plotVisibility[plotKey] !== false
+        series.applyOptions({ visible: indicatorVisible && plotVisible })
+      }
+      for (const series of bucket.extraSeries) {
+        series.applyOptions({ visible: indicatorVisible })
+      }
+      for (const series of bucket.fillSeries) {
+        series.applyOptions({ visible: indicatorVisible })
+      }
+    }
+  }, [activeIndicators])
 
   const toggleOi = () => {
     if (!oiPrimitiveRef.current) return
@@ -1423,7 +1423,7 @@ export default function NiftyChart() {
   const addIndicator = (indicatorId: string) => {
     const nextIndex = activeIndicators.filter((item) => item.indicatorId === indicatorId).length
     const key = `${indicatorId}-${Date.now()}-${nextIndex}`
-    setActiveIndicators((prev) => [...prev, { key, indicatorId }])
+    setActiveIndicators((prev) => [...prev, { key, indicatorId, visible: true, plotVisibility: {} }])
     setExpandedIndicatorKey(key)
   }
 
@@ -1444,6 +1444,25 @@ export default function NiftyChart() {
         [inputId]: value,
       },
     }))
+  }
+
+  const toggleIndicatorVisibility = (instanceKey: string) => {
+    setActiveIndicators((prev) =>
+      prev.map((item) =>
+        item.key === instanceKey ? { ...item, visible: !item.visible } : item
+      )
+    )
+  }
+
+  const togglePlotVisibility = (instanceKey: string, plotKey: string) => {
+    setActiveIndicators((prev) =>
+      prev.map((item) => {
+        if (item.key !== instanceKey) return item
+        const next = { ...item.plotVisibility }
+        next[plotKey] = !(plotKey in next ? next[plotKey] : true)
+        return { ...item, plotVisibility: next }
+      })
+    )
   }
 
   return (
@@ -1559,6 +1578,8 @@ export default function NiftyChart() {
                     onToggleExpand={setExpandedIndicatorKey}
                     inputs={indicatorInputs}
                     onUpdateInput={updateIndicatorInput}
+                    onToggleVisibility={toggleIndicatorVisibility}
+                    onTogglePlotVisibility={togglePlotVisibility}
                   />
                 </div>
               )}
@@ -1580,19 +1601,51 @@ export default function NiftyChart() {
             ) : undefined
           }
           bottomBar={
-            crosshairOHLCV ? (
-              <div
-                className="flex shrink-0 items-center gap-3 px-3 py-1 text-[11px]"
-                style={{ borderTop: `1px solid ${t.border}`, backgroundColor: t.panelDarker, color: t.textSecondary }}
-              >
-                <span style={{ color: t.textMuted }}>{crosshairOHLCV.time}</span>
-                <span>O <span style={{ color: t.text }}>{crosshairOHLCV.open.toFixed(2)}</span></span>
-                <span>H <span style={{ color: t.text }}>{crosshairOHLCV.high.toFixed(2)}</span></span>
-                <span>L <span style={{ color: t.text }}>{crosshairOHLCV.low.toFixed(2)}</span></span>
-                <span>C <span style={{ color: t.text }}>{crosshairOHLCV.close.toFixed(2)}</span></span>
-                <span className="ml-auto" style={{ color: t.textMuted }}>NIFTY 50</span>
-              </div>
-            ) : undefined
+            <>
+              {Object.keys(indicatorValues).length > 0 && (
+                <div
+                  className="flex shrink-0 items-center gap-3 px-3 py-1 text-[10px]"
+                  style={{ borderTop: `1px solid ${t.border}`, backgroundColor: t.panelDarker, color: t.textSecondary }}
+                >
+                  {activeIndicators
+                    .filter((inst) => inst.visible !== false && indicatorValues[inst.key])
+                    .map((inst) => {
+                      const entry = getIndicatorById(inst.indicatorId)
+                      if (!entry) return null
+                      const vals = indicatorValues[inst.key]
+                      const plotConfigList = Array.isArray((entry as any).plotConfig) ? (entry as any).plotConfig : []
+                      return (
+                        <div key={inst.key} className="flex items-center gap-1.5">
+                          <span style={{ color: t.text, fontWeight: 500 }}>{entry.shortName}</span>
+                          {Object.entries(vals).map(([plotKey, value]) => {
+                            const cfg = plotConfigList.find((p: any) => p?.id === plotKey) || {}
+                            const color = cfg.color || t.active
+                            const title = cfg.title || plotKey
+                            return (
+                              <span key={plotKey} style={{ color }}>
+                                {title} <span style={{ color: t.text }}>{Number.isFinite(value) ? value.toFixed(2) : '—'}</span>
+                              </span>
+                            )
+                          })}
+                        </div>
+                      )
+                    })}
+                </div>
+              )}
+              {crosshairOHLCV ? (
+                <div
+                  className="flex shrink-0 items-center gap-3 px-3 py-1 text-[11px]"
+                  style={{ borderTop: `1px solid ${t.border}`, backgroundColor: t.panelDarker, color: t.textSecondary }}
+                >
+                  <span style={{ color: t.textMuted }}>{crosshairOHLCV.time}</span>
+                  <span>O <span style={{ color: t.text }}>{crosshairOHLCV.open.toFixed(2)}</span></span>
+                  <span>H <span style={{ color: t.text }}>{crosshairOHLCV.high.toFixed(2)}</span></span>
+                  <span>L <span style={{ color: t.text }}>{crosshairOHLCV.low.toFixed(2)}</span></span>
+                  <span>C <span style={{ color: t.text }}>{crosshairOHLCV.close.toFixed(2)}</span></span>
+                  <span className="ml-auto" style={{ color: t.textMuted }}>NIFTY 50</span>
+                </div>
+              ) : undefined}
+            </>
           }
         >
           <div ref={chartContainerRef} className="h-full w-full" />
