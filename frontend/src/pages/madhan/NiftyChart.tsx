@@ -32,6 +32,7 @@ import TextEditorModal from './TextEditorModal'
 import ChartLayout from './ChartLayout'
 import WidgetBar from './WidgetBar'
 import IndicatorPanel from './IndicatorPanel'
+import { PlotFillPrimitive, LineBrPrimitive, ExtendedMarkerPrimitive, BgColorPrimitive, LabelPrimitive, BoxPrimitive, LineDrawingPrimitive, TablePrimitive, applyTransparency, toMarkerData } from './chartPrimitives'
 
 type Candle = {
   time: number
@@ -39,6 +40,7 @@ type Candle = {
   high: number
   low: number
   close: number
+  volume?: number
 }
 
 type OIProfileResponse = {
@@ -56,11 +58,21 @@ type IndicatorInstance = {
 type IndicatorSeriesBucket = {
   plotSeries: Map<string, ISeriesApi<any>>
   extraSeries: ISeriesApi<any>[]
-  fillSeries: ISeriesApi<any>[]
   markerSeries: Array<{ plotKey: string; primitive: { setMarkers: (markers: any[]) => void } }>
-  mergedSeries?: { series: ISeriesApi<any>; plotKeys: string[] }
-  fillPrimitives: Array<{ plot1Key: string; plot2Key: string; color: string; transp: number; primitive: any }>
+  lineBrPrimitives: Array<{ plotKey: string; primitive: LineBrPrimitive; anchorSeries: ISeriesApi<any> }>
+  plotFillPrimitives: Array<{ prim: PlotFillPrimitive; anchorSeries: ISeriesApi<any>; fillConfig: any }>
   allPlotData: Map<string, Array<{ time: number; value?: number }>>
+  extendedMarkerPrimitive?: ExtendedMarkerPrimitive
+  extendedMarkerAnchorSeries?: ISeriesApi<any>
+  bgColorPrimitive?: BgColorPrimitive
+  bgColorAnchorSeries?: ISeriesApi<any>
+  labelPrimitive?: LabelPrimitive
+  labelAnchorSeries?: ISeriesApi<any>
+  boxPrimitive?: BoxPrimitive
+  boxAnchorSeries?: ISeriesApi<any>
+  lineDrawingPrimitive?: LineDrawingPrimitive
+  lineDrawingAnchorSeries?: ISeriesApi<any>
+  tablePrimitive?: TablePrimitive
 }
 
 // Compact number formatter: 2500 -> "2.5k", 15000 -> "15k", 1.2M -> "1.2M"
@@ -77,98 +89,6 @@ function formatCompact(n: number): string {
     return `${sign}${v >= 10 ? Math.round(v) : v.toFixed(1)}k`
   }
   return `${sign}${Math.round(abs)}`
-}
-
-class PlotFillPrimitive {
-  _series: ISeriesApi<any>
-  _timeScale: any
-  _plot1Data: Array<{ time: number; value?: number }> = []
-  _plot2Data: Array<{ time: number; value?: number }> = []
-  _color: string
-  _transp: number
-  _show = true
-
-  constructor(series: ISeriesApi<any>, timeScale: any, color: string, transp: number) {
-    this._series = series
-    this._timeScale = timeScale
-    this._color = color
-    this._transp = transp
-  }
-
-  paneViews() {
-    const self = this
-    return [
-      {
-        renderer() {
-          return {
-            draw(target: any) {
-              if (!self._show || !self._plot1Data.length || !self._plot2Data.length) return
-              target.useBitmapCoordinateSpace((scope: any) => {
-                const ctx = scope.context
-                const hpr = scope.horizontalPixelRatio
-                const vpr = scope.verticalPixelRatio
-
-                const timeToX = (time: number) => self._timeScale.timeToCoordinate(time)
-                const priceToY = (price: number) => self._series.priceToCoordinate(price)
-
-                const p1Map = new Map<number, number>()
-                for (const pt of self._plot1Data) {
-                  if (pt.value == null || !Number.isFinite(pt.value)) continue
-                  const x = timeToX(pt.time)
-                  const y = priceToY(pt.value)
-                  if (x != null && y != null) p1Map.set(pt.time, y)
-                }
-                const p2Map = new Map<number, number>()
-                for (const pt of self._plot2Data) {
-                  if (pt.value == null || !Number.isFinite(pt.value)) continue
-                  const x = timeToX(pt.time)
-                  const y = priceToY(pt.value)
-                  if (x != null && y != null) p2Map.set(pt.time, y)
-                }
-
-                const commonTimes: number[] = []
-                for (const t of p1Map.keys()) {
-                  if (p2Map.has(t)) commonTimes.push(t)
-                }
-                if (commonTimes.length < 2) return
-                commonTimes.sort((a, b) => a - b)
-
-                const r = parseInt(self._color.slice(1, 3), 16)
-                const g = parseInt(self._color.slice(3, 5), 16)
-                const b = parseInt(self._color.slice(5, 7), 16)
-                const alpha = 1 - self._transp / 100
-                ctx.fillStyle = `rgba(${r},${g},${b},${alpha})`
-
-                ctx.beginPath()
-                for (let i = 0; i < commonTimes.length; i++) {
-                  const time = commonTimes[i]
-                  const x = timeToX(time)
-                  if (x == null) continue
-                  const y1 = p1Map.get(time)!
-                  if (i === 0) ctx.moveTo(x * hpr, y1 * vpr)
-                  else ctx.lineTo(x * hpr, y1 * vpr)
-                }
-                for (let i = commonTimes.length - 1; i >= 0; i--) {
-                  const time = commonTimes[i]
-                  const x = timeToX(time)
-                  if (x == null) continue
-                  const y2 = p2Map.get(time)!
-                  ctx.lineTo(x * hpr, y2 * vpr)
-                }
-                ctx.closePath()
-                ctx.fill()
-              })
-            },
-          }
-        },
-      },
-    ]
-  }
-
-  setPlot1Data(data: Array<{ time: number; value?: number }>) { this._plot1Data = data }
-  setPlot2Data(data: Array<{ time: number; value?: number }>) { this._plot2Data = data }
-  toggle() { this._show = !this._show; return this._show }
-  setVisible(v: boolean) { this._show = v }
 }
 
 export default function NiftyChart() {
@@ -713,36 +633,6 @@ export default function NiftyChart() {
       .filter((point): point is { time: number; value?: number } => point != null)
   }
 
-  const toMarkerData = (plot: unknown, bars: Bar[], shape: 'circle' | 'cross', defaultColor: string) => {
-    if (!Array.isArray(plot)) return []
-    return plot
-      .map((item, index) => {
-        const bar = bars[index]
-        if (item && typeof item === 'object' && 'time' in (item as any) && 'value' in (item as any)) {
-          const point = item as any
-          if (typeof point.value !== 'number' || !Number.isFinite(point.value)) return null
-          return {
-            time: point.time,
-            position: 'atPriceMiddle',
-            price: point.value,
-            shape,
-            color: typeof point.color === 'string' ? point.color : defaultColor,
-          }
-        }
-        if (typeof item === 'number' && Number.isFinite(item) && bar) {
-          return {
-            time: bar.time as any,
-            position: 'atPriceMiddle',
-            price: item,
-            shape,
-            color: defaultColor,
-          }
-        }
-        return null
-      })
-      .filter((marker): marker is { time: number; position: 'atPriceMiddle'; price: number; shape: 'circle' | 'cross'; color: string } => marker != null)
-  }
-
   const updateIndicatorSeries = useCallback((data: Candle[]) => {
     if (!indicatorSeriesRef.current.size) return
     const bars: Bar[] = data.map((item) => ({
@@ -751,7 +641,7 @@ export default function NiftyChart() {
       high: item.high,
       low: item.low,
       close: item.close,
-      volume: 0,
+      volume: item.volume ?? 0,
     }))
     const newValues: Record<string, Record<string, number>> = {}
     for (const instance of activeIndicators) {
@@ -768,58 +658,65 @@ export default function NiftyChart() {
         const livePlotKeys = new Set<string>()
         const plotConfigList = Array.isArray((entry as any).plotConfig) ? (entry as any).plotConfig : []
 
-        if (bucket.mergedSeries && bucket.mergedSeries.plotKeys.length > 0) {
-          const mergedData = new Map<number, { time: number; value?: number }>()
-          for (const mk of bucket.mergedSeries.plotKeys) {
-            const mPlot = (plots as any)[mk]
-            if (!Array.isArray(mPlot)) continue
-            for (let idx = 0; idx < mPlot.length; idx++) {
-              const point = mPlot[idx] as any
-              if (!point) continue
-              const time = point.time ?? bars[idx]?.time
-              if (time == null) continue
-              if (typeof point === 'object' && typeof point.value === 'number' && Number.isFinite(point.value)) {
-                if (!mergedData.has(time)) mergedData.set(time, { time, value: point.value })
-              } else if (typeof point === 'number' && Number.isFinite(point)) {
-                if (!mergedData.has(time)) mergedData.set(time, { time, value: point })
-              } else if (!mergedData.has(time)) {
-                mergedData.set(time, { time })
-              }
-            }
-            livePlotKeys.add(mk)
-            for (let k = mPlot.length - 1; k >= 0; k--) {
-              const pt = mPlot[k] as any
-              if (pt && typeof pt === 'object' && typeof pt.value === 'number' && Number.isFinite(pt.value)) {
-                instanceValues[mk] = pt.value
-                break
-              } else if (typeof pt === 'number' && Number.isFinite(pt)) {
-                instanceValues[mk] = pt
-                break
-              }
-            }
-          }
-          const sorted = Array.from(mergedData.values()).sort((a, b) => a.time - b.time)
-          if (!processedSeries.has(bucket.mergedSeries.series)) {
-            bucket.mergedSeries.series.setData(sorted as any)
-            processedSeries.add(bucket.mergedSeries.series)
-          }
-        }
-
         for (const [plotKey, plot] of Object.entries(plots)) {
           if (!Array.isArray(plot)) continue
-          if (bucket.mergedSeries && bucket.mergedSeries.plotKeys.includes(plotKey)) continue
           const plotConfig = plotConfigList.find((config: any) => config?.id === plotKey) || null
           const style = String(plotConfig?.style || 'line')
+          const color = String(plotConfig?.color || '#2962FF')
+
+          if (style === 'linebr' || style === 'steplinebr') {
+            const lbEntry = bucket.lineBrPrimitives.find((e) => e.plotKey === plotKey)
+            if (lbEntry) {
+              const rawPlotData: Array<{ time: number; value?: number }> = plot
+                .map((item: any, idx: number) => {
+                  if (item && typeof item === 'object' && 'time' in item && 'value' in item) {
+                    return { time: item.time, value: item.value }
+                  }
+                  if (typeof item === 'number') {
+                    if (bars[idx]) return { time: bars[idx].time, value: item }
+                    return null
+                  }
+                  if (bars[idx]) return { time: bars[idx].time }
+                  return null
+                })
+                .filter((p: any): p is { time: number; value?: number } => p != null)
+              lbEntry.primitive.setData(rawPlotData, color)
+              processedSeries.add(lbEntry.anchorSeries)
+              livePlotKeys.add(plotKey)
+              for (let k = plot.length - 1; k >= 0; k--) {
+                const point = plot[k] as any
+                if (point && typeof point === 'object' && typeof point.value === 'number' && Number.isFinite(point.value)) {
+                  instanceValues[plotKey] = point.value
+                  break
+                } else if (typeof point === 'number' && Number.isFinite(point)) {
+                  instanceValues[plotKey] = point
+                  break
+                }
+              }
+              continue
+            }
+          }
+
+          if (style === 'cross' || style === 'circles') {
+            const markerEntry = bucket.markerSeries.find((item) => item.plotKey === plotKey)
+            const { native } = toMarkerData(plot, bars, style === 'cross' ? 'cross' : 'circle', color)
+            markerEntry?.primitive.setMarkers(native)
+            livePlotKeys.add(plotKey)
+            for (let k = plot.length - 1; k >= 0; k--) {
+              const point = plot[k] as any
+              if (point && typeof point === 'object' && typeof point.value === 'number' && Number.isFinite(point.value)) {
+                instanceValues[plotKey] = point.value
+                break
+              }
+            }
+            continue
+          }
+
           const series = bucket.plotSeries.get(plotKey)
           if (!series) continue
           if (processedSeries.has(series)) continue
-          const preserveWhitespace = style === 'linebr' || style === 'steplinebr'
-          series.setData(toSeriesData(plot, bars, preserveWhitespace) as any)
+          series.setData(toSeriesData(plot, bars, false) as any)
           processedSeries.add(series)
-          if (style === 'cross' || style === 'circles') {
-            const markerEntry = bucket.markerSeries.find((item) => item.plotKey === plotKey)
-            markerEntry?.primitive.setMarkers(toMarkerData(plot, bars, style === 'cross' ? 'cross' : 'circle', String(plotConfig?.color || '#2962FF')))
-          }
           for (let k = plot.length - 1; k >= 0; k--) {
             const point = plot[k] as any
             if (point && typeof point === 'object' && typeof point.value === 'number' && Number.isFinite(point.value)) {
@@ -836,31 +733,81 @@ export default function NiftyChart() {
           if (!livePlotKeys.has(markerEntry.plotKey)) markerEntry.primitive.setMarkers([])
         }
 
-        if (bucket.fillPrimitives.length > 0 && bucket.allPlotData) {
+        if (Array.isArray(result?.markers) && result.markers.length > 0 && bucket.extendedMarkerPrimitive) {
+          const nativeShapes = new Set(['circle', 'square', 'arrowUp', 'arrowDown'])
+          const extended = result.markers
+            .filter((m: any) => m && m.time && !nativeShapes.has(m.shape))
+            .map((m: any) => ({
+              time: m.time, position: m.position || 'aboveBar', price: m.price ?? 0,
+              shape: m.shape || 'circle', color: m.color || '#2962FF', text: m.text,
+            }))
+          bucket.extendedMarkerPrimitive.setMarkers(extended)
+        }
+
+        if (bucket.plotFillPrimitives.length > 0) {
           const allRaw = new Map<string, Array<{ time: number; value?: number }>>()
           for (const [pk, plot] of Object.entries(plots)) {
             if (!Array.isArray(plot)) continue
-            const mapped = plot.map((item: any, idx: number) => {
-              if (item && typeof item === 'object' && 'time' in item && 'value' in item) return item as { time: number; value?: number }
-              if (typeof item === 'number' && bars[idx]) return { time: bars[idx].time, value: item }
-              return bars[idx] ? { time: bars[idx].time } : null
-            }).filter(Boolean) as Array<{ time: number; value?: number }>
+            const mapped = plot
+              .map((item: any, idx: number) => {
+                if (item && typeof item === 'object' && 'time' in item && 'value' in item) return item as { time: number; value?: number }
+                if (typeof item === 'number' && bars[idx]) return { time: bars[idx].time, value: item }
+                return bars[idx] ? { time: bars[idx].time } : null
+              })
+              .filter(Boolean) as Array<{ time: number; value?: number }>
             allRaw.set(pk, mapped)
           }
           bucket.allPlotData = allRaw
-          for (const fp of bucket.fillPrimitives) {
-            const d1 = allRaw.get(fp.plot1Key) || []
-            const d2 = allRaw.get(fp.plot2Key) || []
-            fp.primitive.setPlot1Data(d1)
-            fp.primitive.setPlot2Data(d2)
+          for (const fp of bucket.plotFillPrimitives) {
+            const p1 = allRaw.get(fp.fillConfig.plot1) || []
+            const p2 = allRaw.get(fp.fillConfig.plot2) || []
+            const fillColor = applyTransparency(String(fp.fillConfig.options?.color || '#2962FF'), Number(fp.fillConfig.options?.transp ?? 0))
+            const fillData: Array<{ time: number; upper: number; lower: number }> = []
+            for (let fi = 0; fi < Math.min(p1.length, p2.length); fi++) {
+              const v1 = typeof p1[fi] === 'number' ? p1[fi] : (p1[fi] as any)?.value
+              const v2 = typeof p2[fi] === 'number' ? p2[fi] : (p2[fi] as any)?.value
+              if (!Number.isFinite(v1) || !Number.isFinite(v2)) continue
+              const time = (p1[fi] as any)?.time ?? bars[fi]?.time
+              if (time == null) continue
+              fillData.push({ time, upper: Math.max(v1!, v2!), lower: Math.min(v1!, v2!) })
+            }
+            fp.prim.setData(fillData, fillColor)
           }
+        }
+
+        // Handle barColors
+        if (Array.isArray(result?.barColors) && result.barColors.length > 0) {
+          const colorMap = new Map(result.barColors.map((bc: any) => [bc.time, bc.color]))
+          const recolored = data.map((d) => {
+            const color = colorMap.get(d.time)
+            if (color) return { ...d, color, borderColor: color, wickColor: color }
+            return d
+          })
+          candleRef.current?.setData(recolored as any)
+        }
+
+        // Handle bgColors
+        if (Array.isArray(result?.bgColors) && bucket.bgColorPrimitive) {
+          bucket.bgColorPrimitive.setData(result.bgColors.map((bg: any) => ({ time: bg.time, color: bg.color })))
+        }
+
+        // Handle labels
+        if (Array.isArray(result?.labels) && bucket.labelPrimitive) {
+          bucket.labelPrimitive.setLabels(result.labels)
+        }
+
+        // Handle boxes
+        if (Array.isArray(result?.boxes) && bucket.boxPrimitive) {
+          bucket.boxPrimitive.setBoxes(result.boxes)
+        }
+
+        // Handle lines
+        if (Array.isArray(result?.lines) && bucket.lineDrawingPrimitive) {
+          bucket.lineDrawingPrimitive.setLines(result.lines)
         }
       } catch {
         for (const series of bucket.plotSeries.values()) {
           if (!processedSeries.has(series)) series.setData([] as any)
-        }
-        if (bucket.mergedSeries && !processedSeries.has(bucket.mergedSeries.series)) {
-          bucket.mergedSeries.series.setData([] as any)
         }
         for (const markerEntry of bucket.markerSeries) {
           markerEntry.primitive.setMarkers([])
@@ -1301,8 +1248,35 @@ export default function NiftyChart() {
       for (const series of bucket.extraSeries) {
         try { chart.removeSeries(series) } catch {}
       }
-      if (bucket.mergedSeries) {
-        try { chart.removeSeries(bucket.mergedSeries.series) } catch {}
+      for (const lb of bucket.lineBrPrimitives) {
+        try { lb.anchorSeries.detachPrimitive(lb.primitive) } catch {}
+        try { chart.removeSeries(lb.anchorSeries) } catch {}
+      }
+      for (const fp of bucket.plotFillPrimitives) {
+        try { fp.anchorSeries.detachPrimitive(fp.prim) } catch {}
+      }
+      if (bucket.extendedMarkerPrimitive && bucket.extendedMarkerAnchorSeries) {
+        try { bucket.extendedMarkerAnchorSeries.detachPrimitive(bucket.extendedMarkerPrimitive as any) } catch {}
+        try { chart.removeSeries(bucket.extendedMarkerAnchorSeries) } catch {}
+      }
+      if (bucket.bgColorPrimitive && bucket.bgColorAnchorSeries) {
+        try { bucket.bgColorAnchorSeries.detachPrimitive(bucket.bgColorPrimitive as any) } catch {}
+        try { chart.removeSeries(bucket.bgColorAnchorSeries) } catch {}
+      }
+      if (bucket.labelPrimitive && bucket.labelAnchorSeries) {
+        try { bucket.labelAnchorSeries.detachPrimitive(bucket.labelPrimitive as any) } catch {}
+        try { chart.removeSeries(bucket.labelAnchorSeries) } catch {}
+      }
+      if (bucket.boxPrimitive && bucket.boxAnchorSeries) {
+        try { bucket.boxAnchorSeries.detachPrimitive(bucket.boxPrimitive as any) } catch {}
+        try { chart.removeSeries(bucket.boxAnchorSeries) } catch {}
+      }
+      if (bucket.lineDrawingPrimitive && bucket.lineDrawingAnchorSeries) {
+        try { bucket.lineDrawingAnchorSeries.detachPrimitive(bucket.lineDrawingPrimitive as any) } catch {}
+        try { chart.removeSeries(bucket.lineDrawingAnchorSeries) } catch {}
+      }
+      if (bucket.tablePrimitive) {
+        try { bucket.tablePrimitive.clearTable() } catch {}
       }
     }
     existing.clear()
@@ -1318,7 +1292,7 @@ export default function NiftyChart() {
         high: item.high,
         low: item.low,
         close: item.close,
-        volume: 0,
+        volume: item.volume ?? 0,
       }))
       let calculateResult: any = null
       try {
@@ -1358,35 +1332,49 @@ export default function NiftyChart() {
       }
       const seriesByPlot = new Map<string, ISeriesApi<any>>()
       const extraSeries: ISeriesApi<any>[] = []
-      const fillSeriesList: ISeriesApi<any>[] = []
       const markerSeries: Array<{ plotKey: string; primitive: { setMarkers: (markers: any[]) => void } }> = []
+      const lineBrEntries: Array<{ plotKey: string; primitive: LineBrPrimitive; anchorSeries: ISeriesApi<any> }> = []
       const allPlotData = new Map<string, Array<{ time: number; value?: number }>>()
-      let mergedSeries: { series: ISeriesApi<any>; plotKeys: string[] } | undefined
+      const addTo = pane && typeof pane.addSeries === 'function' ? pane : chart
 
-      if (linebrKeys.length > 0) {
-        const firstCfg = plotConfigList.find((p: any) => p?.id === linebrKeys[0]) || {}
-        const mergeColor = firstCfg.color || indicatorColors[paletteOffset % indicatorColors.length]
-        const mergeTitle = `${indicatorTitle} ${linebrKeys.map((k) => {
-          const c = plotConfigList.find((p: any) => p?.id === k) || {}
-          return c.title || k
-        }).join('/')}`
+      for (const plotKey of linebrKeys) {
+        const cfg = plotConfigList.find((p: any) => p?.id === plotKey) || {}
+        const color = cfg.color || indicatorColors[(paletteOffset + visiblePlotKeys.indexOf(plotKey)) % indicatorColors.length]
+        const lineWidth = (cfg.lineWidth ?? 1) as number
+        const withSteps = String(cfg.style || '') === 'steplinebr'
+        const lineStyleCfg = Number(cfg.lineStyle ?? 0)
         const addTo = pane && typeof pane.addSeries === 'function' ? pane : chart
-        const isStep = linebrKeys.some((k) => {
-          const c = plotConfigList.find((p: any) => p?.id === k) || {}
-          return String(c.style || '') === 'steplinebr'
-        })
-        const mergedLineSeries = addTo.addSeries(LineSeries, {
-          title: mergeTitle,
-          color: mergeColor,
-          lineWidth: (firstCfg.lineWidth ?? 1) as any,
-          lineType: isStep ? (LineType as any).WithSteps : undefined,
-          priceLineVisible: false,
+
+        const anchor = addTo.addSeries(LineSeries, {
+          color: 'transparent',
+          lineVisible: false,
           lastValueVisible: false,
+          priceLineVisible: false,
+          crosshairMarkerVisible: false,
         }) as ISeriesApi<any>
-        mergedSeries = { series: mergedLineSeries, plotKeys: linebrKeys }
-        for (const plotKey of linebrKeys) {
-          seriesByPlot.set(plotKey, mergedLineSeries)
-        }
+
+        anchor.setData(toSeriesData((plots as any)[plotKey], bars, false) as any)
+
+        const primitive = new LineBrPrimitive(anchor, chart.timeScale(), color, lineWidth, withSteps, lineStyleCfg)
+        try { anchor.attachPrimitive(primitive as any) } catch {}
+
+        const rawPlotData: Array<{ time: number; value?: number }> = ((plots as any)[plotKey] || [])
+          .map((item: any, idx: number) => {
+            if (item && typeof item === 'object' && 'time' in item && 'value' in item) {
+              return { time: item.time, value: item.value }
+            }
+            if (typeof item === 'number') {
+              if (bars[idx]) return { time: bars[idx].time, value: item }
+              return null
+            }
+            if (bars[idx]) return { time: bars[idx].time }
+            return null
+          })
+          .filter((p: any): p is { time: number; value?: number } => p != null)
+        primitive.setData(rawPlotData, color, lineStyleCfg)
+
+        seriesByPlot.set(plotKey, anchor)
+        lineBrEntries.push({ plotKey, primitive, anchorSeries: anchor })
       }
 
       for (const plotKey of nonLinebrKeys) {
@@ -1395,7 +1383,6 @@ export default function NiftyChart() {
         const title = `${indicatorTitle} ${cfg.title || plotKey}`
         const style = String(cfg.style || 'line')
         const lineWidth = (cfg.lineWidth ?? 1) as number
-        const addTo = pane && typeof pane.addSeries === 'function' ? pane : chart
         let series: ISeriesApi<any>
         if (style === 'columns' || style === 'histogram') {
           series = addTo.addSeries(HistogramSeries, { title, color, lineWidth: lineWidth as any }) as ISeriesApi<any>
@@ -1423,6 +1410,127 @@ export default function NiftyChart() {
         }
       }
 
+      let extMarkerPrim: ExtendedMarkerPrimitive | undefined
+      let extMarkerAnchor: ISeriesApi<any> | undefined
+      let bgColorPrimitiveLocal: BgColorPrimitive | undefined
+      let bgColorAnchorLocal: ISeriesApi<any> | undefined
+      let labelPrimitiveLocal: LabelPrimitive | undefined
+      let labelAnchorLocal: ISeriesApi<any> | undefined
+      let boxPrimitiveLocal: BoxPrimitive | undefined
+      let boxAnchorLocal: ISeriesApi<any> | undefined
+      let lineDrawingPrimitiveLocal: LineDrawingPrimitive | undefined
+      let lineDrawingAnchorLocal: ISeriesApi<any> | undefined
+      let tablePrimitiveLocal: TablePrimitive | undefined
+
+      if (Array.isArray(calculateResult?.plotCandle) && calculateResult.plotCandle.length > 0) {
+        const candleData = calculateResult.plotCandle.map((c: any) => ({
+          time: c.time,
+          open: c.open,
+          high: c.high,
+          low: c.low,
+          close: c.close,
+          ...(c.color && { color: c.color, borderColor: c.borderColor ?? c.color, wickColor: c.wickColor ?? c.color }),
+        }))
+        const candleSeries = addTo.addSeries(CandlestickSeries, {
+          title: `${indicatorTitle} Candles`,
+          upColor: '#26a69a',
+          downColor: '#ef5350',
+          borderVisible: true,
+          wickUpColor: '#26a69a',
+          wickDownColor: '#ef5350',
+          lastValueVisible: false,
+          priceLineVisible: false,
+        }) as ISeriesApi<any>
+        candleSeries.setData(candleData)
+        extraSeries.push(candleSeries)
+      }
+
+      // Handle barColors (recolor main candles)
+      if (Array.isArray(calculateResult?.barColors) && calculateResult.barColors.length > 0) {
+        const colorMap = new Map(calculateResult.barColors.map((bc: any) => [bc.time, bc.color]))
+        const recolored = priceDataRef.current.map((d) => {
+          const color = colorMap.get(d.time)
+          if (color) return { ...d, color, borderColor: color, wickColor: color }
+          return d
+        })
+        candleRef.current?.setData(recolored as any)
+      }
+
+      // Handle bgColors (background fills)
+      if (Array.isArray(calculateResult?.bgColors) && calculateResult.bgColors.length > 0) {
+        const anchor = addTo.addSeries(LineSeries, {
+          color: 'transparent', lineVisible: false, lastValueVisible: false,
+          priceLineVisible: false, crosshairMarkerVisible: false,
+        }) as ISeriesApi<any>
+        anchor.setData(bars.map(b => ({ time: b.time as any, value: 0 })))
+        const bgPrim = new BgColorPrimitive(anchor, chart.timeScale())
+        bgPrim.setData(calculateResult.bgColors.map((bg: any) => ({ time: bg.time, color: bg.color })))
+        try { anchor.attachPrimitive(bgPrim as any) } catch {}
+        bgColorPrimitiveLocal = bgPrim
+        bgColorAnchorLocal = anchor
+      }
+
+      // Handle labels
+      if (Array.isArray(calculateResult?.labels) && calculateResult.labels.length > 0) {
+        const anchor = addTo.addSeries(LineSeries, {
+          color: 'transparent', lineVisible: false, lastValueVisible: false,
+          priceLineVisible: false, crosshairMarkerVisible: false,
+        }) as ISeriesApi<any>
+        anchor.setData(calculateResult.labels.map((l: any) => ({ time: l.time as any, value: l.price })))
+        const lblPrim = new LabelPrimitive(anchor, chart.timeScale())
+        lblPrim.setLabels(calculateResult.labels)
+        try { anchor.attachPrimitive(lblPrim as any) } catch {}
+        labelPrimitiveLocal = lblPrim
+        labelAnchorLocal = anchor
+      }
+
+      // Handle boxes
+      if (Array.isArray(calculateResult?.boxes) && calculateResult.boxes.length > 0) {
+        const anchor = addTo.addSeries(LineSeries, {
+          color: 'transparent', lineVisible: false, lastValueVisible: false,
+          priceLineVisible: false, crosshairMarkerVisible: false,
+        }) as ISeriesApi<any>
+        const boxTimes = new Set<number>()
+        const boxPrices: Record<number, number> = {}
+        for (const b of calculateResult.boxes) {
+          boxTimes.add(b.time1); boxTimes.add(b.time2)
+          boxPrices[b.time1] = b.price1; boxPrices[b.time2] = b.price2
+        }
+        anchor.setData(Array.from(boxTimes).sort((a, b) => a - b).map(t => ({ time: t as any, value: boxPrices[t] })))
+        const boxPrim = new BoxPrimitive(anchor, chart.timeScale())
+        boxPrim.setBoxes(calculateResult.boxes)
+        try { anchor.attachPrimitive(boxPrim as any) } catch {}
+        boxPrimitiveLocal = boxPrim
+        boxAnchorLocal = anchor
+      }
+
+      // Handle line drawings
+      if (Array.isArray(calculateResult?.lines) && calculateResult.lines.length > 0) {
+        const anchor = addTo.addSeries(LineSeries, {
+          color: 'transparent', lineVisible: false, lastValueVisible: false,
+          priceLineVisible: false, crosshairMarkerVisible: false,
+        }) as ISeriesApi<any>
+        const lineTimes = new Set<number>()
+        const linePrices: Record<number, number> = {}
+        for (const l of calculateResult.lines) {
+          lineTimes.add(l.time1); lineTimes.add(l.time2)
+          linePrices[l.time1] = l.price1; linePrices[l.time2] = l.price2
+        }
+        anchor.setData(Array.from(lineTimes).sort((a, b) => a - b).map(t => ({ time: t as any, value: linePrices[t] })))
+        const linePrim = new LineDrawingPrimitive(anchor, chart.timeScale())
+        linePrim.setLines(calculateResult.lines)
+        try { anchor.attachPrimitive(linePrim as any) } catch {}
+        lineDrawingPrimitiveLocal = linePrim
+        lineDrawingAnchorLocal = anchor
+      }
+
+      // Handle table (DOM overlay)
+      if (calculateResult?.table) {
+        const tblPrim = new TablePrimitive(chartContainerRef.current!)
+        tblPrim.setTable(calculateResult.table)
+        tablePrimitiveLocal = tblPrim
+      }
+
       const hlines = Array.isArray((entry as any).hlineConfig) ? (entry as any).hlineConfig : []
       if (hlines.length && seriesByPlot.size > 0) {
         const firstSeries = seriesByPlot.values().next().value as ISeriesApi<any>
@@ -1439,32 +1547,80 @@ export default function NiftyChart() {
         })
       }
 
-      const registryFillsList: Array<{ plot1Key: string; plot2Key: string; color: string; transp: number; primitive: any }> = []
-      if (registryFills.length && seriesByPlot.size > 0) {
-        const fillTargetSeries = seriesByPlot.values().next().value as ISeriesApi<any>
+      const plotFillEntries: Array<{ prim: PlotFillPrimitive; anchorSeries: ISeriesApi<any>; fillConfig: any }> = []
+      if (registryFills.length > 0) {
+        const anchorSeries = seriesByPlot.values().next().value as ISeriesApi<any>
         for (const fill of registryFills) {
           if (!fill || !fill.plot1 || !fill.plot2) continue
-          const fillColor = String(fill.options?.color || '#2962FF')
-          const fillTransp = Number(fill.options?.transp ?? 90)
-          const prim = new PlotFillPrimitive(fillTargetSeries, chartAny.timeScale(), fillColor, fillTransp)
-          try { fillTargetSeries.attachPrimitive(prim as any) } catch {}
-          registryFillsList.push({ plot1Key: fill.plot1, plot2Key: fill.plot2, color: fillColor, transp: fillTransp, primitive: prim })
+          const fillColor = applyTransparency(String(fill.options?.color || '#2962FF'), Number(fill.options?.transp ?? 0))
+          const prim = new PlotFillPrimitive(anchorSeries, chart.timeScale(), fillColor)
+          try { anchorSeries.attachPrimitive(prim as any) } catch {}
+
+          const fillData: Array<{ time: number; upper: number; lower: number }> = []
+          const p1Data = (plots as any)[fill.plot1] || []
+          const p2Data = (plots as any)[fill.plot2] || []
+          for (let fi = 0; fi < Math.min(p1Data.length, p2Data.length); fi++) {
+            const v1 = typeof p1Data[fi] === 'number' ? p1Data[fi] : (p1Data[fi] as any)?.value
+            const v2 = typeof p2Data[fi] === 'number' ? p2Data[fi] : (p2Data[fi] as any)?.value
+            if (!Number.isFinite(v1) || !Number.isFinite(v2)) continue
+            const time = (p1Data[fi] as any)?.time ?? bars[fi]?.time
+            if (time == null) continue
+            fillData.push({ time, upper: Math.max(v1!, v2!), lower: Math.min(v1!, v2!) })
+          }
+          prim.setData(fillData)
+
+          plotFillEntries.push({ prim, anchorSeries, fillConfig: fill })
         }
       }
 
-      existing.set(instance.key, { plotSeries: seriesByPlot, extraSeries, fillSeries: fillSeriesList, markerSeries, mergedSeries, fillPrimitives: registryFillsList, allPlotData })
+      if (Array.isArray(calculateResult?.markers) && calculateResult.markers.length > 0) {
+        const nativeShapes = new Set(['circle', 'square', 'arrowUp', 'arrowDown'])
+        const hasExtended = calculateResult.markers.some((m: any) => m && !nativeShapes.has(m.shape))
+        if (hasExtended) {
+          extMarkerAnchor = (pane && typeof pane.addSeries === 'function' ? pane : chart).addSeries(LineSeries, {
+            color: 'transparent', lineVisible: false, lastValueVisible: false,
+            priceLineVisible: false, crosshairMarkerVisible: false,
+          }) as ISeriesApi<any>
+          extMarkerAnchor.setData(bars.map(b => ({ time: b.time as any, value: 0 })))
+          extMarkerPrim = new ExtendedMarkerPrimitive(extMarkerAnchor, chart.timeScale())
+          try { extMarkerAnchor.attachPrimitive(extMarkerPrim as any) } catch {}
+        }
+      }
+
+      if (extMarkerPrim && Array.isArray(calculateResult?.markers)) {
+        extMarkerPrim.setMarkers(calculateResult.markers.map((m: any) => ({
+          time: m.time, position: m.position || 'aboveBar', price: m.price ?? 0,
+          shape: m.shape || 'circle', color: m.color || '#2962FF', text: m.text,
+        })))
+      }
+
+      existing.set(instance.key, {
+        plotSeries: seriesByPlot, extraSeries, markerSeries,
+        lineBrPrimitives: lineBrEntries, plotFillPrimitives: plotFillEntries,
+        allPlotData,
+        extendedMarkerPrimitive: extMarkerPrim,
+        extendedMarkerAnchorSeries: extMarkerAnchor,
+        bgColorPrimitive: bgColorPrimitiveLocal, bgColorAnchorSeries: bgColorAnchorLocal,
+        labelPrimitive: labelPrimitiveLocal, labelAnchorSeries: labelAnchorLocal,
+        boxPrimitive: boxPrimitiveLocal, boxAnchorSeries: boxAnchorLocal,
+        lineDrawingPrimitive: lineDrawingPrimitiveLocal, lineDrawingAnchorSeries: lineDrawingAnchorLocal,
+        tablePrimitive: tablePrimitiveLocal,
+      })
 
       const indicatorVisible = instance.visible !== false
       for (const [plotKey, series] of seriesByPlot.entries()) {
         const plotVisible = instance.plotVisibility[plotKey] !== false
-        if (mergedSeries && mergedSeries.plotKeys.includes(plotKey)) {
-          series.applyOptions({ visible: indicatorVisible && mergedSeries.plotKeys.some((pk) => instance.plotVisibility[pk] !== false) })
-        } else {
-          series.applyOptions({ visible: indicatorVisible && plotVisible })
-        }
+        series.applyOptions({ visible: indicatorVisible && plotVisible })
       }
       for (const series of extraSeries) {
         series.applyOptions({ visible: indicatorVisible })
+      }
+      for (const lb of lineBrEntries) {
+        const plotVisible = instance.plotVisibility[lb.plotKey] !== false
+        lb.primitive.setVisible(indicatorVisible && plotVisible)
+      }
+      for (const fp of plotFillEntries) {
+        fp.prim.setVisible(indicatorVisible)
       }
     }
     updateIndicatorSeries(priceDataRef.current)
@@ -1528,21 +1684,17 @@ export default function NiftyChart() {
       const indicatorVisible = instance.visible !== false
       for (const [plotKey, series] of bucket.plotSeries.entries()) {
         const plotVisible = instance.plotVisibility[plotKey] !== false
-        if (bucket.mergedSeries && bucket.mergedSeries.plotKeys.includes(plotKey)) {
-          series.applyOptions({ visible: indicatorVisible && bucket.mergedSeries.plotKeys.some((pk) => instance.plotVisibility[pk] !== false) })
-        } else {
-          series.applyOptions({ visible: indicatorVisible && plotVisible })
-        }
+        series.applyOptions({ visible: indicatorVisible && plotVisible })
       }
       for (const series of bucket.extraSeries) {
         series.applyOptions({ visible: indicatorVisible })
       }
-      for (const fp of bucket.fillPrimitives) {
-        fp.primitive.setVisible(indicatorVisible)
+      for (const lb of bucket.lineBrPrimitives) {
+        const plotVisible = instance.plotVisibility[lb.plotKey] !== false
+        lb.primitive.setVisible(indicatorVisible && plotVisible)
       }
-      if (bucket.mergedSeries) {
-        const anyVisible = bucket.mergedSeries.plotKeys.some((pk) => instance.plotVisibility[pk] !== false)
-        bucket.mergedSeries.series.applyOptions({ visible: indicatorVisible && anyVisible })
+      for (const fp of bucket.plotFillPrimitives) {
+        fp.prim.setVisible(indicatorVisible)
       }
     }
   }, [activeIndicators])
