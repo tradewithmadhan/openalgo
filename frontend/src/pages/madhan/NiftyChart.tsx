@@ -142,7 +142,7 @@ export default function NiftyChart() {
     { key: 'sma-0', indicatorId: 'sma', visible: true, plotVisibility: {} },
   ])
   const [indicatorInputs, setIndicatorInputs] = useState<Record<string, Record<string, unknown>>>({})
-  const [expandedIndicatorKey, setExpandedIndicatorKey] = useState<string | null>(null)
+  const [expandedIndicatorKeys, setExpandedIndicatorKeys] = useState<Set<string>>(new Set())
   const [showIndicatorPanel, setShowIndicatorPanel] = useState(false)
   const [indicatorPanelPos, setIndicatorPanelPos] = useState({ x: 80, y: 40 })
   const [indicatorPanelDragging, setIndicatorPanelDragging] = useState(false)
@@ -193,13 +193,41 @@ export default function NiftyChart() {
       }
       return next
     })
-    if (!expandedIndicatorKey && activeIndicators.length > 0) {
-      setExpandedIndicatorKey(activeIndicators[0].key)
-    }
-    if (expandedIndicatorKey && !activeIndicators.some((item) => item.key === expandedIndicatorKey)) {
-      setExpandedIndicatorKey(activeIndicators[0]?.key || null)
-    }
-  }, [activeIndicators, expandedIndicatorKey])
+  }, [activeIndicators])
+
+  useEffect(() => {
+    setExpandedIndicatorKeys((prev) => {
+      const next = new Set<string>()
+      for (const key of prev) {
+        if (activeIndicators.some((item) => item.key === key)) {
+          next.add(key)
+        }
+      }
+      if (next.size === 0 && activeIndicators.length > 0) {
+        next.add(activeIndicators[0].key)
+      }
+      return next
+    })
+  }, [activeIndicators])
+
+  const collapseAllIndicators = useCallback(() => {
+    setExpandedIndicatorKeys((prev) => {
+      if (prev.size > 0) return new Set()
+      return new Set(activeIndicators.map((i) => i.key))
+    })
+  }, [activeIndicators])
+
+  const toggleIndicatorExpand = useCallback((key: string) => {
+    setExpandedIndicatorKeys((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) {
+        next.delete(key)
+      } else {
+        next.add(key)
+      }
+      return next
+    })
+  }, [])
 
   const indicatorColors = useMemo(
     () => ['#8b5cf6', '#f59e0b', '#3b82f6', '#22c55e', '#ef4444', '#14b8a6', '#a855f7', '#f97316'],
@@ -1778,7 +1806,11 @@ export default function NiftyChart() {
     const nextIndex = activeIndicators.filter((item) => item.indicatorId === indicatorId).length
     const key = `${indicatorId}-${Date.now()}-${nextIndex}`
     setActiveIndicators((prev) => [...prev, { key, indicatorId, visible: true, plotVisibility: {} }])
-    setExpandedIndicatorKey(key)
+    setExpandedIndicatorKeys((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key); else next.add(key)
+      return next
+    })
   }
 
   const removeIndicator = (instanceKey: string) => {
@@ -2035,8 +2067,9 @@ export default function NiftyChart() {
               activeIndicators={activeIndicators}
               onAdd={addIndicator}
               onRemove={removeIndicator}
-              expandedKey={expandedIndicatorKey}
-              onToggleExpand={setExpandedIndicatorKey}
+              expandedKeys={expandedIndicatorKeys}
+              onToggleExpand={toggleIndicatorExpand}
+              onCollapseAll={collapseAllIndicators}
               inputs={indicatorInputs}
               onUpdateInput={updateIndicatorInput}
               onToggleVisibility={toggleIndicatorVisibility}

@@ -676,3 +676,74 @@ export function toMarkerData(
   }
   return { native, extended }
 }
+
+// ─── HlineFillPrimitive (fills between two horizontal lines) ────────────
+
+export interface HlineFillDatum {
+  time1: number
+  price1: number
+  time2: number
+  price2: number
+  color: string
+}
+
+export class HlineFillPrimitive {
+  _series: ISeriesApi<any>
+  _timeScale: any
+  _fills: HlineFillDatum[] = []
+  _show = true
+
+  constructor(series: ISeriesApi<any>, timeScale: any) {
+    this._series = series
+    this._timeScale = timeScale
+  }
+
+  paneViews() {
+    const self = this
+    return [{
+      renderer() {
+        return {
+          draw(target: any) {
+            if (!self._show || !self._fills.length) return
+            target.useMediaCoordinateSpace((scope: any) => {
+              const ctx = scope.context
+              for (const fill of self._fills) {
+                const x1 = self._timeScale.timeToCoordinate(fill.time1)
+                const y1 = self._series.priceToCoordinate(fill.price1)
+                const x2 = self._timeScale.timeToCoordinate(fill.time2)
+                const y2 = self._series.priceToCoordinate(fill.price2)
+                if (x1 == null || y1 == null || x2 == null || y2 == null) continue
+                const left = Math.min(x1, x2)
+                const top = Math.min(y1, y2)
+                const width = Math.abs(x2 - x1)
+                const height = Math.abs(y2 - y1)
+                ctx.fillStyle = fill.color
+                ctx.fillRect(left, top, width, height)
+              }
+            })
+          },
+        }
+      },
+    }]
+  }
+
+  setFills(fills: HlineFillDatum[]) { this._fills = fills }
+  setVisible(v: boolean) { this._show = v }
+}
+
+// ─── removeEmptyPanes ───────────────────────────────────────────────────
+
+export function removeEmptyPanes(chart: any) {
+  if (!chart || typeof chart.panes !== 'function') return
+  const panes = chart.panes()
+  if (!Array.isArray(panes)) return
+  for (const pane of panes) {
+    if (!pane || typeof pane !== 'object') continue
+    const id = pane.paneIndex ?? pane.id
+    if (id === 0) continue
+    const seriesList = typeof pane.getSeries === 'function' ? pane.getSeries() : []
+    if (!seriesList || seriesList.length === 0) {
+      try { chart.removePane(pane) } catch {}
+    }
+  }
+}
