@@ -3,6 +3,7 @@ import { indicatorRegistry } from 'lightweight-charts-indicators'
 import { X, ChevronRight, Activity, Eye, EyeOff, GripVertical } from 'lucide-react'
 import { useThemeStore } from '@/stores/themeStore'
 import { chartTheme } from './chartTheme'
+import styles from './IndicatorPanel.module.css'
 
 export type IndicatorInstance = {
   key: string
@@ -113,7 +114,7 @@ export default function IndicatorPanel({
           onChange={(e) => setSearch(e.target.value)}
         />
       </div>
-      <div className="flex-1 overflow-auto p-1">
+      <div className={`flex-1 overflow-auto p-1 ${styles.scrollArea}`}>
         {activeIndicators.length > 0 && (
           <div className="mb-2 space-y-0.5">
             <div className="px-1 py-0.5 text-[9px] font-semibold uppercase" style={{ color: t.textMuted }}>
@@ -161,18 +162,6 @@ export default function IndicatorPanel({
                       </button>
                     </div>
                   </div>
-                  {expanded && (
-                    <div className="mt-1.5 pt-1.5 space-y-1" style={{ borderTop: `1px solid ${t.border}` }}>
-                      <button
-                        className="flex w-full items-center gap-1.5 rounded px-1 py-0.5 text-[10px] transition-colors"
-                        style={{ color: indicatorVisible ? t.active : t.textMuted, opacity: indicatorVisible ? 1 : 0.6 }}
-                        onClick={() => onToggleVisibility(indicator.key)}
-                      >
-                        {indicatorVisible ? <Eye className="h-3 w-3" /> : <EyeOff className="h-3 w-3" />}
-                        <span>{indicatorVisible ? 'Hide indicator' : 'Show indicator'}</span>
-                      </button>
-                    </div>
-                  )}
                   {expanded && plotConfigList.length > 1 && (
                     <div className="mt-1 pt-1 space-y-1" style={{ borderTop: `1px solid ${t.border}` }}>
                       <div className="px-1 text-[9px] font-semibold uppercase" style={{ color: t.textMuted }}>Levels</div>

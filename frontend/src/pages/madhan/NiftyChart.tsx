@@ -58,6 +58,9 @@ type IndicatorSeriesBucket = {
   extraSeries: ISeriesApi<any>[]
   fillSeries: ISeriesApi<any>[]
   markerSeries: Array<{ plotKey: string; primitive: { setMarkers: (markers: any[]) => void } }>
+  mergedSeries?: { series: ISeriesApi<any>; plotKeys: string[] }
+  fillPrimitives: Array<{ plot1Key: string; plot2Key: string; color: string; transp: number; primitive: any }>
+  allPlotData: Map<string, Array<{ time: number; value?: number }>>
 }
 
 // Compact number formatter: 2500 -> "2.5k", 15000 -> "15k", 1.2M -> "1.2M"
@@ -74,6 +77,98 @@ function formatCompact(n: number): string {
     return `${sign}${v >= 10 ? Math.round(v) : v.toFixed(1)}k`
   }
   return `${sign}${Math.round(abs)}`
+}
+
+class PlotFillPrimitive {
+  _series: ISeriesApi<any>
+  _timeScale: any
+  _plot1Data: Array<{ time: number; value?: number }> = []
+  _plot2Data: Array<{ time: number; value?: number }> = []
+  _color: string
+  _transp: number
+  _show = true
+
+  constructor(series: ISeriesApi<any>, timeScale: any, color: string, transp: number) {
+    this._series = series
+    this._timeScale = timeScale
+    this._color = color
+    this._transp = transp
+  }
+
+  paneViews() {
+    const self = this
+    return [
+      {
+        renderer() {
+          return {
+            draw(target: any) {
+              if (!self._show || !self._plot1Data.length || !self._plot2Data.length) return
+              target.useBitmapCoordinateSpace((scope: any) => {
+                const ctx = scope.context
+                const hpr = scope.horizontalPixelRatio
+                const vpr = scope.verticalPixelRatio
+
+                const timeToX = (time: number) => self._timeScale.timeToCoordinate(time)
+                const priceToY = (price: number) => self._series.priceToCoordinate(price)
+
+                const p1Map = new Map<number, number>()
+                for (const pt of self._plot1Data) {
+                  if (pt.value == null || !Number.isFinite(pt.value)) continue
+                  const x = timeToX(pt.time)
+                  const y = priceToY(pt.value)
+                  if (x != null && y != null) p1Map.set(pt.time, y)
+                }
+                const p2Map = new Map<number, number>()
+                for (const pt of self._plot2Data) {
+                  if (pt.value == null || !Number.isFinite(pt.value)) continue
+                  const x = timeToX(pt.time)
+                  const y = priceToY(pt.value)
+                  if (x != null && y != null) p2Map.set(pt.time, y)
+                }
+
+                const commonTimes: number[] = []
+                for (const t of p1Map.keys()) {
+                  if (p2Map.has(t)) commonTimes.push(t)
+                }
+                if (commonTimes.length < 2) return
+                commonTimes.sort((a, b) => a - b)
+
+                const r = parseInt(self._color.slice(1, 3), 16)
+                const g = parseInt(self._color.slice(3, 5), 16)
+                const b = parseInt(self._color.slice(5, 7), 16)
+                const alpha = 1 - self._transp / 100
+                ctx.fillStyle = `rgba(${r},${g},${b},${alpha})`
+
+                ctx.beginPath()
+                for (let i = 0; i < commonTimes.length; i++) {
+                  const time = commonTimes[i]
+                  const x = timeToX(time)
+                  if (x == null) continue
+                  const y1 = p1Map.get(time)!
+                  if (i === 0) ctx.moveTo(x * hpr, y1 * vpr)
+                  else ctx.lineTo(x * hpr, y1 * vpr)
+                }
+                for (let i = commonTimes.length - 1; i >= 0; i--) {
+                  const time = commonTimes[i]
+                  const x = timeToX(time)
+                  if (x == null) continue
+                  const y2 = p2Map.get(time)!
+                  ctx.lineTo(x * hpr, y2 * vpr)
+                }
+                ctx.closePath()
+                ctx.fill()
+              })
+            },
+          }
+        },
+      },
+    ]
+  }
+
+  setPlot1Data(data: Array<{ time: number; value?: number }>) { this._plot1Data = data }
+  setPlot2Data(data: Array<{ time: number; value?: number }>) { this._plot2Data = data }
+  toggle() { this._show = !this._show; return this._show }
+  setVisible(v: boolean) { this._show = v }
 }
 
 export default function NiftyChart() {
@@ -665,26 +760,66 @@ export default function NiftyChart() {
       const bucket = indicatorSeriesRef.current.get(instance.key)
       if (!entry || !bucket) continue
       const instanceValues: Record<string, number> = {}
+      const processedSeries = new Set<ISeriesApi<any>>()
       try {
         const inputs = indicatorInputs[instance.key] || entry.defaultInputs || {}
         const result = entry.calculate(bars, inputs) as any
         const plots = result?.plots || {}
         const livePlotKeys = new Set<string>()
+        const plotConfigList = Array.isArray((entry as any).plotConfig) ? (entry as any).plotConfig : []
+
+        if (bucket.mergedSeries && bucket.mergedSeries.plotKeys.length > 0) {
+          const mergedData = new Map<number, { time: number; value?: number }>()
+          for (const mk of bucket.mergedSeries.plotKeys) {
+            const mPlot = (plots as any)[mk]
+            if (!Array.isArray(mPlot)) continue
+            for (let idx = 0; idx < mPlot.length; idx++) {
+              const point = mPlot[idx] as any
+              if (!point) continue
+              const time = point.time ?? bars[idx]?.time
+              if (time == null) continue
+              if (typeof point === 'object' && typeof point.value === 'number' && Number.isFinite(point.value)) {
+                if (!mergedData.has(time)) mergedData.set(time, { time, value: point.value })
+              } else if (typeof point === 'number' && Number.isFinite(point)) {
+                if (!mergedData.has(time)) mergedData.set(time, { time, value: point })
+              } else if (!mergedData.has(time)) {
+                mergedData.set(time, { time })
+              }
+            }
+            livePlotKeys.add(mk)
+            for (let k = mPlot.length - 1; k >= 0; k--) {
+              const pt = mPlot[k] as any
+              if (pt && typeof pt === 'object' && typeof pt.value === 'number' && Number.isFinite(pt.value)) {
+                instanceValues[mk] = pt.value
+                break
+              } else if (typeof pt === 'number' && Number.isFinite(pt)) {
+                instanceValues[mk] = pt
+                break
+              }
+            }
+          }
+          const sorted = Array.from(mergedData.values()).sort((a, b) => a.time - b.time)
+          if (!processedSeries.has(bucket.mergedSeries.series)) {
+            bucket.mergedSeries.series.setData(sorted as any)
+            processedSeries.add(bucket.mergedSeries.series)
+          }
+        }
+
         for (const [plotKey, plot] of Object.entries(plots)) {
           if (!Array.isArray(plot)) continue
-          const plotConfig = Array.isArray((entry as any).plotConfig)
-            ? (entry as any).plotConfig.find((config: any) => config?.id === plotKey)
-            : null
+          if (bucket.mergedSeries && bucket.mergedSeries.plotKeys.includes(plotKey)) continue
+          const plotConfig = plotConfigList.find((config: any) => config?.id === plotKey) || null
           const style = String(plotConfig?.style || 'line')
           const series = bucket.plotSeries.get(plotKey)
           if (!series) continue
+          if (processedSeries.has(series)) continue
           const preserveWhitespace = style === 'linebr' || style === 'steplinebr'
           series.setData(toSeriesData(plot, bars, preserveWhitespace) as any)
+          processedSeries.add(series)
           if (style === 'cross' || style === 'circles') {
             const markerEntry = bucket.markerSeries.find((item) => item.plotKey === plotKey)
             markerEntry?.primitive.setMarkers(toMarkerData(plot, bars, style === 'cross' ? 'cross' : 'circle', String(plotConfig?.color || '#2962FF')))
           }
-          // Track last non-NaN value for status bar
           for (let k = plot.length - 1; k >= 0; k--) {
             const point = plot[k] as any
             if (point && typeof point === 'object' && typeof point.value === 'number' && Number.isFinite(point.value)) {
@@ -695,14 +830,37 @@ export default function NiftyChart() {
           livePlotKeys.add(plotKey)
         }
         for (const [plotKey, series] of bucket.plotSeries.entries()) {
-          if (!livePlotKeys.has(plotKey)) series.setData([] as any)
+          if (!livePlotKeys.has(plotKey) && !processedSeries.has(series)) series.setData([] as any)
         }
         for (const markerEntry of bucket.markerSeries) {
           if (!livePlotKeys.has(markerEntry.plotKey)) markerEntry.primitive.setMarkers([])
         }
+
+        if (bucket.fillPrimitives.length > 0 && bucket.allPlotData) {
+          const allRaw = new Map<string, Array<{ time: number; value?: number }>>()
+          for (const [pk, plot] of Object.entries(plots)) {
+            if (!Array.isArray(plot)) continue
+            const mapped = plot.map((item: any, idx: number) => {
+              if (item && typeof item === 'object' && 'time' in item && 'value' in item) return item as { time: number; value?: number }
+              if (typeof item === 'number' && bars[idx]) return { time: bars[idx].time, value: item }
+              return bars[idx] ? { time: bars[idx].time } : null
+            }).filter(Boolean) as Array<{ time: number; value?: number }>
+            allRaw.set(pk, mapped)
+          }
+          bucket.allPlotData = allRaw
+          for (const fp of bucket.fillPrimitives) {
+            const d1 = allRaw.get(fp.plot1Key) || []
+            const d2 = allRaw.get(fp.plot2Key) || []
+            fp.primitive.setPlot1Data(d1)
+            fp.primitive.setPlot2Data(d2)
+          }
+        }
       } catch {
         for (const series of bucket.plotSeries.values()) {
-          series.setData([] as any)
+          if (!processedSeries.has(series)) series.setData([] as any)
+        }
+        if (bucket.mergedSeries && !processedSeries.has(bucket.mergedSeries.series)) {
+          bucket.mergedSeries.series.setData([] as any)
         }
         for (const markerEntry of bucket.markerSeries) {
           markerEntry.primitive.setMarkers([])
@@ -1134,11 +1292,13 @@ export default function NiftyChart() {
   useEffect(() => {
     if (!chartReady || !chartRef.current) return
     const chart = chartRef.current
+    const chartAny = chart as any
     const existing = indicatorSeriesRef.current
     for (const bucket of existing.values()) {
       for (const series of bucket.plotSeries.values()) chart.removeSeries(series)
       for (const series of bucket.extraSeries) chart.removeSeries(series)
       for (const series of bucket.fillSeries) chart.removeSeries(series)
+      if (bucket.mergedSeries) chart.removeSeries(bucket.mergedSeries.series)
     }
     existing.clear()
     indicatorPaneRef.current.clear()
@@ -1162,6 +1322,7 @@ export default function NiftyChart() {
         calculateResult = { plots: { plot0: [] } }
       }
       const plots = calculateResult?.plots || {}
+      const registryFills = Array.isArray(calculateResult?.fills) ? calculateResult.fills : []
       const plotConfigList = Array.isArray((entry as any).plotConfig) ? (entry as any).plotConfig : []
       const allPlotKeys = Object.keys(plots).filter((key) => Array.isArray((plots as any)[key]))
       const visiblePlotKeys = allPlotKeys.filter((key) => {
@@ -1174,8 +1335,15 @@ export default function NiftyChart() {
       })
       if (!visiblePlotKeys.length && allPlotKeys.length) visiblePlotKeys.push(allPlotKeys[0])
       if (!visiblePlotKeys.length) visiblePlotKeys.push('plot0')
+
+      const linebrKeys = visiblePlotKeys.filter((key) => {
+        const cfg = plotConfigList.find((p: any) => p?.id === key) || {}
+        const style = String(cfg.style || 'line')
+        return style === 'linebr' || style === 'steplinebr'
+      })
+      const nonLinebrKeys = visiblePlotKeys.filter((key) => !linebrKeys.includes(key))
+
       const paletteOffset = i * 3
-      const chartAny = chart as any
       const indicatorTitle = `${entry.shortName || instance.indicatorId.toUpperCase()} ${i + 1}`
       let pane: any = null
       if ((entry.overlay ?? true) === false && typeof chartAny.addPane === 'function') {
@@ -1187,9 +1355,38 @@ export default function NiftyChart() {
       const extraSeries: ISeriesApi<any>[] = []
       const fillSeriesList: ISeriesApi<any>[] = []
       const markerSeries: Array<{ plotKey: string; primitive: { setMarkers: (markers: any[]) => void } }> = []
-      visiblePlotKeys.forEach((plotKey, plotIndex) => {
+      const allPlotData = new Map<string, Array<{ time: number; value?: number }>>()
+      let mergedSeries: { series: ISeriesApi<any>; plotKeys: string[] } | undefined
+
+      if (linebrKeys.length > 0) {
+        const firstCfg = plotConfigList.find((p: any) => p?.id === linebrKeys[0]) || {}
+        const mergeColor = firstCfg.color || indicatorColors[paletteOffset % indicatorColors.length]
+        const mergeTitle = `${indicatorTitle} ${linebrKeys.map((k) => {
+          const c = plotConfigList.find((p: any) => p?.id === k) || {}
+          return c.title || k
+        }).join('/')}`
+        const addTo = pane && typeof pane.addSeries === 'function' ? pane : chart
+        const isStep = linebrKeys.some((k) => {
+          const c = plotConfigList.find((p: any) => p?.id === k) || {}
+          return String(c.style || '') === 'steplinebr'
+        })
+        const mergedLineSeries = addTo.addSeries(LineSeries, {
+          title: mergeTitle,
+          color: mergeColor,
+          lineWidth: (firstCfg.lineWidth ?? 1) as any,
+          lineType: isStep ? (LineType as any).WithSteps : undefined,
+          priceLineVisible: false,
+          lastValueVisible: false,
+        }) as ISeriesApi<any>
+        mergedSeries = { series: mergedLineSeries, plotKeys: linebrKeys }
+        for (const plotKey of linebrKeys) {
+          seriesByPlot.set(plotKey, mergedLineSeries)
+        }
+      }
+
+      for (const plotKey of nonLinebrKeys) {
         const cfg = plotConfigList.find((p: any) => p?.id === plotKey) || {}
-        const color = cfg.color || indicatorColors[(paletteOffset + plotIndex) % indicatorColors.length]
+        const color = cfg.color || indicatorColors[(paletteOffset + visiblePlotKeys.indexOf(plotKey)) % indicatorColors.length]
         const title = `${indicatorTitle} ${cfg.title || plotKey}`
         const style = String(cfg.style || 'line')
         const lineWidth = (cfg.lineWidth ?? 1) as number
@@ -1219,7 +1416,7 @@ export default function NiftyChart() {
             primitive: createSeriesMarkers(series, [], { zOrder: 'top' }),
           })
         }
-      })
+      }
 
       const hlines = Array.isArray((entry as any).hlineConfig) ? (entry as any).hlineConfig : []
       if (hlines.length && seriesByPlot.size > 0) {
@@ -1237,42 +1434,32 @@ export default function NiftyChart() {
         })
       }
 
-      const registryFills = Array.isArray((entry as any).fillConfig) ? (entry as any).fillConfig : []
-      registryFills.forEach((fill: any, fillIndex: number) => {
-        const h1 = hlines.find((h: any) => h.id === fill.plot1)
-        const h2 = hlines.find((h: any) => h.id === fill.plot2)
-        if (!h1 || !h2) return
-        const upper = Math.max(Number(h1.price || 0), Number(h2.price || 0))
-        const lower = Math.min(Number(h1.price || 0), Number(h2.price || 0))
-        const addTo = pane && typeof pane.addSeries === 'function' ? pane : chart
-        const area = addTo.addSeries(AreaSeries, {
-          title: `${indicatorTitle} Fill ${fillIndex + 1}`,
-          lineColor: 'transparent',
-          topColor: String(fill.color || '#2962FF1A'),
-          bottomColor: String(fill.color || '#2962FF1A'),
-          lineWidth: 0 as const,
-          priceLineVisible: false,
-          lastValueVisible: false,
-          crosshairMarkerVisible: false,
-          baseValue: { type: 'price', price: lower },
-        } as any) as ISeriesApi<any>
-        const areaData = priceDataRef.current.map((bar) => ({ time: bar.time as any, value: upper }))
-        area.setData(areaData as any)
-        extraSeries.push(area)
-      })
+      const registryFillsList: Array<{ plot1Key: string; plot2Key: string; color: string; transp: number; primitive: any }> = []
+      if (registryFills.length && seriesByPlot.size > 0) {
+        const fillTargetSeries = seriesByPlot.values().next().value as ISeriesApi<any>
+        for (const fill of registryFills) {
+          if (!fill || !fill.plot1 || !fill.plot2) continue
+          const fillColor = String(fill.options?.color || '#2962FF')
+          const fillTransp = Number(fill.options?.transp ?? 90)
+          const prim = new PlotFillPrimitive(fillTargetSeries, chartAny.timeScale(), fillColor, fillTransp)
+          try { fillTargetSeries.attachPrimitive(prim as any) } catch {}
+          registryFillsList.push({ plot1Key: fill.plot1, plot2Key: fill.plot2, color: fillColor, transp: fillTransp, primitive: prim })
+          fillSeriesList.push(fillTargetSeries)
+        }
+      }
 
-      existing.set(instance.key, { plotSeries: seriesByPlot, extraSeries, fillSeries: fillSeriesList, markerSeries })
+      existing.set(instance.key, { plotSeries: seriesByPlot, extraSeries, fillSeries: fillSeriesList, markerSeries, mergedSeries, fillPrimitives: registryFillsList, allPlotData })
 
-      // Apply indicator-level and per-plot visibility
       const indicatorVisible = instance.visible !== false
       for (const [plotKey, series] of seriesByPlot.entries()) {
         const plotVisible = instance.plotVisibility[plotKey] !== false
-        series.applyOptions({ visible: indicatorVisible && plotVisible })
+        if (mergedSeries && mergedSeries.plotKeys.includes(plotKey)) {
+          series.applyOptions({ visible: indicatorVisible && mergedSeries.plotKeys.some((pk) => instance.plotVisibility[pk] !== false) })
+        } else {
+          series.applyOptions({ visible: indicatorVisible && plotVisible })
+        }
       }
       for (const series of extraSeries) {
-        series.applyOptions({ visible: indicatorVisible })
-      }
-      for (const series of fillSeriesList) {
         series.applyOptions({ visible: indicatorVisible })
       }
     }
@@ -1337,13 +1524,21 @@ export default function NiftyChart() {
       const indicatorVisible = instance.visible !== false
       for (const [plotKey, series] of bucket.plotSeries.entries()) {
         const plotVisible = instance.plotVisibility[plotKey] !== false
-        series.applyOptions({ visible: indicatorVisible && plotVisible })
+        if (bucket.mergedSeries && bucket.mergedSeries.plotKeys.includes(plotKey)) {
+          series.applyOptions({ visible: indicatorVisible && bucket.mergedSeries.plotKeys.some((pk) => instance.plotVisibility[pk] !== false) })
+        } else {
+          series.applyOptions({ visible: indicatorVisible && plotVisible })
+        }
       }
       for (const series of bucket.extraSeries) {
         series.applyOptions({ visible: indicatorVisible })
       }
-      for (const series of bucket.fillSeries) {
-        series.applyOptions({ visible: indicatorVisible })
+      for (const fp of bucket.fillPrimitives) {
+        fp.primitive.setVisible(indicatorVisible)
+      }
+      if (bucket.mergedSeries) {
+        const anyVisible = bucket.mergedSeries.plotKeys.some((pk) => instance.plotVisibility[pk] !== false)
+        bucket.mergedSeries.series.applyOptions({ visible: indicatorVisible && anyVisible })
       }
     }
   }, [activeIndicators])

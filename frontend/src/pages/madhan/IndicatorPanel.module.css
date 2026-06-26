@@ -1,0 +1,33 @@
+/* IndicatorPanel scrollbar styles — scoped to this component only */
+
+.scrollArea {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(120, 123, 134, 0.3) transparent;
+}
+
+.scrollArea:hover {
+  scrollbar-color: rgba(120, 123, 134, 0.5) transparent;
+}
+
+/* WebKit browsers (Chrome, Safari, Edge) */
+.scrollArea::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.scrollArea::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.scrollArea::-webkit-scrollbar-thumb {
+  background: rgba(120, 123, 134, 0.2);
+  border-radius: 3px;
+}
+
+.scrollArea::-webkit-scrollbar-thumb:hover {
+  background: rgba(120, 123, 134, 0.4);
+}
+
+.scrollArea::-webkit-scrollbar-corner {
+  background: transparent;
+}
