@@ -1295,10 +1295,15 @@ export default function NiftyChart() {
     const chartAny = chart as any
     const existing = indicatorSeriesRef.current
     for (const bucket of existing.values()) {
-      for (const series of bucket.plotSeries.values()) chart.removeSeries(series)
-      for (const series of bucket.extraSeries) chart.removeSeries(series)
-      for (const series of bucket.fillSeries) chart.removeSeries(series)
-      if (bucket.mergedSeries) chart.removeSeries(bucket.mergedSeries.series)
+      for (const series of bucket.plotSeries.values()) {
+        try { chart.removeSeries(series) } catch {}
+      }
+      for (const series of bucket.extraSeries) {
+        try { chart.removeSeries(series) } catch {}
+      }
+      if (bucket.mergedSeries) {
+        try { chart.removeSeries(bucket.mergedSeries.series) } catch {}
+      }
     }
     existing.clear()
     indicatorPaneRef.current.clear()
@@ -1444,7 +1449,6 @@ export default function NiftyChart() {
           const prim = new PlotFillPrimitive(fillTargetSeries, chartAny.timeScale(), fillColor, fillTransp)
           try { fillTargetSeries.attachPrimitive(prim as any) } catch {}
           registryFillsList.push({ plot1Key: fill.plot1, plot2Key: fill.plot2, color: fillColor, transp: fillTransp, primitive: prim })
-          fillSeriesList.push(fillTargetSeries)
         }
       }
 
