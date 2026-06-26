@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react'
 import { indicatorRegistry } from 'lightweight-charts-indicators'
-import { X, ChevronRight, Activity, Eye, EyeOff } from 'lucide-react'
+import { X, ChevronRight, Activity, Eye, EyeOff, GripVertical } from 'lucide-react'
 import { useThemeStore } from '@/stores/themeStore'
 import { chartTheme } from './chartTheme'
 
@@ -21,6 +21,8 @@ interface IndicatorPanelProps {
   onUpdateInput: (instanceKey: string, inputId: string, value: unknown) => void
   onToggleVisibility: (instanceKey: string) => void
   onTogglePlotVisibility: (instanceKey: string, plotKey: string) => void
+  onClose?: () => void
+  onDragStart?: (e: React.MouseEvent) => void
 }
 
 export const INDICATOR_CATEGORIES = [
@@ -43,6 +45,8 @@ export default function IndicatorPanel({
   onUpdateInput,
   onToggleVisibility,
   onTogglePlotVisibility,
+  onClose,
+  onDragStart,
 }: IndicatorPanelProps) {
   const { mode } = useThemeStore()
   const t = chartTheme[mode]
@@ -78,12 +82,27 @@ export default function IndicatorPanel({
     <div className="flex h-full w-full flex-col overflow-hidden" style={{ backgroundColor: t.panel }}>
       <div className="flex items-center justify-between px-2 py-1.5" style={{ borderBottom: `1px solid ${t.border}` }}>
         <div className="flex items-center gap-1.5">
+          <GripVertical
+            className="h-3 w-3 cursor-grab active:cursor-grabbing shrink-0"
+            style={{ color: t.textMuted }}
+            onMouseDown={onDragStart}
+          />
           <Activity className="h-3 w-3" style={{ color: t.textSecondary }} />
           <span className="text-[11px] font-medium" style={{ color: t.text }}>Indicators</span>
           <span className="rounded px-1.5 py-0.5 text-[9px]" style={{ backgroundColor: t.badge, color: t.textSecondary }}>
             {activeIndicators.length}
           </span>
         </div>
+        {onClose && (
+          <button
+            className="rounded p-0.5"
+            style={{ color: t.textMuted }}
+            onClick={onClose}
+            title="Close panel"
+          >
+            <X className="h-3 w-3" />
+          </button>
+        )}
       </div>
       <div className="p-1.5" style={{ borderBottom: `1px solid ${t.border}` }}>
         <input
@@ -142,8 +161,20 @@ export default function IndicatorPanel({
                       </button>
                     </div>
                   </div>
-                  {expanded && plotConfigList.length > 1 && (
+                  {expanded && (
                     <div className="mt-1.5 pt-1.5 space-y-1" style={{ borderTop: `1px solid ${t.border}` }}>
+                      <button
+                        className="flex w-full items-center gap-1.5 rounded px-1 py-0.5 text-[10px] transition-colors"
+                        style={{ color: indicatorVisible ? t.active : t.textMuted, opacity: indicatorVisible ? 1 : 0.6 }}
+                        onClick={() => onToggleVisibility(indicator.key)}
+                      >
+                        {indicatorVisible ? <Eye className="h-3 w-3" /> : <EyeOff className="h-3 w-3" />}
+                        <span>{indicatorVisible ? 'Hide indicator' : 'Show indicator'}</span>
+                      </button>
+                    </div>
+                  )}
+                  {expanded && plotConfigList.length > 1 && (
+                    <div className="mt-1 pt-1 space-y-1" style={{ borderTop: `1px solid ${t.border}` }}>
                       <div className="px-1 text-[9px] font-semibold uppercase" style={{ color: t.textMuted }}>Levels</div>
                       {plotConfigList.map((plot: any) => {
                         if (!plot || !plot.id) return null

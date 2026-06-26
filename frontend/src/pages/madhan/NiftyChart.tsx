@@ -129,6 +129,9 @@ export default function NiftyChart() {
   const [indicatorInputs, setIndicatorInputs] = useState<Record<string, Record<string, unknown>>>({})
   const [expandedIndicatorKey, setExpandedIndicatorKey] = useState<string | null>(null)
   const [showIndicatorPanel, setShowIndicatorPanel] = useState(false)
+  const [indicatorPanelPos, setIndicatorPanelPos] = useState({ x: 80, y: 40 })
+  const [indicatorPanelDragging, setIndicatorPanelDragging] = useState(false)
+  const indicatorPanelDragStart = useRef<{ mx: number; my: number; px: number; py: number } | null>(null)
   const [showDrawingPanel, setShowDrawingPanel] = useState(false)
   const [drawingToolbarCollapsed, setDrawingToolbarCollapsed] = useState(false)
   const [activeDrawingTool, setActiveDrawingTool] = useState<string | null>(null)
@@ -1465,6 +1468,35 @@ export default function NiftyChart() {
     )
   }
 
+  const handleIndicatorPanelDragStart = (e: React.MouseEvent) => {
+    e.preventDefault()
+    indicatorPanelDragStart.current = { mx: e.clientX, my: e.clientY, px: indicatorPanelPos.x, py: indicatorPanelPos.y }
+    setIndicatorPanelDragging(true)
+  }
+
+  useEffect(() => {
+    if (!indicatorPanelDragging) return
+    const onMove = (e: MouseEvent) => {
+      if (!indicatorPanelDragStart.current) return
+      const dx = e.clientX - indicatorPanelDragStart.current.mx
+      const dy = e.clientY - indicatorPanelDragStart.current.my
+      setIndicatorPanelPos({
+        x: Math.max(0, indicatorPanelDragStart.current.px + dx),
+        y: Math.max(0, indicatorPanelDragStart.current.py + dy),
+      })
+    }
+    const onUp = () => {
+      indicatorPanelDragStart.current = null
+      setIndicatorPanelDragging(false)
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+    return () => {
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+    }
+  }, [indicatorPanelDragging])
+
   return (
     <div className="h-full w-full p-0">
       <Card className="flex h-full w-full flex-col overflow-hidden rounded-none border-0 py-0 gap-0 bg-card">
@@ -1568,21 +1600,6 @@ export default function NiftyChart() {
                   onToggleCollapse={() => setDrawingToolbarCollapsed((v) => !v)}
                 />
               )}
-              {showIndicatorPanel && (
-                <div className="h-full w-[260px] shrink-0" style={{ borderRight: `1px solid ${t.border}` }}>
-                  <IndicatorPanel
-                    activeIndicators={activeIndicators}
-                    onAdd={addIndicator}
-                    onRemove={removeIndicator}
-                    expandedKey={expandedIndicatorKey}
-                    onToggleExpand={setExpandedIndicatorKey}
-                    inputs={indicatorInputs}
-                    onUpdateInput={updateIndicatorInput}
-                    onToggleVisibility={toggleIndicatorVisibility}
-                    onTogglePlotVisibility={togglePlotVisibility}
-                  />
-                </div>
-              )}
             </>
           }
           rightPanel={
@@ -1650,6 +1667,34 @@ export default function NiftyChart() {
         >
           <div ref={chartContainerRef} className="h-full w-full" />
         </ChartLayout>
+        {showIndicatorPanel && (
+          <div
+            className="absolute z-50 overflow-hidden rounded shadow-lg"
+            style={{
+              left: indicatorPanelPos.x,
+              top: indicatorPanelPos.y,
+              width: 280,
+              height: 480,
+              backgroundColor: t.panel,
+              border: `1px solid ${t.border}`,
+              cursor: indicatorPanelDragging ? 'grabbing' : undefined,
+            }}
+          >
+            <IndicatorPanel
+              activeIndicators={activeIndicators}
+              onAdd={addIndicator}
+              onRemove={removeIndicator}
+              expandedKey={expandedIndicatorKey}
+              onToggleExpand={setExpandedIndicatorKey}
+              inputs={indicatorInputs}
+              onUpdateInput={updateIndicatorInput}
+              onToggleVisibility={toggleIndicatorVisibility}
+              onTogglePlotVisibility={togglePlotVisibility}
+              onClose={() => setShowIndicatorPanel(false)}
+              onDragStart={handleIndicatorPanelDragStart}
+            />
+          </div>
+        )}
       </Card>
       <TextEditorModal
         drawing={editingTextDrawing}
