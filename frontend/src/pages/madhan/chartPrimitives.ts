@@ -38,6 +38,7 @@ export class PlotFillPrimitive {
     const self = this
     return [
       {
+        zOrder() { return 'normal' as const },
         renderer() {
           return {
             draw(target: any) {
@@ -103,6 +104,7 @@ export class LineBrPrimitive {
     const self = this
     return [
       {
+        zOrder() { return 'normal' as const },
         renderer() {
           return {
             draw(target: any) {
@@ -182,6 +184,7 @@ export class ExtendedMarkerPrimitive {
   paneViews() {
     const self = this
     return [{
+      zOrder() { return 'top' as const },
       renderer() {
         return {
           draw(target: any) {
@@ -321,6 +324,7 @@ export class BgColorPrimitive {
   paneViews() {
     const self = this
     return [{
+      zOrder() { return 'normal' as const },
       renderer() {
         return {
           draw(target: any) {
@@ -377,6 +381,7 @@ export class LabelPrimitive {
   paneViews() {
     const self = this
     return [{
+      zOrder() { return 'top' as const },
       renderer() {
         return {
           draw(target: any) {
@@ -445,6 +450,7 @@ export class BoxPrimitive {
   paneViews() {
     const self = this
     return [{
+      zOrder() { return 'top' as const },
       renderer() {
         return {
           draw(target: any) {
@@ -513,6 +519,7 @@ export class LineDrawingPrimitive {
   paneViews() {
     const self = this
     return [{
+      zOrder() { return 'normal' as const },
       renderer() {
         return {
           draw(target: any) {
@@ -701,6 +708,7 @@ export class HlineFillPrimitive {
   paneViews() {
     const self = this
     return [{
+      zOrder() { return 'normal' as const },
       renderer() {
         return {
           draw(target: any) {
@@ -755,7 +763,7 @@ export class CrossPlotPrimitive {
   paneViews(): any[] {
     const self = this
     return [{
-      zOrder: 'top',
+      zOrder() { return 'top' as const },
       renderer() {
         return {
           draw(target: any) {

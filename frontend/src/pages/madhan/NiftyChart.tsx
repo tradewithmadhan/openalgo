@@ -928,6 +928,7 @@ export default function NiftyChart() {
           const self = this
           return [
             {
+              zOrder() { return 'top' as const },
               renderer() {
                 return {
                   draw(target: any) {
@@ -1069,6 +1070,7 @@ export default function NiftyChart() {
           const self = this
           return [
             {
+              zOrder() { return 'normal' as const },
               renderer() {
                 return {
                   draw(target: any) {
