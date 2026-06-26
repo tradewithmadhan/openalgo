@@ -31,7 +31,7 @@ import DrawingListPanel from './DrawingListPanel'
 import TextEditorModal from './TextEditorModal'
 import ChartLayout from './ChartLayout'
 import WidgetBar from './WidgetBar'
-import IndicatorPanel from './IndicatorPanel'
+import IndicatorPanel, { INDICATOR_CATEGORIES } from './IndicatorPanel'
 import { PlotFillPrimitive, LineBrPrimitive, ExtendedMarkerPrimitive, BgColorPrimitive, LabelPrimitive, BoxPrimitive, LineDrawingPrimitive, TablePrimitive, applyTransparency, toMarkerData } from './chartPrimitives'
 
 type Candle = {
@@ -142,7 +142,7 @@ export default function NiftyChart() {
     { key: 'sma-0', indicatorId: 'sma', visible: true, plotVisibility: {} },
   ])
   const [indicatorInputs, setIndicatorInputs] = useState<Record<string, Record<string, unknown>>>({})
-  const [expandedIndicatorKeys, setExpandedIndicatorKeys] = useState<Set<string>>(new Set())
+  const [expandedIndicatorKey, setExpandedIndicatorKey] = useState<string | null>(null)
   const [showIndicatorPanel, setShowIndicatorPanel] = useState(false)
   const [indicatorPanelPos, setIndicatorPanelPos] = useState({ x: 80, y: 40 })
   const [indicatorPanelDragging, setIndicatorPanelDragging] = useState(false)
@@ -196,37 +196,25 @@ export default function NiftyChart() {
   }, [activeIndicators])
 
   useEffect(() => {
-    setExpandedIndicatorKeys((prev) => {
-      const next = new Set<string>()
-      for (const key of prev) {
-        if (activeIndicators.some((item) => item.key === key)) {
-          next.add(key)
-        }
-      }
-      if (next.size === 0 && activeIndicators.length > 0) {
-        next.add(activeIndicators[0].key)
-      }
-      return next
+    setExpandedIndicatorKey((prev) => {
+      if (prev && activeIndicators.some((item) => item.key === prev)) return prev
+      return activeIndicators.length > 0 ? activeIndicators[0].key : null
     })
   }, [activeIndicators])
 
-  const collapseAllIndicators = useCallback(() => {
-    setExpandedIndicatorKeys((prev) => {
-      if (prev.size > 0) return new Set()
-      return new Set(activeIndicators.map((i) => i.key))
+  const [collapsedCategories, setCollapsedCategories] = useState<Record<string, boolean>>({})
+  const collapseAllCategories = useCallback(() => {
+    setCollapsedCategories((prev) => {
+      const allCollapsed = Object.values(prev).every(Boolean)
+      if (allCollapsed) return {}
+      const next: Record<string, boolean> = {}
+      for (const cat of INDICATOR_CATEGORIES) next[cat] = true
+      return next
     })
-  }, [activeIndicators])
+  }, [])
 
   const toggleIndicatorExpand = useCallback((key: string) => {
-    setExpandedIndicatorKeys((prev) => {
-      const next = new Set(prev)
-      if (next.has(key)) {
-        next.delete(key)
-      } else {
-        next.add(key)
-      }
-      return next
-    })
+    setExpandedIndicatorKey((prev) => (prev === key ? null : key))
   }, [])
 
   const indicatorColors = useMemo(
@@ -1806,11 +1794,7 @@ export default function NiftyChart() {
     const nextIndex = activeIndicators.filter((item) => item.indicatorId === indicatorId).length
     const key = `${indicatorId}-${Date.now()}-${nextIndex}`
     setActiveIndicators((prev) => [...prev, { key, indicatorId, visible: true, plotVisibility: {} }])
-    setExpandedIndicatorKeys((prev) => {
-      const next = new Set(prev)
-      if (next.has(key)) next.delete(key); else next.add(key)
-      return next
-    })
+    setExpandedIndicatorKey(key)
   }
 
   const removeIndicator = (instanceKey: string) => {
@@ -2067,9 +2051,11 @@ export default function NiftyChart() {
               activeIndicators={activeIndicators}
               onAdd={addIndicator}
               onRemove={removeIndicator}
-              expandedKeys={expandedIndicatorKeys}
+              expandedKey={expandedIndicatorKey}
               onToggleExpand={toggleIndicatorExpand}
-              onCollapseAll={collapseAllIndicators}
+              collapsedCategories={collapsedCategories}
+              onToggleCategory={(cat) => setCollapsedCategories((prev) => ({ ...prev, [cat]: !prev[cat] }))}
+              onCollapseAll={collapseAllCategories}
               inputs={indicatorInputs}
               onUpdateInput={updateIndicatorInput}
               onToggleVisibility={toggleIndicatorVisibility}

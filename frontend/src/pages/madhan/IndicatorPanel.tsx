@@ -16,8 +16,10 @@ interface IndicatorPanelProps {
   activeIndicators: IndicatorInstance[]
   onAdd: (indicatorId: string) => void
   onRemove: (instanceKey: string) => void
-  expandedKeys: Set<string>
+  expandedKey: string | null
   onToggleExpand: (key: string) => void
+  collapsedCategories: Record<string, boolean>
+  onToggleCategory: (cat: string) => void
   onCollapseAll: () => void
   inputs: Record<string, Record<string, unknown>>
   onUpdateInput: (instanceKey: string, inputId: string, value: unknown) => void
@@ -41,8 +43,10 @@ export default function IndicatorPanel({
   activeIndicators,
   onAdd,
   onRemove,
-  expandedKeys,
+  expandedKey,
   onToggleExpand,
+  collapsedCategories,
+  onToggleCategory,
   onCollapseAll,
   inputs,
   onUpdateInput,
@@ -54,11 +58,6 @@ export default function IndicatorPanel({
   const { mode } = useThemeStore()
   const t = chartTheme[mode]
   const [search, setSearch] = useState('')
-  const [collapsedCategories, setCollapsedCategories] = useState<Record<string, boolean>>({})
-
-  const toggleCategory = (cat: string) => {
-    setCollapsedCategories((prev) => ({ ...prev, [cat]: !prev[cat] }))
-  }
 
   const groupedIndicators = useMemo(() => {
     const query = search.trim().toLowerCase()
@@ -128,16 +127,16 @@ export default function IndicatorPanel({
                   className="text-[9px] px-1 py-0.5 rounded"
                   style={{ color: t.textMuted }}
                   onClick={onCollapseAll}
-                  title="Collapse all indicators"
+                  title="Collapse all categories"
                 >
-                  {expandedKeys.size > 0 ? 'Collapse All' : 'Expand All'}
+                  {Object.values(collapsedCategories).some(Boolean) ? 'Expand All' : 'Collapse All'}
                 </button>
               )}
             </div>
             {activeIndicators.map((indicator) => {
               const entry = indicatorRegistry.find((item) => item.id === indicator.indicatorId)
               if (!entry) return null
-              const expanded = expandedKeys.has(indicator.key)
+              const expanded = expandedKey === indicator.key
               const config = Array.isArray(entry.inputConfig) ? entry.inputConfig : []
               const values = inputs[indicator.key] || {}
               const plotConfigList = Array.isArray((entry as any).plotConfig) ? (entry as any).plotConfig : []
@@ -278,7 +277,7 @@ export default function IndicatorPanel({
               <button
                 className="flex w-full items-center rounded px-1 py-0.5 text-left text-[10px] font-semibold uppercase transition-colors"
                 style={{ color: t.textSecondary }}
-                onClick={() => toggleCategory(cat)}
+                onClick={() => onToggleCategory(cat)}
               >
                 <ChevronRight
                   className="mr-1 h-2.5 w-2.5 shrink-0 transition-transform"
