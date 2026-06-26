@@ -731,6 +731,66 @@ export class HlineFillPrimitive {
   setVisible(v: boolean) { this._show = v }
 }
 
+// ─── CrossPlotPrimitive ────────────────────────────────────────────────
+
+export class CrossPlotPrimitive {
+  _series: ISeriesApi<any>
+  _timeScale: any
+  _data: Array<{ time: number; value: number }> = []
+  _color: string = '#2962FF'
+  _size: number = 6
+  _show = true
+
+  constructor(series: ISeriesApi<any>, timeScale: any) {
+    this._series = series
+    this._timeScale = timeScale
+  }
+
+  setData(data: Array<{ time: number; value: number }>, color: string, size: number = 6) {
+    this._data = data
+    this._color = color
+    this._size = size
+  }
+
+  paneViews(): any[] {
+    const self = this
+    return [{
+      paneViews() {
+        return [{
+          zOrder: 'top',
+          renderer(target: any) {
+            if (!self._show) return
+            const data = self._data
+            if (!data || data.length === 0) return
+            const series = self._series
+            const ts = self._timeScale
+            const color = self._color
+            const half = self._size
+            target.useMediaCoordinateSpace(({ context: ctx }: { context: CanvasRenderingContext2D }) => {
+              ctx.strokeStyle = color
+              ctx.lineWidth = 2
+              for (const pt of data) {
+                if (pt.value == null || Number.isNaN(pt.value)) continue
+                const x = ts.timeToCoordinate(pt.time as any)
+                const y = series.priceToCoordinate(pt.value)
+                if (x == null || y == null) continue
+                ctx.beginPath()
+                ctx.moveTo(x - half, y - half)
+                ctx.lineTo(x + half, y + half)
+                ctx.moveTo(x + half, y - half)
+                ctx.lineTo(x - half, y + half)
+                ctx.stroke()
+              }
+            })
+          },
+        }]
+      },
+    }]
+  }
+
+  setVisible(v: boolean) { this._show = v }
+}
+
 // ─── removeEmptyPanes ───────────────────────────────────────────────────
 
 export function removeEmptyPanes(chart: any) {

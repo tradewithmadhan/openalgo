@@ -5,7 +5,6 @@ import {
   ColorType,
   CrosshairMode,
   createChart,
-  createSeriesMarkers,
   HistogramSeries,
   LineSeries,
   LineType,
@@ -32,7 +31,7 @@ import TextEditorModal from './TextEditorModal'
 import ChartLayout from './ChartLayout'
 import WidgetBar from './WidgetBar'
 import IndicatorPanel, { INDICATOR_CATEGORIES } from './IndicatorPanel'
-import { PlotFillPrimitive, LineBrPrimitive, ExtendedMarkerPrimitive, BgColorPrimitive, LabelPrimitive, BoxPrimitive, LineDrawingPrimitive, TablePrimitive, applyTransparency, toMarkerData } from './chartPrimitives'
+import { PlotFillPrimitive, LineBrPrimitive, ExtendedMarkerPrimitive, BgColorPrimitive, LabelPrimitive, BoxPrimitive, LineDrawingPrimitive, TablePrimitive, CrossPlotPrimitive, applyTransparency } from './chartPrimitives'
 
 type Candle = {
   time: number
@@ -60,6 +59,7 @@ type IndicatorSeriesBucket = {
   extraSeries: ISeriesApi<any>[]
   markerSeries: Array<{ plotKey: string; primitive: { setMarkers: (markers: any[]) => void } }>
   lineBrPrimitives: Array<{ plotKey: string; primitive: LineBrPrimitive; anchorSeries: ISeriesApi<any> }>
+  crossPrimitives: Array<{ plotKey: string; primitive: CrossPlotPrimitive; anchorSeries: ISeriesApi<any> }>
   plotFillPrimitives: Array<{ prim: PlotFillPrimitive; anchorSeries: ISeriesApi<any>; fillConfig: any }>
   allPlotData: Map<string, Array<{ time: number; value?: number }>>
   extendedMarkerPrimitive?: ExtendedMarkerPrimitive
@@ -716,19 +716,51 @@ export default function NiftyChart() {
             }
           }
 
-          if (style === 'cross' || style === 'circles') {
-            const markerEntry = bucket.markerSeries.find((item) => item.plotKey === plotKey)
-            const { native } = toMarkerData(plot, bars, style === 'cross' ? 'cross' : 'circle', color)
-            markerEntry?.primitive.setMarkers(native)
-            livePlotKeys.add(plotKey)
-            for (let k = plot.length - 1; k >= 0; k--) {
-              const point = plot[k] as any
-              if (point && typeof point === 'object' && typeof point.value === 'number' && Number.isFinite(point.value)) {
-                instanceValues[plotKey] = point.value
-                break
+          if (style === 'cross') {
+            const crossEntry = bucket.crossPrimitives.find((e) => e.plotKey === plotKey)
+            if (crossEntry) {
+              const rawPlotData = plot
+                .map((item: any, idx: number) => {
+                  if (item && typeof item === 'object' && 'time' in item && typeof item.value === 'number') return { time: item.time, value: item.value }
+                  if (typeof item === 'number' && bars[idx]) return { time: bars[idx].time, value: item }
+                  return null
+                })
+                .filter((p: any): p is { time: number; value: number } => p != null)
+              crossEntry.primitive.setData(rawPlotData, color, (plotConfig?.lineWidth ?? 1) * 3 || 6)
+              processedSeries.add(crossEntry.anchorSeries)
+              livePlotKeys.add(plotKey)
+              for (let k = plot.length - 1; k >= 0; k--) {
+                const point = plot[k] as any
+                if (point && typeof point === 'object' && typeof point.value === 'number' && Number.isFinite(point.value)) {
+                  instanceValues[plotKey] = point.value
+                  break
+                } else if (typeof point === 'number' && Number.isFinite(point)) {
+                  instanceValues[plotKey] = point
+                  break
+                }
               }
+              continue
             }
-            continue
+          }
+
+          if (style === 'circles') {
+            const series = bucket.plotSeries.get(plotKey)
+            if (series) {
+              series.setData(toSeriesData(plot, bars, false) as any)
+              processedSeries.add(series)
+              livePlotKeys.add(plotKey)
+              for (let k = plot.length - 1; k >= 0; k--) {
+                const point = plot[k] as any
+                if (point && typeof point === 'object' && typeof point.value === 'number' && Number.isFinite(point.value)) {
+                  instanceValues[plotKey] = point.value
+                  break
+                } else if (typeof point === 'number' && Number.isFinite(point)) {
+                  instanceValues[plotKey] = point
+                  break
+                }
+              }
+              continue
+            }
           }
 
           const series = bucket.plotSeries.get(plotKey)
@@ -1353,6 +1385,7 @@ export default function NiftyChart() {
       const extraSeries: ISeriesApi<any>[] = []
       const markerSeries: Array<{ plotKey: string; primitive: { setMarkers: (markers: any[]) => void } }> = []
       const lineBrEntries: Array<{ plotKey: string; primitive: LineBrPrimitive; anchorSeries: ISeriesApi<any> }> = []
+      const crossEntries: Array<{ plotKey: string; primitive: CrossPlotPrimitive; anchorSeries: ISeriesApi<any> }> = []
       const allPlotData = new Map<string, Array<{ time: number; value?: number }>>()
       const addTo = pane && typeof pane.addSeries === 'function' ? pane : chart
 
@@ -1407,10 +1440,31 @@ export default function NiftyChart() {
           series = addTo.addSeries(HistogramSeries, { title, color, lineWidth: lineWidth as any }) as ISeriesApi<any>
         } else if (style === 'area') {
           series = addTo.addSeries(AreaSeries, { title, lineColor: color, topColor: `${color}66`, bottomColor: `${color}11`, lineWidth: lineWidth as any }) as ISeriesApi<any>
-        } else if (style === 'cross' || style === 'circles') {
+        } else if (style === 'cross') {
+          const anchor = addTo.addSeries(LineSeries, {
+            title, color: 'transparent', lineWidth: 0 as const,
+            lineVisible: false, lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false,
+          }) as ISeriesApi<any>
+          anchor.setData(toSeriesData((plots as any)[plotKey], bars, false) as any)
+          const crossPrim = new CrossPlotPrimitive(anchor, chart.timeScale())
+          const crossColor = color
+          const crossSize = (lineWidth * 3) || 6
+          crossPrim.setData(
+            ((plots as any)[plotKey] || []).map((item: any, idx: number) => {
+              if (item && typeof item === 'object' && 'time' in item && typeof item.value === 'number') return { time: item.time, value: item.value }
+              if (typeof item === 'number' && bars[idx]) return { time: bars[idx].time, value: item }
+              return null
+            }).filter((p: any): p is { time: number; value: number } => p != null),
+            crossColor, crossSize
+          )
+          try { anchor.attachPrimitive(crossPrim as any) } catch {}
+          series = anchor
+          crossEntries.push({ plotKey, primitive: crossPrim, anchorSeries: anchor })
+        } else if (style === 'circles') {
           series = addTo.addSeries(LineSeries, {
-            title, color: 'rgba(0,0,0,0)', lineWidth: 0 as const,
-            priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+            title, color: 'transparent', lineWidth: 0 as const,
+            lineVisible: false, lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false,
+            pointMarkersVisible: true, pointMarkerRadius: (lineWidth * 2) || 4,
           }) as ISeriesApi<any>
         } else {
           const isStep = style === 'stepline' || style === 'steplinebr'
@@ -1421,12 +1475,6 @@ export default function NiftyChart() {
           }) as ISeriesApi<any>
         }
         seriesByPlot.set(plotKey, series)
-        if (style === 'cross' || style === 'circles') {
-          markerSeries.push({
-            plotKey,
-            primitive: createSeriesMarkers(series, [], { zOrder: 'top' }),
-          })
-        }
       }
 
       let extMarkerPrim: ExtendedMarkerPrimitive | undefined
@@ -1615,7 +1663,7 @@ export default function NiftyChart() {
 
       existing.set(instance.key, {
         plotSeries: seriesByPlot, extraSeries, markerSeries,
-        lineBrPrimitives: lineBrEntries, plotFillPrimitives: plotFillEntries,
+        lineBrPrimitives: lineBrEntries, crossPrimitives: crossEntries, plotFillPrimitives: plotFillEntries,
         allPlotData,
         extendedMarkerPrimitive: extMarkerPrim,
         extendedMarkerAnchorSeries: extMarkerAnchor,
@@ -1640,6 +1688,10 @@ export default function NiftyChart() {
       }
       for (const fp of plotFillEntries) {
         fp.prim.setVisible(indicatorVisible)
+      }
+      for (const cp of crossEntries) {
+        const plotVisible = instance.plotVisibility[cp.plotKey] !== false
+        cp.primitive.setVisible(indicatorVisible && plotVisible)
       }
     }
     updateIndicatorSeries(priceDataRef.current)
