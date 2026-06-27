@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Link, useNavigate } from 'react-router-dom'
 import {
   AreaSeries,
   CandlestickSeries,
@@ -21,9 +22,19 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Badge } from '@/components/ui/badge'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { useMarketData } from '@/hooks/useMarketData'
-import { Zap, ZapOff, RefreshCw, Sun, Moon } from 'lucide-react'
+import { Zap, ZapOff, RefreshCw, Sun, Moon, Menu, BarChart3, Home } from 'lucide-react'
 import { useThemeStore } from '@/stores/themeStore'
+import { useAuthStore } from '@/stores/authStore'
+import { useProfileMenuItems } from '@/hooks/useProfileMenuItems'
+import { cn } from '@/lib/utils'
 import { chartTheme } from './chartTheme'
 import DrawingToolbar, { TEXT_DRAWING_TYPES } from './DrawingToolbar'
 import DrawingListPanel from './DrawingListPanel'
@@ -169,8 +180,11 @@ export default function NiftyChart() {
     mode: 'LTP',
     enabled: true,
   })
-  const { mode: themeMode, toggleMode } = useThemeStore()
+  const { mode: themeMode, toggleMode, appMode, toggleAppMode, isTogglingMode } = useThemeStore()
   const t = chartTheme[themeMode]
+  const navigate = useNavigate()
+  const { user } = useAuthStore()
+  const profileMenuItems = useProfileMenuItems()
 
   useEffect(() => {
     activeDrawingToolRef.current = activeDrawingTool
@@ -1948,8 +1962,132 @@ export default function NiftyChart() {
   }, [indicatorPanelResizing])
 
   return (
-    <div className="h-full w-full p-0">
-      <Card className="flex h-full w-full flex-col overflow-hidden rounded-none border-0 py-0 gap-0 bg-card">
+    <div className="h-full w-full p-0 flex flex-col">
+      {/* Header */}
+      <div className="h-12 border-b border-border flex items-center px-4 bg-card/50 shrink-0 justify-between">
+          <div className="flex items-center gap-2">
+             <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-foreground hover:bg-accent md:hidden">
+                <Menu className="h-4 w-4" />
+             </Button>
+            <div className="flex items-center gap-2">
+                <img src="/images/android-chrome-192x192.png" alt="OpenAlgo" className="w-6 h-6" />
+                <span className="font-semibold text-sm">openalgo</span>
+            </div>
+            <div className="h-4 w-px bg-border hidden sm:block" />
+             <Button variant="ghost" size="sm" className="h-7 text-xs hidden sm:flex" asChild>
+                <Link to="/madhan/madhan01">
+                <BarChart3 className="h-3.5 w-3.5 mr-1.5" />
+                NiftyFetcher
+                </Link>
+            </Button>
+
+             <Button variant="ghost" size="sm" className="h-7 text-xs hidden sm:flex" asChild>
+                <Link to="/madhan/ATP-LTPStrategy">
+                <BarChart3 className="h-3.5 w-3.5 mr-1.5" />
+                ATPLTP
+                </Link>
+            </Button>
+
+             <Button variant="ghost" size="sm" className="h-7 text-xs hidden sm:flex" asChild>
+                <Link to="/madhan/nifty-chart">
+                <BarChart3 className="h-3.5 w-3.5 mr-1.5" />
+                NiftyChart
+                </Link>
+            </Button>
+          </div>
+
+          <div className="flex items-center gap-2">
+             {/* Mode Badge */}
+            <Badge
+                variant={appMode === "live" ? "default" : "secondary"}
+                className={cn(
+                "text-xs hidden sm:flex",
+                appMode === "analyzer" &&
+                    "bg-purple-500 hover:bg-purple-600 text-white",
+                )}
+            >
+                {appMode === "live" ? "Live Mode" : "Analyze Mode"}
+            </Badge>
+
+            {/* Mode Toggle */}
+            <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8"
+                onClick={async () => {
+                    const result = await toggleAppMode()
+                    if (result.success) {
+                        const { appMode: newMode } = useThemeStore.getState()
+                        const { toast } = await import('sonner')
+                        toast.success(result.message || `Switched to ${newMode === "live" ? "Analyze" : "Live"} mode`)
+                    } else {
+                        const { toast } = await import('sonner')
+                        toast.error(result.message || "Failed to toggle mode")
+                    }
+                }}
+                disabled={isTogglingMode}
+                title={`Switch to ${appMode === "live" ? "Analyze" : "Live"} mode`}
+            >
+                {isTogglingMode ? (
+                <div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
+                ) : appMode === "live" ? (
+                <Zap className="h-4 w-4" />
+                ) : (
+                <BarChart3 className="h-4 w-4" />
+                )}
+            </Button>
+
+            {/* Theme Toggle */}
+            <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8"
+                onClick={toggleMode}
+                title={themeMode === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+            >
+                {themeMode === "light" ? (
+                <Sun className="h-4 w-4" />
+                ) : (
+                <Moon className="h-4 w-4" />
+                )}
+            </Button>
+
+            <Button variant="ghost" size="sm" className="h-7 text-xs hidden sm:flex" asChild>
+                <Link to="/dashboard">
+                <Home className="h-3.5 w-3.5 mr-1.5" />
+                Dashboard
+                </Link>
+            </Button>
+
+            {/* Profile Dropdown */}
+            <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8 rounded-full bg-primary text-primary-foreground"
+                >
+                    <span className="text-sm font-medium">
+                    {user?.username?.[0]?.toUpperCase() || "O"}
+                    </span>
+                </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-56">
+                {profileMenuItems.map((item) => (
+                    <DropdownMenuItem
+                    key={item.href}
+                    onSelect={() => navigate(item.href)}
+                    >
+                    <item.icon className="mr-2 h-4 w-4" />
+                    <span>{item.label}</span>
+                    </DropdownMenuItem>
+                ))}
+                </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+      </div>
+
+      <Card className="flex flex-1 w-full flex-col overflow-hidden rounded-none border-0 py-0 gap-0 bg-card">
         <div className="shrink-0 flex flex-wrap items-center gap-1.5 px-2 py-1.5">
           <div className="flex items-center gap-1">
             <Label className="text-[11px]">Interval</Label>
@@ -2006,15 +2144,6 @@ export default function NiftyChart() {
             </div>
           </div>
           <div className="flex items-center gap-1.5 ml-auto">
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-7 w-7 px-0"
-              onClick={toggleMode}
-              title={themeMode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-            >
-              {themeMode === 'dark' ? <Sun className="h-3.5 w-3.5" /> : <Moon className="h-3.5 w-3.5" />}
-            </Button>
             <div className="flex items-center gap-1" title={wsError || (isConnected ? 'Connected' : isConnecting ? 'Connecting...' : 'Disconnected')}>
               {isConnected ? (
                 <Zap className="h-3 w-3 text-yellow-500 fill-yellow-500" />
