@@ -122,6 +122,11 @@ export default function EzayChart() {
   const combinedExtrinsicMarkersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null)
   const updaterRef = useRef<number | null>(null)
   const chartReadyRef = useRef(false)
+  const rawDataRef = useRef<OptionDataResponse['data'] | null>(null)
+
+  const chartTypeRef = useRef<'candlestick' | 'line'>('candlestick')
+  const intervalRef = useRef('1m')
+  const showSignalsRef = useRef(true)
 
   const [chartType, setChartType] = useState<'candlestick' | 'line'>('candlestick')
   const [interval, setInterval] = useState('1m')
@@ -183,9 +188,10 @@ export default function EzayChart() {
 
     const ceDown = '#FF4444'
     const peDown = '#6610F2'
+    const ct = chartTypeRef.current
 
     const makeSeries = (opts: Record<string, any>): ISeriesApi<any> => {
-      if (chartType === 'candlestick') {
+      if (ct === 'candlestick') {
         return chart.addSeries(CandlestickSeries, {
           upColor: '#00C851', downColor: ceDown, borderVisible: false,
           wickUpColor: '#00C851', wickDownColor: ceDown, ...opts,
@@ -232,7 +238,95 @@ export default function EzayChart() {
     peMarkersRef.current = createSeriesMarkers(peSeriesRef.current, [])
     cpCeMarkersRef.current = createSeriesMarkers(combinedSeriesRef.current, [])
     combinedExtrinsicMarkersRef.current = createSeriesMarkers(combinedExtrinsicRef.current, [])
-  }, [chartType, removeAllSeries])
+  }, [removeAllSeries])
+
+  const applyData = useCallback(() => {
+    const d = rawDataRef.current
+    if (!d) return
+    const ct = chartTypeRef.current
+    const intervalMin = getIntervalMinutes(intervalRef.current)
+    const signals = showSignalsRef.current
+
+    let ceData = d.ce_data || []
+    let peData = d.pe_data || []
+    let combinedData = d.combined_data || []
+
+    if (intervalMin > 1) {
+      ceData = aggregateCandles(ceData, intervalMin)
+      peData = aggregateCandles(peData, intervalMin)
+      combinedData = aggregateCombined(combinedData, intervalMin)
+    }
+
+    if (ceSeriesRef.current) {
+      if (ct === 'candlestick') {
+        ceSeriesRef.current.setData(ceData)
+      } else {
+        ceSeriesRef.current.setData(ceData.map((item) => ({ time: item.time, value: item.close })))
+      }
+    }
+
+    if (peSeriesRef.current) {
+      if (ct === 'candlestick') {
+        peSeriesRef.current.setData(peData)
+      } else {
+        peSeriesRef.current.setData(peData.map((item) => ({ time: item.time, value: item.close })))
+      }
+    }
+
+    if (combinedSeriesRef.current) {
+      combinedSeriesRef.current.setData(combinedData.map((item) => ({ time: item.time, value: item.combined_premium })))
+    }
+    if (llpSeriesRef.current && d.llp != null) {
+      llpSeriesRef.current.setData(combinedData.map((item) => ({ time: item.time, value: d.llp! })))
+    }
+    if (ceIntrinsicRef.current) {
+      ceIntrinsicRef.current.setData(combinedData.map((item) => ({ time: item.time, value: item.ce_intrinsic })))
+    }
+    if (peIntrinsicRef.current) {
+      peIntrinsicRef.current.setData(combinedData.map((item) => ({ time: item.time, value: item.pe_intrinsic })))
+    }
+    if (ceExtrinsicRef.current) {
+      ceExtrinsicRef.current.setData(combinedData.map((item) => ({ time: item.time, value: item.ce_extrinsic })))
+    }
+    if (peExtrinsicRef.current) {
+      peExtrinsicRef.current.setData(combinedData.map((item) => ({ time: item.time, value: item.pe_extrinsic })))
+    }
+    if (combinedExtrinsicRef.current) {
+      combinedExtrinsicRef.current.setData(combinedData.map((item) => ({ time: item.time, value: item.combined_extrinsic })))
+    }
+
+    const ceMarkers = signals
+      ? ceData.filter((item) => item.extrinsic_signal).map((point) => ({
+          time: point.time as Time, position: 'aboveBar' as const,
+          color: '#00ff00', shape: 'circle' as const, text: 'CE↑',
+        }))
+      : []
+    ceMarkersRef.current?.setMarkers(ceMarkers)
+
+    const peMarkers = signals
+      ? peData.filter((item) => item.extrinsic_signal).map((point) => ({
+          time: point.time as Time, position: 'aboveBar' as const,
+          color: '#ff0000', shape: 'circle' as const, text: 'PE↑',
+        }))
+      : []
+    peMarkersRef.current?.setMarkers(peMarkers)
+
+    const cpCeMarkers = signals
+      ? combinedData.filter((item) => item.cp_ce_signal).map((point) => ({
+          time: point.time as Time, position: 'aboveBar' as const,
+          color: '#2196f3', shape: 'circle' as const, text: 'CP_CE',
+        }))
+      : []
+    cpCeMarkersRef.current?.setMarkers(cpCeMarkers)
+
+    const ceMarkers2 = signals
+      ? combinedData.filter((item) => item.combined_extrinsic_signal).map((point) => ({
+          time: point.time as Time, position: 'belowBar' as const,
+          color: '#ffeb3b', shape: 'circle' as const, text: 'C P',
+        }))
+      : []
+    combinedExtrinsicMarkersRef.current?.setMarkers(ceMarkers2)
+  }, [])
 
   const loadData = useCallback(async () => {
     if (!selectedStrike) return
@@ -240,94 +334,13 @@ export default function EzayChart() {
       const res = await fetch(`/madhan/api/ezayChart_data?strike=${selectedStrike}&_=${Date.now()}`)
       const json: OptionDataResponse = await res.json()
       if (json.status !== 'success' || !json.data) return
-      const d = json.data
-      const intervalMin = getIntervalMinutes(interval)
-
-      let ceData = d.ce_data || []
-      let peData = d.pe_data || []
-      let combinedData = d.combined_data || []
-
-      if (intervalMin > 1) {
-        ceData = aggregateCandles(ceData, intervalMin)
-        peData = aggregateCandles(peData, intervalMin)
-        combinedData = aggregateCombined(combinedData, intervalMin)
-      }
-
-      if (ceSeriesRef.current) {
-        if (chartType === 'candlestick') {
-          ceSeriesRef.current.setData(ceData)
-        } else {
-          ceSeriesRef.current.setData(ceData.map((item) => ({ time: item.time, value: item.close })))
-        }
-      }
-
-      if (peSeriesRef.current) {
-        if (chartType === 'candlestick') {
-          peSeriesRef.current.setData(peData)
-        } else {
-          peSeriesRef.current.setData(peData.map((item) => ({ time: item.time, value: item.close })))
-        }
-      }
-
-      if (combinedSeriesRef.current) {
-        combinedSeriesRef.current.setData(combinedData.map((item) => ({ time: item.time, value: item.combined_premium })))
-      }
-      if (llpSeriesRef.current && d.llp != null) {
-        llpSeriesRef.current.setData(combinedData.map((item) => ({ time: item.time, value: d.llp! })))
-      }
-      if (ceIntrinsicRef.current) {
-        ceIntrinsicRef.current.setData(combinedData.map((item) => ({ time: item.time, value: item.ce_intrinsic })))
-      }
-      if (peIntrinsicRef.current) {
-        peIntrinsicRef.current.setData(combinedData.map((item) => ({ time: item.time, value: item.pe_intrinsic })))
-      }
-      if (ceExtrinsicRef.current) {
-        ceExtrinsicRef.current.setData(combinedData.map((item) => ({ time: item.time, value: item.ce_extrinsic })))
-      }
-      if (peExtrinsicRef.current) {
-        peExtrinsicRef.current.setData(combinedData.map((item) => ({ time: item.time, value: item.pe_extrinsic })))
-      }
-      if (combinedExtrinsicRef.current) {
-        combinedExtrinsicRef.current.setData(combinedData.map((item) => ({ time: item.time, value: item.combined_extrinsic })))
-      }
-
-      const ceMarkers = showSignals
-        ? ceData.filter((item) => item.extrinsic_signal).map((point) => ({
-            time: point.time as Time, position: 'aboveBar' as const,
-            color: '#00ff00', shape: 'circle' as const, text: 'CE↑',
-          }))
-        : []
-      ceMarkersRef.current?.setMarkers(ceMarkers)
-
-      const peMarkers = showSignals
-        ? peData.filter((item) => item.extrinsic_signal).map((point) => ({
-            time: point.time as Time, position: 'aboveBar' as const,
-            color: '#ff0000', shape: 'circle' as const, text: 'PE↑',
-          }))
-        : []
-      peMarkersRef.current?.setMarkers(peMarkers)
-
-      const cpCeMarkers = showSignals
-        ? combinedData.filter((item) => item.cp_ce_signal).map((point) => ({
-            time: point.time as Time, position: 'aboveBar' as const,
-            color: '#2196f3', shape: 'circle' as const, text: 'CP_CE',
-          }))
-        : []
-      cpCeMarkersRef.current?.setMarkers(cpCeMarkers)
-
-      const ceMarkers2 = showSignals
-        ? combinedData.filter((item) => item.combined_extrinsic_signal).map((point) => ({
-            time: point.time as Time, position: 'belowBar' as const,
-            color: '#ffeb3b', shape: 'circle' as const, text: 'C P',
-          }))
-        : []
-      combinedExtrinsicMarkersRef.current?.setMarkers(ceMarkers2)
-
-      setChartInfo(`Strike ${d.strike} - CE: ${d.ce_symbol || 'N/A'} | PE: ${d.pe_symbol || 'N/A'} (${d.timezone || 'UTC'})`)
+      rawDataRef.current = json.data
+      setChartInfo(`Strike ${json.data.strike} - CE: ${json.data.ce_symbol || 'N/A'} | PE: ${json.data.pe_symbol || 'N/A'} (${json.data.timezone || 'UTC'})`)
+      applyData()
     } catch (err) {
       console.error('Error loading EzayChart data:', err)
     }
-  }, [selectedStrike, chartType, interval, showSignals])
+  }, [selectedStrike, applyData])
 
   useEffect(() => {
     if (!chartContainerRef.current) return
@@ -390,6 +403,7 @@ export default function EzayChart() {
 
   useEffect(() => {
     if (chartReadyRef.current && chartRef.current) {
+      chartTypeRef.current = chartType
       createAllSeries()
       loadData()
     }
@@ -409,15 +423,14 @@ export default function EzayChart() {
   }, [showCombinedAll])
 
   useEffect(() => {
-    if (!showSignals) {
-      ceMarkersRef.current?.setMarkers([])
-      peMarkersRef.current?.setMarkers([])
-      cpCeMarkersRef.current?.setMarkers([])
-      combinedExtrinsicMarkersRef.current?.setMarkers([])
-    } else {
-      loadData()
-    }
-  }, [showSignals, loadData])
+    showSignalsRef.current = showSignals
+    applyData()
+  }, [showSignals, applyData])
+
+  useEffect(() => {
+    intervalRef.current = interval
+    applyData()
+  }, [interval, applyData])
 
   useEffect(() => {
     if (updaterRef.current) window.clearInterval(updaterRef.current)
