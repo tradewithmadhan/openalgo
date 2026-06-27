@@ -23,7 +23,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { BarChart3, Home, Menu, Sun, Moon, Zap } from 'lucide-react'
+import { BarChart3, Home, Menu, Sun, Moon, Zap, ChevronLeft, ChevronRight } from 'lucide-react'
 import { useThemeStore } from '@/stores/themeStore'
 import { useAuthStore } from '@/stores/authStore'
 import { useProfileMenuItems } from '@/hooks/useProfileMenuItems'
@@ -107,6 +107,7 @@ function aggregateCombined(data: AggCombined[], intervalMin: number): AggCombine
 export default function EzayChart() {
   const chartContainerRef = useRef<HTMLDivElement | null>(null)
   const chartRef = useRef<IChartApi | null>(null)
+  const strikeListRef = useRef<HTMLDivElement | null>(null)
   const ceSeriesRef = useRef<ISeriesApi<any> | null>(null)
   const peSeriesRef = useRef<ISeriesApi<any> | null>(null)
   const combinedSeriesRef = useRef<ISeriesApi<any> | null>(null)
@@ -138,6 +139,7 @@ export default function EzayChart() {
   const [showSignals, setShowSignals] = useState(true)
   const [chartInfo, setChartInfo] = useState('')
   const [atmStrike, setAtmStrike] = useState<number | null>(null)
+  const [strikePanelOpen, setStrikePanelOpen] = useState(true)
 
   const { mode: themeMode, toggleMode, appMode, toggleAppMode, isTogglingMode } = useThemeStore()
   const t = chartTheme[themeMode]
@@ -440,6 +442,12 @@ export default function EzayChart() {
     return () => { if (updaterRef.current) window.clearInterval(updaterRef.current) }
   }, [selectedStrike, loadData])
 
+  useEffect(() => {
+    if (!strikeListRef.current || !selectedStrike) return
+    const el = strikeListRef.current.querySelector(`[data-strike="${selectedStrike}"]`)
+    if (el) el.scrollIntoView({ block: 'center', behavior: 'smooth' })
+  }, [selectedStrike, strikes])
+
   const loadStrikes = async () => {
     try {
       const res = await fetch('/madhan/api/strikes')
@@ -456,14 +464,6 @@ export default function EzayChart() {
     } catch (err) {
       console.error('Error loading strikes:', err)
     }
-  }
-
-  const handleStrikeChange = (val: string) => {
-    setSelectedStrike(val)
-  }
-
-  const handleIntervalChange = (val: string) => {
-    setInterval(val)
   }
 
   return (
@@ -535,23 +535,8 @@ export default function EzayChart() {
 
       <div className="shrink-0 flex flex-wrap items-center gap-2 px-3 py-2" style={{ backgroundColor: t.panelDarker, borderBottom: `1px solid ${t.border}` }}>
         <div className="flex items-center gap-1.5">
-          <Label className="text-[11px]" style={{ color: t.textSecondary }}>Strike:</Label>
-          <Select value={selectedStrike} onValueChange={handleStrikeChange}>
-            <SelectTrigger className="h-7 w-24 text-[11px]"><SelectValue placeholder="Select" /></SelectTrigger>
-            <SelectContent>
-              {strikes.map((s) => (
-                <SelectItem key={s} value={String(s)}
-                  className={s === atmStrike ? 'font-bold' : ''}
-                  style={s === atmStrike ? { backgroundColor: themeMode === 'dark' ? 'rgba(41,98,255,0.2)' : 'rgba(37,99,235,0.15)', color: themeMode === 'dark' ? '#2962ff' : '#2563eb' } : undefined}>
-                  {s}{s === atmStrike ? ' ATM' : ''}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="flex items-center gap-1.5">
           <Label className="text-[11px]" style={{ color: t.textSecondary }}>Time:</Label>
-          <Select value={interval} onValueChange={handleIntervalChange}>
+          <Select value={interval} onValueChange={(v) => setInterval(v)}>
             <SelectTrigger className="h-7 w-16 text-[11px]"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="1m">1m</SelectItem>
@@ -593,7 +578,66 @@ export default function EzayChart() {
         </div>
       </div>
 
-      <div ref={chartContainerRef} className="flex-1 min-h-0" style={{ backgroundColor: t.panelDarker }} />
+      <div className="flex-1 min-h-0 flex">
+        <div
+          className="shrink-0 flex flex-col overflow-hidden border-r transition-[width] duration-150"
+          style={{
+            width: strikePanelOpen ? 72 : 24,
+            backgroundColor: t.panelDarker,
+            borderColor: t.border,
+          }}
+        >
+          <button
+            onClick={() => setStrikePanelOpen(!strikePanelOpen)}
+            className="h-7 flex items-center justify-center shrink-0 hover:bg-[rgba(128,128,128,0.15)] transition-colors"
+            style={{ color: t.textSecondary }}
+            title={strikePanelOpen ? 'Collapse strike list' : 'Expand strike list'}
+          >
+            {strikePanelOpen ? <ChevronLeft className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+          </button>
+          {strikePanelOpen && (
+            <>
+              <div className="px-1 py-1 text-center shrink-0" style={{ borderBottom: `1px solid ${t.border}` }}>
+                <span className="text-[10px] font-semibold" style={{ color: t.textSecondary }}>STRIKES</span>
+              </div>
+              <div ref={strikeListRef} className="flex-1 overflow-y-auto min-h-0" style={{ scrollbarWidth: 'thin' }}>
+                {strikes.map((s) => {
+                  const isSelected = String(s) === selectedStrike
+                  const isAtm = s === atmStrike
+                  return (
+                    <button
+                      key={s}
+                      data-strike={s}
+                      onClick={() => setSelectedStrike(String(s))}
+                      className={cn(
+                        'w-full text-center py-1 text-[11px] font-mono transition-colors',
+                        isSelected
+                          ? 'font-bold'
+                          : 'hover:bg-[rgba(128,128,128,0.15)]',
+                      )}
+                      style={{
+                        color: isSelected
+                          ? (themeMode === 'dark' ? '#2962ff' : '#2563eb')
+                          : isAtm
+                            ? (themeMode === 'dark' ? '#d1d4dc' : '#1f2937')
+                            : t.textSecondary,
+                        backgroundColor: isSelected
+                          ? (themeMode === 'dark' ? 'rgba(41,98,255,0.2)' : 'rgba(37,99,235,0.15)')
+                          : undefined,
+                        borderBottom: `1px solid ${t.border}`,
+                      }}
+                    >
+                      {s}
+                      {isAtm && <span className="ml-1 text-[9px] font-bold" style={{ color: themeMode === 'dark' ? '#2962ff' : '#2563eb' }}>ATM</span>}
+                    </button>
+                  )
+                })}
+              </div>
+            </>
+          )}
+        </div>
+        <div ref={chartContainerRef} className="flex-1 min-h-0 min-w-0" style={{ backgroundColor: t.panelDarker }} />
+      </div>
     </div>
   )
 }
