@@ -168,8 +168,6 @@ export default function NiftyChart() {
   const [lineWidth, setLineWidth] = useState(2)
   const [selectedDrawingId, setSelectedDrawingId] = useState<string | null>(null)
   const [, setSelectedDrawing] = useState<IDrawing | null>(null)
-  const [showDrawingList, setShowDrawingList] = useState(false)
-  const [widgetBarCollapsed, setWidgetBarCollapsed] = useState(false)
   const [editingTextDrawing, setEditingTextDrawing] = useState<IDrawing | null>(null)
   const [chartReady, setChartReady] = useState(false)
   const [crosshairOHLCV, setCrosshairOHLCV] = useState<{ time: string; open: number; high: number; low: number; close: number; volume?: number; change?: number; changePct?: number } | null>(null)
@@ -2116,7 +2114,6 @@ export default function NiftyChart() {
               setDrawingToolbarCollapsed(false)
             }
           }}>Drawings</Button>
-          <Button variant={showDrawingList ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={() => setShowDrawingList((v) => !v)}>Object Tree</Button>
           <div className="flex items-center gap-1.5 rounded border px-1.5 py-0.5">
             <Button variant={oiActive ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={toggleOi}>OI</Button>
             <Label className="text-[11px]">X%</Label>
@@ -2182,19 +2179,14 @@ export default function NiftyChart() {
             </>
           }
           rightPanel={
-            showDrawingList ? (
-              <WidgetBar
-                collapsed={widgetBarCollapsed}
-                onToggleCollapse={() => setWidgetBarCollapsed((v) => !v)}
-              >
-                <DrawingListPanel
-                  drawingManager={drawingManagerRef.current}
-                  selectedDrawingId={selectedDrawingId}
-                  onSelect={selectDrawingFromList}
-                  onDelete={deleteDrawingFromList}
-                />
-              </WidgetBar>
-            ) : undefined
+            <WidgetBar>
+              <DrawingListPanel
+                drawingManager={drawingManagerRef.current}
+                selectedDrawingId={selectedDrawingId}
+                onSelect={selectDrawingFromList}
+                onDelete={deleteDrawingFromList}
+              />
+            </WidgetBar>
           }
         >
           <div ref={chartContainerRef} className="h-full w-full" />

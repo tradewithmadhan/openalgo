@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Layers, Eye, BarChart3, ChevronLeft } from 'lucide-react'
+import { Layers, Eye, BarChart3 } from 'lucide-react'
 import { useThemeStore } from '@/stores/themeStore'
 import { chartTheme } from './chartTheme'
 
@@ -16,78 +16,55 @@ const WIDGET_TABS: WidgetTab[] = [
 ]
 
 interface WidgetBarProps {
-  collapsed: boolean
-  onToggleCollapse: () => void
   children: React.ReactNode
 }
 
-export default function WidgetBar({ collapsed, onToggleCollapse, children }: WidgetBarProps) {
-  const [activeTab, setActiveTab] = useState('object-tree')
+export default function WidgetBar({ children }: WidgetBarProps) {
+  const [activeTab, setActiveTab] = useState<string | null>(null)
   const { mode } = useThemeStore()
   const t = chartTheme[mode]
 
-  if (collapsed) {
-    return (
-      <div className="relative flex h-full w-[5px] shrink-0 items-center" style={{ borderLeft: `1px solid ${t.border}`, backgroundColor: t.panelDarker }}>
-        <button
-          onClick={onToggleCollapse}
-          className="absolute right-0 top-1/2 z-10 flex h-12 w-5 -translate-y-1/2 items-center justify-center rounded-l shadow-md"
-          style={{ backgroundColor: t.panel, color: t.textSecondary }}
-          title="Show Object Tree"
-        >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-3 w-3">
-            <polyline points="15,18 9,12 15,6" />
-          </svg>
-        </button>
-      </div>
-    )
+  const toggleTab = (tabId: string) => {
+    setActiveTab((prev) => (prev === tabId ? null : tabId))
   }
 
   return (
-    <div className="flex h-full w-[200px] shrink-0 flex-row-reverse" style={{ borderLeft: `1px solid ${t.border}`, backgroundColor: t.panel }}>
-      <div className="flex w-[45px] shrink-0 flex-col items-center" style={{ borderLeft: `1px solid ${t.border}`, backgroundColor: t.panelDarker }}>
+    <div className="flex h-full shrink-0 flex-row-reverse" style={{ borderLeft: `1px solid ${t.border}` }}>
+      <div className="flex w-[40px] shrink-0 flex-col items-center" style={{ borderLeft: `1px solid ${t.border}`, backgroundColor: t.panelDarker }}>
         {WIDGET_TABS.map((tab) => (
           <button
             key={tab.id}
-            className="flex h-[45px] w-full items-center justify-center transition-colors"
+            className="flex h-[40px] w-full items-center justify-center transition-colors"
             style={{
               backgroundColor: activeTab === tab.id ? t.panel : undefined,
               color: activeTab === tab.id ? t.text : t.textSecondary,
             }}
             title={tab.label}
-            onClick={() => setActiveTab(tab.id)}
+            onClick={() => toggleTab(tab.id)}
           >
             {tab.icon}
           </button>
         ))}
-        <div className="mt-auto">
-          <button
-            onClick={onToggleCollapse}
-            className="flex h-[45px] w-full items-center justify-center"
-            style={{ color: t.textSecondary }}
-            title="Hide Panel"
-          >
-            <ChevronLeft className="h-4 w-4" />
-          </button>
+      </div>
+      {activeTab && (
+        <div className="flex w-[200px] min-w-0 flex-col overflow-hidden" style={{ backgroundColor: t.panel, borderLeft: `1px solid ${t.border}` }}>
+          {activeTab === 'object-tree' && children}
+          {activeTab === 'watchlist' && (
+            <div className="flex flex-1 flex-col items-center justify-center p-4 text-center">
+              <BarChart3 className="mb-2 h-8 w-8" style={{ color: t.badge }} />
+              <span className="text-[12px]" style={{ color: t.textSecondary }}>Watchlist</span>
+              <span className="text-[10px]" style={{ color: t.textMuted }}>Coming soon</span>
+            </div>
+          )}
+          {activeTab === 'data-window' && (
+            <div className="flex flex-1 flex-col items-center justify-center p-4 text-center">
+              <Eye className="mb-2 h-8 w-8" style={{ color: t.badge }} />
+              <span className="text-[12px]" style={{ color: t.textSecondary }}>Data Window</span>
+              <span className="text-[10px]" style={{ color: t.textMuted }}>Coming soon</span>
+            </div>
+          )}
         </div>
-      </div>
-      <div className="flex min-w-0 flex-1 flex-col overflow-hidden" style={{ backgroundColor: t.panel }}>
-        {activeTab === 'object-tree' && children}
-        {activeTab === 'watchlist' && (
-          <div className="flex flex-1 flex-col items-center justify-center p-4 text-center">
-            <BarChart3 className="mb-2 h-8 w-8" style={{ color: t.badge }} />
-            <span className="text-[12px]" style={{ color: t.textSecondary }}>Watchlist</span>
-            <span className="text-[10px]" style={{ color: t.textMuted }}>Coming soon</span>
-          </div>
-        )}
-        {activeTab === 'data-window' && (
-          <div className="flex flex-1 flex-col items-center justify-center p-4 text-center">
-            <Eye className="mb-2 h-8 w-8" style={{ color: t.badge }} />
-            <span className="text-[12px]" style={{ color: t.textSecondary }}>Data Window</span>
-            <span className="text-[10px]" style={{ color: t.textMuted }}>Coming soon</span>
-          </div>
-        )}
-      </div>
+      )}
     </div>
   )
 }
