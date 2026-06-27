@@ -428,13 +428,11 @@ export default function Madhan01() {
                 <img src="/images/android-chrome-192x192.png" alt="OpenAlgo" className="w-6 h-6" />
                 <span className="font-semibold text-sm">openalgo</span>
             </div>
-          </div>
-
-          <div className="flex items-center gap-2">
+            <div className="h-4 w-px bg-border hidden sm:block" />
              <Button variant="ghost" size="sm" className="h-7 text-xs hidden sm:flex" asChild>
                 <Link to="/madhan/madhan01">
                 <BarChart3 className="h-3.5 w-3.5 mr-1.5" />
-                Madhan01
+                NiftyFetcher
                 </Link>
             </Button>
 
@@ -451,7 +449,9 @@ export default function Madhan01() {
                 NiftyChart
                 </Link>
             </Button>
+          </div>
 
+          <div className="flex items-center gap-2">
              {/* Mode Badge */}
             <Badge
                 variant={appMode === "live" ? "default" : "secondary"}

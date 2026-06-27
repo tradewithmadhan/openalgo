@@ -209,6 +209,27 @@ export default function ATPLTPStrategy() {
                 <img src="/images/android-chrome-192x192.png" alt="OpenAlgo" className="w-6 h-6" />
                 <span className="font-semibold text-sm">openalgo</span>
             </div>
+            <div className="h-4 w-px bg-border hidden sm:block" />
+             <Button variant="ghost" size="sm" className="h-7 text-xs hidden sm:flex" asChild>
+                <Link to="/madhan/madhan01">
+                <BarChart3 className="h-3.5 w-3.5 mr-1.5" />
+                NiftyFetcher
+                </Link>
+            </Button>
+
+             <Button variant="ghost" size="sm" className="h-7 text-xs hidden sm:flex" asChild>
+                <Link to="/madhan/ATP-LTPStrategy">
+                <BarChart3 className="h-3.5 w-3.5 mr-1.5" />
+                ATPLTP
+                </Link>
+            </Button>
+
+             <Button variant="ghost" size="sm" className="h-7 text-xs hidden sm:flex" asChild>
+                <Link to="/madhan/nifty-chart">
+                <BarChart3 className="h-3.5 w-3.5 mr-1.5" />
+                NiftyChart
+                </Link>
+            </Button>
           </div>
 
           <div className="flex items-center gap-2">
@@ -264,27 +285,6 @@ export default function ATPLTPStrategy() {
                 ) : (
                 <Moon className="h-4 w-4" />
                 )}
-            </Button>
-
-            <Button variant="ghost" size="sm" className="h-7 text-xs hidden sm:flex" asChild>
-                <Link to="/madhan/madhan01">
-                <BarChart3 className="h-3.5 w-3.5 mr-1.5" />
-                Madhan01
-                </Link>
-            </Button>
-
-            <Button variant="ghost" size="sm" className="h-7 text-xs hidden sm:flex" asChild>
-                <Link to="/madhan/ATP-LTPStrategy">
-                <TrendingUp className="h-3.5 w-3.5 mr-1.5" />
-                ATPLTP
-                </Link>
-            </Button>
-
-            <Button variant="ghost" size="sm" className="h-7 text-xs hidden sm:flex" asChild>
-                <Link to="/madhan/nifty-chart">
-                <BarChart3 className="h-3.5 w-3.5 mr-1.5" />
-                NiftyChart
-                </Link>
             </Button>
 
             <Button variant="ghost" size="sm" className="h-7 text-xs hidden sm:flex" asChild>
