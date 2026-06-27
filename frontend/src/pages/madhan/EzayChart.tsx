@@ -244,7 +244,7 @@ export default function EzayChart() {
       priceLineVisible: false,
       lastValueVisible: false,
       priceFormat: { type: 'volume' },
-    })
+    }, 1)
 
     ceMarkersRef.current = createSeriesMarkers(ceSeriesRef.current, [])
     peMarkersRef.current = createSeriesMarkers(peSeriesRef.current, [])
