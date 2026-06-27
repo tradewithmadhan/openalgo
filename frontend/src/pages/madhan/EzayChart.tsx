@@ -83,6 +83,7 @@ export default function EzayChart() {
   const [showCombinedAll, setShowCombinedAll] = useState(true)
   const [showSignals, setShowSignals] = useState(true)
   const [chartInfo, setChartInfo] = useState('')
+  const [atmStrike, setAtmStrike] = useState<number | null>(null)
 
   const { mode: themeMode, toggleMode, appMode, toggleAppMode, isTogglingMode } = useThemeStore()
   const t = chartTheme[themeMode]
@@ -464,7 +465,12 @@ export default function EzayChart() {
   }, [showCombinedAll])
 
   useEffect(() => {
-    if (chartReadyRef.current && selectedStrike) {
+    if (!showSignals) {
+      if (ceMarkersRef.current) ceMarkersRef.current.setMarkers([])
+      if (peMarkersRef.current) peMarkersRef.current.setMarkers([])
+      if (cpCeMarkersRef.current) cpCeMarkersRef.current.setMarkers([])
+      if (combinedExtrinsicMarkersRef.current) combinedExtrinsicMarkersRef.current.setMarkers([])
+    } else if (chartReadyRef.current && selectedStrike) {
       loadData()
     }
   }, [showSignals, loadData, selectedStrike])
@@ -488,6 +494,7 @@ export default function EzayChart() {
         setStrikes(sorted)
         if (sorted.length > 0) {
           const mid = sorted[Math.floor(sorted.length / 2)]
+          setAtmStrike(mid)
           setSelectedStrike(String(mid))
         }
       }
@@ -602,7 +609,14 @@ export default function EzayChart() {
             </SelectTrigger>
             <SelectContent>
               {strikes.map((s) => (
-                <SelectItem key={s} value={String(s)}>{s}</SelectItem>
+                <SelectItem
+                  key={s}
+                  value={String(s)}
+                  className={s === atmStrike ? 'font-bold' : ''}
+                  style={s === atmStrike ? { backgroundColor: themeMode === 'dark' ? 'rgba(41,98,255,0.2)' : 'rgba(37,99,235,0.15)', color: themeMode === 'dark' ? '#2962ff' : '#2563eb' } : undefined}
+                >
+                  {s}{s === atmStrike ? ' ATM' : ''}
+                </SelectItem>
               ))}
             </SelectContent>
           </Select>
