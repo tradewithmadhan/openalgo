@@ -172,8 +172,7 @@ export default function NiftyChart() {
   const [widgetBarCollapsed, setWidgetBarCollapsed] = useState(false)
   const [editingTextDrawing, setEditingTextDrawing] = useState<IDrawing | null>(null)
   const [chartReady, setChartReady] = useState(false)
-  const [crosshairOHLCV, setCrosshairOHLCV] = useState<{ time: string; open: number; high: number; low: number; close: number; volume?: number } | null>(null)
-  const [indicatorValues, setIndicatorValues] = useState<Record<string, Record<string, number>>>({})
+  const [crosshairOHLCV, setCrosshairOHLCV] = useState<{ time: string; open: number; high: number; low: number; close: number; volume?: number; change?: number; changePct?: number } | null>(null)
   const wsSymbols = useMemo(() => [{ symbol: 'NIFTY', exchange: 'NSE_INDEX' }], [])
   const { data: wsData, isConnected, isConnecting, error: wsError, connect: wsConnect } = useMarketData({
     symbols: wsSymbols,
@@ -477,16 +476,23 @@ export default function NiftyChart() {
     chart.subscribeCrosshairMove(handleChartCrosshairMove)
 
     const handleCrosshairOHLCV = (param: any) => {
+      const pick = (c: Candle) => {
+        const change = c.close - c.open
+        const changePct = c.open !== 0 ? (change / c.open) * 100 : 0
+        return {
+          time: new Date(c.time * 1000).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: false }),
+          open: c.open,
+          high: c.high,
+          low: c.low,
+          close: c.close,
+          volume: c.volume,
+          change,
+          changePct,
+        }
+      }
       if (!param?.time) {
         if (priceDataRef.current.length > 0) {
-          const last = priceDataRef.current[priceDataRef.current.length - 1]
-          setCrosshairOHLCV({
-            time: new Date(last.time * 1000).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: false }),
-            open: last.open,
-            high: last.high,
-            low: last.low,
-            close: last.close,
-          })
+          setCrosshairOHLCV(pick(priceDataRef.current[priceDataRef.current.length - 1]))
         } else {
           setCrosshairOHLCV(null)
         }
@@ -494,15 +500,7 @@ export default function NiftyChart() {
       }
       const ts = param.time as number
       const candle = priceDataRef.current.find((c) => c.time === ts)
-      if (candle) {
-        setCrosshairOHLCV({
-          time: new Date(candle.time * 1000).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: false }),
-          open: candle.open,
-          high: candle.high,
-          low: candle.low,
-          close: candle.close,
-        })
-      }
+      if (candle) setCrosshairOHLCV(pick(candle))
     }
     chart.subscribeCrosshairMove(handleCrosshairOHLCV)
 
@@ -880,7 +878,6 @@ export default function NiftyChart() {
       }
       if (Object.keys(instanceValues).length) newValues[instance.key] = instanceValues
     }
-    setIndicatorValues(newValues)
   }, [activeIndicators, getIndicatorById, indicatorInputs])
 
   const addHorizontalLines = (data: Candle[]) => {
@@ -1218,12 +1215,15 @@ export default function NiftyChart() {
 
     if (!crosshairOHLCV && data.length > 0) {
       const last = data[data.length - 1]
+      const change = last.close - last.open
       setCrosshairOHLCV({
         time: new Date(last.time * 1000).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: false }),
         open: last.open,
         high: last.high,
         low: last.low,
         close: last.close,
+        change,
+        changePct: last.open !== 0 ? (change / last.open) * 100 : 0,
       })
     }
     await Promise.all([fetchOiProfiles(), fetchOptionCombinedVolume()])
@@ -2196,55 +2196,35 @@ export default function NiftyChart() {
               </WidgetBar>
             ) : undefined
           }
-          bottomBar={
-            <>
-              {Object.keys(indicatorValues).length > 0 && (
-                <div
-                  className="flex shrink-0 items-center gap-3 px-3 py-1 text-[10px]"
-                  style={{ borderTop: `1px solid ${t.border}`, backgroundColor: t.panelDarker, color: t.textSecondary }}
-                >
-                  {activeIndicators
-                    .filter((inst) => inst.visible !== false && indicatorValues[inst.key])
-                    .map((inst) => {
-                      const entry = getIndicatorById(inst.indicatorId)
-                      if (!entry) return null
-                      const vals = indicatorValues[inst.key]
-                      const plotConfigList = Array.isArray((entry as any).plotConfig) ? (entry as any).plotConfig : []
-                      return (
-                        <div key={inst.key} className="flex items-center gap-1.5">
-                          <span style={{ color: t.text, fontWeight: 500 }}>{entry.shortName}</span>
-                          {Object.entries(vals).map(([plotKey, value]) => {
-                            const cfg = plotConfigList.find((p: any) => p?.id === plotKey) || {}
-                            const color = cfg.color || t.active
-                            const title = cfg.title || plotKey
-                            return (
-                              <span key={plotKey} style={{ color }}>
-                                {title} <span style={{ color: t.text }}>{Number.isFinite(value) ? value.toFixed(2) : '—'}</span>
-                              </span>
-                            )
-                          })}
-                        </div>
-                      )
-                    })}
-                </div>
-              )}
-              {crosshairOHLCV ? (
-                <div
-                  className="flex shrink-0 items-center gap-3 px-3 py-1 text-[11px]"
-                  style={{ borderTop: `1px solid ${t.border}`, backgroundColor: t.panelDarker, color: t.textSecondary }}
-                >
-                  <span style={{ color: t.textMuted }}>{crosshairOHLCV.time}</span>
-                  <span>O <span style={{ color: t.text }}>{crosshairOHLCV.open.toFixed(2)}</span></span>
-                  <span>H <span style={{ color: t.text }}>{crosshairOHLCV.high.toFixed(2)}</span></span>
-                  <span>L <span style={{ color: t.text }}>{crosshairOHLCV.low.toFixed(2)}</span></span>
-                  <span>C <span style={{ color: t.text }}>{crosshairOHLCV.close.toFixed(2)}</span></span>
-                  <span className="ml-auto" style={{ color: t.textMuted }}>NIFTY 50</span>
-                </div>
-              ) : undefined}
-            </>
-          }
         >
           <div ref={chartContainerRef} className="h-full w-full" />
+          {crosshairOHLCV && (
+            <div
+              className="absolute top-2 left-3 z-30 pointer-events-none select-none"
+              style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 12, lineHeight: '18px' }}
+            >
+              <div className="flex items-center gap-3" style={{ color: t.text }}>
+                <span className="font-semibold" style={{ color: t.text }}>NIFTY 50</span>
+                <span style={{ color: t.textMuted }}>·</span>
+                <span style={{ color: t.textMuted }}>{interval.toUpperCase()}</span>
+              </div>
+              <div className="flex items-center gap-3" style={{ color: t.textSecondary }}>
+                <span>O <span style={{ color: t.text }}>{crosshairOHLCV.open.toFixed(2)}</span></span>
+                <span>H <span style={{ color: t.text }}>{crosshairOHLCV.high.toFixed(2)}</span></span>
+                <span>L <span style={{ color: t.text }}>{crosshairOHLCV.low.toFixed(2)}</span></span>
+                <span>C <span style={{ color: t.text }}>{crosshairOHLCV.close.toFixed(2)}</span></span>
+                {crosshairOHLCV.change != null && (
+                  <span style={{ color: crosshairOHLCV.change >= 0 ? '#26a69a' : '#ef5350' }}>
+                    {crosshairOHLCV.change >= 0 ? '+' : ''}{crosshairOHLCV.change.toFixed(2)}
+                    {' '}({crosshairOHLCV.changePct != null ? `${crosshairOHLCV.changePct >= 0 ? '+' : ''}${crosshairOHLCV.changePct.toFixed(2)}%` : '—'})
+                  </span>
+                )}
+                {crosshairOHLCV.volume != null && (
+                  <span>Vol <span style={{ color: t.text }}>{formatCompact(crosshairOHLCV.volume)}</span></span>
+                )}
+              </div>
+            </div>
+          )}
         </ChartLayout>
         {showIndicatorPanel && (
           <div
