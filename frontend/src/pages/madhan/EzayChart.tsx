@@ -82,8 +82,7 @@ export default function EzayChart() {
   const [showExtrinsic, setShowExtrinsic] = useState(true)
   const [showCombinedAll, setShowCombinedAll] = useState(true)
   const [showSignals, setShowSignals] = useState(true)
-  const [chartInfo, setChartInfo] = useState<string>('')
-  const [chartEnabled, setChartEnabled] = useState(true)
+  const [chartInfo, setChartInfo] = useState('')
 
   const { mode: themeMode, toggleMode, appMode, toggleAppMode, isTogglingMode } = useThemeStore()
   const t = chartTheme[themeMode]
@@ -201,21 +200,23 @@ export default function EzayChart() {
     ceIntrinsicRef.current = chart.addSeries(LineSeries, {
       color: '#4caf50',
       lineWidth: 1,
+      lineStyle: 1,
       title: 'CE Intrinsic',
       priceLineVisible: false,
       lastValueVisible: false,
     })
 
     peIntrinsicRef.current = chart.addSeries(LineSeries, {
-      color: '#8bc34a',
+      color: '#ef5350',
       lineWidth: 1,
+      lineStyle: 1,
       title: 'PE Intrinsic',
       priceLineVisible: false,
       lastValueVisible: false,
     })
 
     ceExtrinsicRef.current = chart.addSeries(LineSeries, {
-      color: '#00bcd4',
+      color: '#4caf50',
       lineWidth: 1,
       title: 'CE Extrinsic',
       priceLineVisible: false,
@@ -223,7 +224,7 @@ export default function EzayChart() {
     })
 
     peExtrinsicRef.current = chart.addSeries(LineSeries, {
-      color: '#009688',
+      color: '#ef5350',
       lineWidth: 1,
       title: 'PE Extrinsic',
       priceLineVisible: false,
@@ -469,10 +470,6 @@ export default function EzayChart() {
   }, [showSignals, loadData, selectedStrike])
 
   useEffect(() => {
-    if (!chartEnabled) {
-      if (updaterRef.current) window.clearInterval(updaterRef.current)
-      return
-    }
     if (updaterRef.current) window.clearInterval(updaterRef.current)
     if (selectedStrike) {
       updaterRef.current = window.setInterval(() => loadData(), 60000)
@@ -480,7 +477,7 @@ export default function EzayChart() {
     return () => {
       if (updaterRef.current) window.clearInterval(updaterRef.current)
     }
-  }, [chartEnabled, selectedStrike, loadData])
+  }, [selectedStrike, loadData])
 
   const loadStrikes = async () => {
     try {
@@ -642,26 +639,12 @@ export default function EzayChart() {
             <Label className="text-[11px]" style={{ color: t.textSecondary }}>Signals</Label>
           </div>
         </div>
-        <div className="ml-auto flex items-center gap-2">
+        <div className="ml-auto">
           <span className="text-[11px]" style={{ color: chartInfo ? t.text : t.textMuted }}>{chartInfo || 'No Strike Selected'}</span>
-          <div className="flex items-center gap-1.5">
-            <Checkbox checked={chartEnabled} onCheckedChange={(v) => setChartEnabled(!!v)} />
-            <Label className="text-[11px] font-semibold" style={{ color: t.textSecondary }}>Enable</Label>
-          </div>
         </div>
       </div>
 
-      {chartEnabled ? (
-        <div ref={chartContainerRef} className="flex-1 min-h-0" style={{ backgroundColor: t.panelDarker }} />
-      ) : (
-        <div className="flex flex-1 items-center justify-center" style={{ backgroundColor: t.panelDarker }}>
-          <div className="text-center">
-            <BarChart3 className="mx-auto mb-4 h-16 w-16 opacity-50" style={{ color: t.textMuted }} />
-            <p className="text-lg font-medium" style={{ color: t.textSecondary }}>Chart Disabled</p>
-            <p className="text-sm" style={{ color: t.textMuted }}>Enable chart to view trading data</p>
-          </div>
-        </div>
-      )}
+      <div ref={chartContainerRef} className="flex-1 min-h-0" style={{ backgroundColor: t.panelDarker }} />
     </div>
   )
 }
