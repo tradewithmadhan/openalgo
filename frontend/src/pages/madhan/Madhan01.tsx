@@ -29,7 +29,7 @@ import {
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/authStore'
 import { useThemeStore } from '@/stores/themeStore'
-import { profileMenuItems } from '@/config/navigation'
+import { useProfileMenuItems } from '@/hooks/useProfileMenuItems'
 import { useRef } from 'react'
 import { CoiTrendChart } from './components/CoiTrendChart'
 import { CePeChangesChart } from './components/CePeChangesChart'
@@ -91,6 +91,7 @@ export default function Madhan01() {
   const navigate = useNavigate()
   const { user } = useAuthStore()
   const { mode, toggleMode, appMode, toggleAppMode, isTogglingMode } = useThemeStore()
+  const profileMenuItems = useProfileMenuItems()
   
   const [status, setStatus] = useState<NiftyStatus | null>(null)
   const [isLoading, setIsLoading] = useState(false)
@@ -430,6 +431,27 @@ export default function Madhan01() {
           </div>
 
           <div className="flex items-center gap-2">
+             <Button variant="ghost" size="sm" className="h-7 text-xs hidden sm:flex" asChild>
+                <Link to="/madhan/madhan01">
+                <BarChart3 className="h-3.5 w-3.5 mr-1.5" />
+                Madhan01
+                </Link>
+            </Button>
+
+             <Button variant="ghost" size="sm" className="h-7 text-xs hidden sm:flex" asChild>
+                <Link to="/madhan/ATP-LTPStrategy">
+                <BarChart3 className="h-3.5 w-3.5 mr-1.5" />
+                ATPLTP
+                </Link>
+            </Button>
+
+             <Button variant="ghost" size="sm" className="h-7 text-xs hidden sm:flex" asChild>
+                <Link to="/madhan/nifty-chart">
+                <BarChart3 className="h-3.5 w-3.5 mr-1.5" />
+                NiftyChart
+                </Link>
+            </Button>
+
              {/* Mode Badge */}
             <Badge
                 variant={appMode === "live" ? "default" : "secondary"}

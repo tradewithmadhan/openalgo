@@ -36,7 +36,7 @@ import {
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/authStore'
 import { useThemeStore } from '@/stores/themeStore'
-import { profileMenuItems } from '@/config/navigation'
+import { useProfileMenuItems } from '@/hooks/useProfileMenuItems'
 
 interface ATPLTPData {
   time: string
@@ -60,6 +60,7 @@ export default function ATPLTPStrategy() {
   const navigate = useNavigate()
   const { user } = useAuthStore()
   const { mode, toggleMode, appMode, toggleAppMode, isTogglingMode } = useThemeStore()
+  const profileMenuItems = useProfileMenuItems()
   
   const [atpLtpData, setAtpLtpData] = useState<ATPLTPData[]>([])
   const [error, setError] = useState<string | null>(null)
@@ -263,6 +264,27 @@ export default function ATPLTPStrategy() {
                 ) : (
                 <Moon className="h-4 w-4" />
                 )}
+            </Button>
+
+            <Button variant="ghost" size="sm" className="h-7 text-xs hidden sm:flex" asChild>
+                <Link to="/madhan/madhan01">
+                <BarChart3 className="h-3.5 w-3.5 mr-1.5" />
+                Madhan01
+                </Link>
+            </Button>
+
+            <Button variant="ghost" size="sm" className="h-7 text-xs hidden sm:flex" asChild>
+                <Link to="/madhan/ATP-LTPStrategy">
+                <TrendingUp className="h-3.5 w-3.5 mr-1.5" />
+                ATPLTP
+                </Link>
+            </Button>
+
+            <Button variant="ghost" size="sm" className="h-7 text-xs hidden sm:flex" asChild>
+                <Link to="/madhan/nifty-chart">
+                <BarChart3 className="h-3.5 w-3.5 mr-1.5" />
+                NiftyChart
+                </Link>
             </Button>
 
             <Button variant="ghost" size="sm" className="h-7 text-xs hidden sm:flex" asChild>
