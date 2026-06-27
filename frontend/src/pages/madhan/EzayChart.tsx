@@ -381,11 +381,18 @@ export default function EzayChart() {
         horzLines: { color: colors.gridHorz },
       },
       rightPriceScale: { borderColor: colors.borderColor },
+      localization: {
+        timeFormatter: (time: Time) => {
+          return new Date((time as number) * 1000).toLocaleTimeString('en-IN', {
+            timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true,
+          })
+        },
+      },
       timeScale: {
         timeVisible: true,
         secondsVisible: false,
-        tickMarkFormatter: (time: number) => {
-          return new Date(time * 1000).toLocaleTimeString('en-IN', {
+        tickMarkFormatter: (time: Time) => {
+          return new Date((time as number) * 1000).toLocaleTimeString('en-IN', {
             timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: true,
           })
         },
