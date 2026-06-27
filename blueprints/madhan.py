@@ -1660,6 +1660,8 @@ def ezay_chart_data():
                     if abs(combined_premium - combined_extrinsic) <= tolerance:
                         cp_ce_signal = True
                 
+                combined_volume = (ce_item.get('volume') or 0) + (pe_item.get('volume') or 0)
+                
                 combined_item = {
                     'time': timestamp,
                     'open_combined_premium': round(open_combined_premium, 2),
@@ -1670,6 +1672,7 @@ def ezay_chart_data():
                     'ce_extrinsic': round(ce_item['extrinsic'], 2),
                     'pe_extrinsic': round(pe_item['extrinsic'], 2),
                     'spot_close': round(ce_item['spot_close'], 2),
+                    'combined_volume': combined_volume,
                     'combined_extrinsic_signal': combined_extrinsic_signal,
                     'ce_extrinsic_signal': ce_item.get('extrinsic_signal', False),
                     'pe_extrinsic_signal': pe_item.get('extrinsic_signal', False),

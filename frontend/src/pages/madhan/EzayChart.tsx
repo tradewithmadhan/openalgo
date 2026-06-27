@@ -6,6 +6,7 @@ import {
   CrosshairMode,
   createChart,
   createSeriesMarkers,
+  HistogramSeries,
   LineSeries,
   type IChartApi,
   type ISeriesApi,
@@ -33,8 +34,8 @@ import { chartTheme } from './chartTheme'
 type OptionDataResponse = {
   status: string
   data?: {
-    ce_data: Array<{ time: number; open: number; high: number; low: number; close: number; extrinsic_signal?: boolean }>
-    pe_data: Array<{ time: number; open: number; high: number; low: number; close: number; extrinsic_signal?: boolean }>
+    ce_data: Array<{ time: number; open: number; high: number; low: number; close: number; volume?: number; extrinsic_signal?: boolean }>
+    pe_data: Array<{ time: number; open: number; high: number; low: number; close: number; volume?: number; extrinsic_signal?: boolean }>
     combined_data: Array<{
       time: number
       combined_premium: number
@@ -43,6 +44,7 @@ type OptionDataResponse = {
       ce_extrinsic: number
       pe_extrinsic: number
       combined_extrinsic: number
+      combined_volume?: number
       cp_ce_signal?: boolean
       combined_extrinsic_signal?: boolean
     }>
@@ -117,6 +119,7 @@ export default function EzayChart() {
   const ceExtrinsicRef = useRef<ISeriesApi<any> | null>(null)
   const peExtrinsicRef = useRef<ISeriesApi<any> | null>(null)
   const combinedExtrinsicRef = useRef<ISeriesApi<any> | null>(null)
+  const volumeRef = useRef<ISeriesApi<any> | null>(null)
   const ceMarkersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null)
   const peMarkersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null)
   const cpCeMarkersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null)
@@ -169,7 +172,7 @@ export default function EzayChart() {
     const refs = [
       ceSeriesRef, peSeriesRef, combinedSeriesRef, llpSeriesRef,
       ceIntrinsicRef, peIntrinsicRef, ceExtrinsicRef, peExtrinsicRef,
-      combinedExtrinsicRef,
+      combinedExtrinsicRef, volumeRef,
     ]
     for (const ref of refs) {
       if (ref.current) {
@@ -236,6 +239,13 @@ export default function EzayChart() {
       priceLineVisible: false, lastValueVisible: false,
     })
 
+    volumeRef.current = chart.addSeries(HistogramSeries, {
+      color: '#26a69a',
+      priceLineVisible: false,
+      lastValueVisible: false,
+      priceFormat: { type: 'volume' },
+    })
+
     ceMarkersRef.current = createSeriesMarkers(ceSeriesRef.current, [])
     peMarkersRef.current = createSeriesMarkers(peSeriesRef.current, [])
     cpCeMarkersRef.current = createSeriesMarkers(combinedSeriesRef.current, [])
@@ -295,6 +305,15 @@ export default function EzayChart() {
     }
     if (combinedExtrinsicRef.current) {
       combinedExtrinsicRef.current.setData(combinedData.map((item) => ({ time: item.time, value: item.combined_extrinsic })))
+    }
+
+    if (volumeRef.current) {
+      const dark = document.documentElement.classList.contains('dark')
+      volumeRef.current.setData(combinedData.map((item) => ({
+        time: item.time,
+        value: item.combined_volume || 0,
+        color: dark ? 'rgba(38,166,154,0.5)' : 'rgba(38,166,154,0.6)',
+      })))
     }
 
     const ceMarkers = signals
