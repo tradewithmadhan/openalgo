@@ -1992,6 +1992,13 @@ export default function NiftyChart() {
                 NiftyChart
                 </Link>
             </Button>
+
+             <Button variant="ghost" size="sm" className="h-7 text-xs hidden sm:flex" asChild>
+                <Link to="/madhan/ezay-chart">
+                <BarChart3 className="h-3.5 w-3.5 mr-1.5" />
+                EzayChart
+                </Link>
+            </Button>
           </div>
 
           <div className="flex items-center gap-2">
