@@ -5,11 +5,11 @@ import {
   ColorType,
   CrosshairMode,
   createChart,
+  createSeriesMarkers,
   LineSeries,
-  BarSeries,
-  AreaSeries,
   type IChartApi,
   type ISeriesApi,
+  type ISeriesMarkersPluginApi,
   type Time,
 } from 'lightweight-charts'
 import { Button } from '@/components/ui/button'
@@ -29,8 +29,6 @@ import { useAuthStore } from '@/stores/authStore'
 import { useProfileMenuItems } from '@/hooks/useProfileMenuItems'
 import { cn } from '@/lib/utils'
 import { chartTheme } from './chartTheme'
-
-type ChartType = 'candlestick' | 'line' | 'area' | 'bar'
 
 type OptionDataResponse = {
   status: string
@@ -56,6 +54,56 @@ type OptionDataResponse = {
   }
 }
 
+type AggCandle = { time: number; open: number; high: number; low: number; close: number }
+type AggCombined = {
+  time: number; combined_premium: number; ce_intrinsic: number; pe_intrinsic: number;
+  ce_extrinsic: number; pe_extrinsic: number; combined_extrinsic: number;
+  cp_ce_signal?: boolean; combined_extrinsic_signal?: boolean;
+}
+function aggregateCandles<T extends AggCandle & Record<string, any>>(data: T[], intervalMin: number): T[] {
+  if (intervalMin <= 1 || !data.length) return data
+  const bucketSec = intervalMin * 60
+  const buckets = new Map<number, T>()
+  for (const c of data) {
+    const bucket = Math.floor(c.time / bucketSec) * bucketSec
+    const existing = buckets.get(bucket)
+    if (existing) {
+      if (c.high > existing.high) existing.high = c.high
+      if (c.low < existing.low) existing.low = c.low
+      existing.close = c.close
+      if ('extrinsic_signal' in c && c.extrinsic_signal) (existing as any).extrinsic_signal = true
+      if ('cp_ce_signal' in c && c.cp_ce_signal) (existing as any).cp_ce_signal = true
+      if ('combined_extrinsic_signal' in c && c.combined_extrinsic_signal) (existing as any).combined_extrinsic_signal = true
+    } else {
+      buckets.set(bucket, { ...c })
+    }
+  }
+  return Array.from(buckets.values()).sort((a, b) => a.time - b.time)
+}
+
+function aggregateCombined(data: AggCombined[], intervalMin: number): AggCombined[] {
+  if (intervalMin <= 1 || !data.length) return data
+  const bucketSec = intervalMin * 60
+  const buckets = new Map<number, AggCombined>()
+  for (const c of data) {
+    const bucket = Math.floor(c.time / bucketSec) * bucketSec
+    const existing = buckets.get(bucket)
+    if (existing) {
+      if (c.combined_premium > existing.combined_premium) existing.combined_premium = c.combined_premium
+      existing.ce_intrinsic = c.ce_intrinsic
+      existing.pe_intrinsic = c.pe_intrinsic
+      existing.ce_extrinsic = c.ce_extrinsic
+      existing.pe_extrinsic = c.pe_extrinsic
+      existing.combined_extrinsic = c.combined_extrinsic
+      if (c.cp_ce_signal) existing.cp_ce_signal = true
+      if (c.combined_extrinsic_signal) existing.combined_extrinsic_signal = true
+    } else {
+      buckets.set(bucket, { ...c })
+    }
+  }
+  return Array.from(buckets.values()).sort((a, b) => a.time - b.time)
+}
+
 export default function EzayChart() {
   const chartContainerRef = useRef<HTMLDivElement | null>(null)
   const chartRef = useRef<IChartApi | null>(null)
@@ -68,14 +116,15 @@ export default function EzayChart() {
   const ceExtrinsicRef = useRef<ISeriesApi<any> | null>(null)
   const peExtrinsicRef = useRef<ISeriesApi<any> | null>(null)
   const combinedExtrinsicRef = useRef<ISeriesApi<any> | null>(null)
-  const ceMarkersRef = useRef<any>(null)
-  const peMarkersRef = useRef<any>(null)
-  const cpCeMarkersRef = useRef<any>(null)
-  const combinedExtrinsicMarkersRef = useRef<any>(null)
+  const ceMarkersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null)
+  const peMarkersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null)
+  const cpCeMarkersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null)
+  const combinedExtrinsicMarkersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null)
   const updaterRef = useRef<number | null>(null)
   const chartReadyRef = useRef(false)
 
-  const [chartType, setChartType] = useState<ChartType>('candlestick')
+  const [chartType, setChartType] = useState<'candlestick' | 'line'>('candlestick')
+  const [interval, setInterval] = useState('1m')
   const [strikes, setStrikes] = useState<number[]>([])
   const [selectedStrike, setSelectedStrike] = useState<string>('')
   const [showIntrinsic, setShowIntrinsic] = useState(true)
@@ -91,6 +140,11 @@ export default function EzayChart() {
   const { user } = useAuthStore()
   const profileMenuItems = useProfileMenuItems()
 
+  const getIntervalMinutes = (val: string) => {
+    if (val.endsWith('m')) return Math.max(1, Number(val.slice(0, -1) || '1'))
+    return 1
+  }
+
   const getChartColors = useCallback(() => {
     const dark = document.documentElement.classList.contains('dark')
     return {
@@ -98,7 +152,6 @@ export default function EzayChart() {
       textColor: dark ? '#a6adbb' : '#333',
       gridVert: dark ? 'rgba(166,173,187,0.1)' : 'rgba(0,0,0,0.05)',
       gridHorz: dark ? 'rgba(166,173,187,0.1)' : 'rgba(0,0,0,0.05)',
-      crosshairLine: dark ? 'rgba(166,173,187,0.5)' : 'rgba(0,0,0,0.3)',
       borderColor: dark ? 'rgba(166,173,187,0.2)' : 'rgba(0,0,0,0.2)',
     }
   }, [])
@@ -123,125 +176,63 @@ export default function EzayChart() {
     combinedExtrinsicMarkersRef.current = null
   }, [])
 
-  const createSeries = useCallback(() => {
+  const createAllSeries = useCallback(() => {
     const chart = chartRef.current
     if (!chart) return
     removeAllSeries()
 
-    const ceColor = '#00C851'
-    const ceDownColor = '#FF4444'
-    const peDownColor = '#6610F2'
+    const ceDown = '#FF4444'
+    const peDown = '#6610F2'
 
-    const createSeriesByType = (
-      type: ChartType,
-      options: Record<string, any>,
-    ): ISeriesApi<any> => {
-      switch (type) {
-        case 'candlestick':
-          return chart.addSeries(CandlestickSeries, {
-            upColor: ceColor,
-            downColor: options.downColor || ceDownColor,
-            borderVisible: false,
-            wickUpColor: ceColor,
-            wickDownColor: options.downColor || ceDownColor,
-            ...options,
-          })
-        case 'line':
-          return chart.addSeries(LineSeries, {
-            lineWidth: 2,
-            priceLineVisible: false,
-            lastValueVisible: false,
-            ...options,
-          })
-        case 'area':
-          return chart.addSeries(AreaSeries, {
-            lineWidth: 2,
-            priceLineVisible: false,
-            lastValueVisible: false,
-            ...options,
-          })
-        case 'bar':
-          return chart.addSeries(BarSeries, {
-            upColor: ceColor,
-            downColor: options.downColor || ceDownColor,
-            ...options,
-          })
+    const makeSeries = (opts: Record<string, any>): ISeriesApi<any> => {
+      if (chartType === 'candlestick') {
+        return chart.addSeries(CandlestickSeries, {
+          upColor: '#00C851', downColor: ceDown, borderVisible: false,
+          wickUpColor: '#00C851', wickDownColor: ceDown, ...opts,
+        })
       }
+      return chart.addSeries(LineSeries, {
+        lineWidth: 2, priceLineVisible: false, lastValueVisible: false, ...opts,
+      })
     }
 
-    const ce = createSeriesByType(chartType, {
-      title: 'CE Premium',
-      color: '#2962FF',
-    })
-    ceSeriesRef.current = ce
-
-    const pe = createSeriesByType(chartType, {
-      title: 'PE Premium',
-      color: '#ff6b6b',
-      downColor: peDownColor,
-    })
-    peSeriesRef.current = pe
+    ceSeriesRef.current = makeSeries({ title: 'CE Premium', color: '#2962FF' })
+    peSeriesRef.current = makeSeries({ title: 'PE Premium', color: '#ff6b6b', downColor: peDown })
 
     combinedSeriesRef.current = chart.addSeries(LineSeries, {
-      color: '#2196f3',
-      lineWidth: 3,
-      title: 'Combined Premium',
-      priceLineVisible: false,
-      lastValueVisible: false,
+      color: '#2196f3', lineWidth: 3, title: 'Combined Premium',
+      priceLineVisible: false, lastValueVisible: false,
     })
-
     llpSeriesRef.current = chart.addSeries(LineSeries, {
-      color: '#1976d2',
-      lineWidth: 2,
-      title: 'LLP',
-      priceLineVisible: false,
-      lastValueVisible: false,
+      color: '#1976d2', lineWidth: 2, title: 'LLP',
+      priceLineVisible: false, lastValueVisible: false,
     })
-
     ceIntrinsicRef.current = chart.addSeries(LineSeries, {
-      color: '#4caf50',
-      lineWidth: 1,
-      lineStyle: 1,
-      title: 'CE Intrinsic',
-      priceLineVisible: false,
-      lastValueVisible: false,
+      color: '#4caf50', lineWidth: 1, lineStyle: 1, title: 'CE Intrinsic',
+      priceLineVisible: false, lastValueVisible: false,
     })
-
     peIntrinsicRef.current = chart.addSeries(LineSeries, {
-      color: '#ef5350',
-      lineWidth: 1,
-      lineStyle: 1,
-      title: 'PE Intrinsic',
-      priceLineVisible: false,
-      lastValueVisible: false,
+      color: '#ef5350', lineWidth: 1, lineStyle: 1, title: 'PE Intrinsic',
+      priceLineVisible: false, lastValueVisible: false,
     })
-
     ceExtrinsicRef.current = chart.addSeries(LineSeries, {
-      color: '#4caf50',
-      lineWidth: 1,
-      title: 'CE Extrinsic',
-      priceLineVisible: false,
-      lastValueVisible: false,
+      color: '#4caf50', lineWidth: 1, title: 'CE Extrinsic',
+      priceLineVisible: false, lastValueVisible: false,
     })
-
     peExtrinsicRef.current = chart.addSeries(LineSeries, {
-      color: '#ef5350',
-      lineWidth: 1,
-      title: 'PE Extrinsic',
-      priceLineVisible: false,
-      lastValueVisible: false,
+      color: '#ef5350', lineWidth: 1, title: 'PE Extrinsic',
+      priceLineVisible: false, lastValueVisible: false,
     })
-
     combinedExtrinsicRef.current = chart.addSeries(LineSeries, {
-      color: '#ffeb3b',
-      lineWidth: 2,
-      title: 'Combined Extrinsic',
-      priceLineVisible: false,
-      lastValueVisible: false,
+      color: '#ffeb3b', lineWidth: 2, title: 'Combined Extrinsic',
+      priceLineVisible: false, lastValueVisible: false,
     })
 
-    if (selectedStrike) loadData()
-  }, [chartType, removeAllSeries, selectedStrike])
+    ceMarkersRef.current = createSeriesMarkers(ceSeriesRef.current, [])
+    peMarkersRef.current = createSeriesMarkers(peSeriesRef.current, [])
+    cpCeMarkersRef.current = createSeriesMarkers(combinedSeriesRef.current, [])
+    combinedExtrinsicMarkersRef.current = createSeriesMarkers(combinedExtrinsicRef.current, [])
+  }, [chartType, removeAllSeries])
 
   const loadData = useCallback(async () => {
     if (!selectedStrike) return
@@ -249,130 +240,94 @@ export default function EzayChart() {
       const res = await fetch(`/madhan/api/ezayChart_data?strike=${selectedStrike}&_=${Date.now()}`)
       const json: OptionDataResponse = await res.json()
       if (json.status !== 'success' || !json.data) return
-
       const d = json.data
+      const intervalMin = getIntervalMinutes(interval)
 
-      if (ceSeriesRef.current && d.ce_data) {
-        if (chartType === 'candlestick' || chartType === 'bar') {
-          ceSeriesRef.current.setData(d.ce_data)
+      let ceData = d.ce_data || []
+      let peData = d.pe_data || []
+      let combinedData = d.combined_data || []
+
+      if (intervalMin > 1) {
+        ceData = aggregateCandles(ceData, intervalMin)
+        peData = aggregateCandles(peData, intervalMin)
+        combinedData = aggregateCombined(combinedData, intervalMin)
+      }
+
+      if (ceSeriesRef.current) {
+        if (chartType === 'candlestick') {
+          ceSeriesRef.current.setData(ceData)
         } else {
-          ceSeriesRef.current.setData(d.ce_data.map((item) => ({ time: item.time, value: item.close })))
+          ceSeriesRef.current.setData(ceData.map((item) => ({ time: item.time, value: item.close })))
         }
       }
 
-      if (peSeriesRef.current && d.pe_data) {
-        if (chartType === 'candlestick' || chartType === 'bar') {
-          peSeriesRef.current.setData(d.pe_data)
+      if (peSeriesRef.current) {
+        if (chartType === 'candlestick') {
+          peSeriesRef.current.setData(peData)
         } else {
-          peSeriesRef.current.setData(d.pe_data.map((item) => ({ time: item.time, value: item.close })))
+          peSeriesRef.current.setData(peData.map((item) => ({ time: item.time, value: item.close })))
         }
       }
 
-      if (combinedSeriesRef.current && d.combined_data) {
-        combinedSeriesRef.current.setData(d.combined_data.map((item) => ({ time: item.time, value: item.combined_premium })))
+      if (combinedSeriesRef.current) {
+        combinedSeriesRef.current.setData(combinedData.map((item) => ({ time: item.time, value: item.combined_premium })))
+      }
+      if (llpSeriesRef.current && d.llp != null) {
+        llpSeriesRef.current.setData(combinedData.map((item) => ({ time: item.time, value: d.llp! })))
+      }
+      if (ceIntrinsicRef.current) {
+        ceIntrinsicRef.current.setData(combinedData.map((item) => ({ time: item.time, value: item.ce_intrinsic })))
+      }
+      if (peIntrinsicRef.current) {
+        peIntrinsicRef.current.setData(combinedData.map((item) => ({ time: item.time, value: item.pe_intrinsic })))
+      }
+      if (ceExtrinsicRef.current) {
+        ceExtrinsicRef.current.setData(combinedData.map((item) => ({ time: item.time, value: item.ce_extrinsic })))
+      }
+      if (peExtrinsicRef.current) {
+        peExtrinsicRef.current.setData(combinedData.map((item) => ({ time: item.time, value: item.pe_extrinsic })))
+      }
+      if (combinedExtrinsicRef.current) {
+        combinedExtrinsicRef.current.setData(combinedData.map((item) => ({ time: item.time, value: item.combined_extrinsic })))
       }
 
-      if (llpSeriesRef.current && d.combined_data && d.llp != null) {
-        llpSeriesRef.current.setData(d.combined_data.map((item) => ({ time: item.time, value: d.llp })))
-      }
+      const ceMarkers = showSignals
+        ? ceData.filter((item) => item.extrinsic_signal).map((point) => ({
+            time: point.time as Time, position: 'aboveBar' as const,
+            color: '#00ff00', shape: 'circle' as const, text: 'CE↑',
+          }))
+        : []
+      ceMarkersRef.current?.setMarkers(ceMarkers)
 
-      if (ceIntrinsicRef.current && d.combined_data) {
-        ceIntrinsicRef.current.setData(d.combined_data.map((item) => ({ time: item.time, value: item.ce_intrinsic })))
-      }
+      const peMarkers = showSignals
+        ? peData.filter((item) => item.extrinsic_signal).map((point) => ({
+            time: point.time as Time, position: 'aboveBar' as const,
+            color: '#ff0000', shape: 'circle' as const, text: 'PE↑',
+          }))
+        : []
+      peMarkersRef.current?.setMarkers(peMarkers)
 
-      if (peIntrinsicRef.current && d.combined_data) {
-        peIntrinsicRef.current.setData(d.combined_data.map((item) => ({ time: item.time, value: item.pe_intrinsic })))
-      }
+      const cpCeMarkers = showSignals
+        ? combinedData.filter((item) => item.cp_ce_signal).map((point) => ({
+            time: point.time as Time, position: 'aboveBar' as const,
+            color: '#2196f3', shape: 'circle' as const, text: 'CP_CE',
+          }))
+        : []
+      cpCeMarkersRef.current?.setMarkers(cpCeMarkers)
 
-      if (ceExtrinsicRef.current && d.combined_data) {
-        ceExtrinsicRef.current.setData(d.combined_data.map((item) => ({ time: item.time, value: item.ce_extrinsic })))
-      }
-
-      if (peExtrinsicRef.current && d.combined_data) {
-        peExtrinsicRef.current.setData(d.combined_data.map((item) => ({ time: item.time, value: item.pe_extrinsic })))
-      }
-
-      if (combinedExtrinsicRef.current && d.combined_data) {
-        combinedExtrinsicRef.current.setData(d.combined_data.map((item) => ({ time: item.time, value: item.combined_extrinsic })))
-      }
-
-      if (ceSeriesRef.current && d.ce_data) {
-        const markers = showSignals
-          ? d.ce_data.filter((item) => item.extrinsic_signal).map((point) => ({
-              time: point.time as Time,
-              position: 'aboveBar' as const,
-              color: '#00ff00',
-              shape: 'circle' as const,
-              text: 'CE↑',
-            }))
-          : []
-        if (ceMarkersRef.current) {
-          ceMarkersRef.current.setMarkers(markers)
-        } else if (markers.length > 0) {
-          const { createSeriesMarkers } = await import('lightweight-charts')
-          ceMarkersRef.current = createSeriesMarkers(ceSeriesRef.current, markers)
-        }
-      }
-
-      if (peSeriesRef.current && d.pe_data) {
-        const markers = showSignals
-          ? d.pe_data.filter((item) => item.extrinsic_signal).map((point) => ({
-              time: point.time as Time,
-              position: 'aboveBar' as const,
-              color: '#ff0000',
-              shape: 'circle' as const,
-              text: 'PE↑',
-            }))
-          : []
-        if (peMarkersRef.current) {
-          peMarkersRef.current.setMarkers(markers)
-        } else if (markers.length > 0) {
-          const { createSeriesMarkers } = await import('lightweight-charts')
-          peMarkersRef.current = createSeriesMarkers(peSeriesRef.current, markers)
-        }
-      }
-
-      if (combinedSeriesRef.current && d.combined_data) {
-        const markers = showSignals
-          ? d.combined_data.filter((item) => item.cp_ce_signal).map((point) => ({
-              time: point.time as Time,
-              position: 'aboveBar' as const,
-              color: '#2196f3',
-              shape: 'circle' as const,
-              text: 'CP_CE',
-            }))
-          : []
-        if (cpCeMarkersRef.current) {
-          cpCeMarkersRef.current.setMarkers(markers)
-        } else if (markers.length > 0) {
-          const { createSeriesMarkers } = await import('lightweight-charts')
-          cpCeMarkersRef.current = createSeriesMarkers(combinedSeriesRef.current, markers)
-        }
-      }
-
-      if (combinedExtrinsicRef.current && d.combined_data) {
-        const markers = showSignals
-          ? d.combined_data.filter((item) => item.combined_extrinsic_signal).map((point) => ({
-              time: point.time as Time,
-              position: 'belowBar' as const,
-              color: '#ffeb3b',
-              shape: 'circle' as const,
-              text: 'C P',
-            }))
-          : []
-        if (combinedExtrinsicMarkersRef.current) {
-          combinedExtrinsicMarkersRef.current.setMarkers(markers)
-        } else if (markers.length > 0) {
-          const { createSeriesMarkers } = await import('lightweight-charts')
-          combinedExtrinsicMarkersRef.current = createSeriesMarkers(combinedExtrinsicRef.current, markers)
-        }
-      }
+      const ceMarkers2 = showSignals
+        ? combinedData.filter((item) => item.combined_extrinsic_signal).map((point) => ({
+            time: point.time as Time, position: 'belowBar' as const,
+            color: '#ffeb3b', shape: 'circle' as const, text: 'C P',
+          }))
+        : []
+      combinedExtrinsicMarkersRef.current?.setMarkers(ceMarkers2)
 
       setChartInfo(`Strike ${d.strike} - CE: ${d.ce_symbol || 'N/A'} | PE: ${d.pe_symbol || 'N/A'} (${d.timezone || 'UTC'})`)
     } catch (err) {
       console.error('Error loading EzayChart data:', err)
     }
-  }, [selectedStrike, chartType, showSignals])
+  }, [selectedStrike, chartType, interval, showSignals])
 
   useEffect(() => {
     if (!chartContainerRef.current) return
@@ -397,10 +352,7 @@ export default function EzayChart() {
         secondsVisible: false,
         tickMarkFormatter: (time: number) => {
           return new Date(time * 1000).toLocaleTimeString('en-IN', {
-            timeZone: 'Asia/Kolkata',
-            hour: '2-digit',
-            minute: '2-digit',
-            hour12: true,
+            timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: true,
           })
         },
       },
@@ -411,10 +363,7 @@ export default function EzayChart() {
 
     const resizeObserver = new ResizeObserver(() => {
       if (!chartContainerRef.current || !chartRef.current) return
-      chartRef.current.applyOptions({
-        width: chartContainerRef.current.clientWidth,
-        height: chartContainerRef.current.clientHeight,
-      })
+      chartRef.current.applyOptions({ width: chartContainerRef.current.clientWidth, height: chartContainerRef.current.clientHeight })
     })
     resizeObserver.observe(chartContainerRef.current)
 
@@ -433,23 +382,18 @@ export default function EzayChart() {
     if (!chartReadyRef.current || !chartRef.current) return
     const colors = getChartColors()
     chartRef.current.applyOptions({
-      layout: {
-        background: { type: ColorType.Solid, color: colors.background },
-        textColor: colors.textColor,
-      },
-      grid: {
-        vertLines: { color: colors.gridVert },
-        horzLines: { color: colors.gridHorz },
-      },
+      layout: { background: { type: ColorType.Solid, color: colors.background }, textColor: colors.textColor },
+      grid: { vertLines: { color: colors.gridVert }, horzLines: { color: colors.gridHorz } },
       rightPriceScale: { borderColor: colors.borderColor },
     })
   }, [themeMode, getChartColors])
 
   useEffect(() => {
     if (chartReadyRef.current && chartRef.current) {
-      createSeries()
+      createAllSeries()
+      loadData()
     }
-  }, [chartType, createSeries])
+  }, [chartType, createAllSeries, loadData])
 
   useEffect(() => {
     if (ceIntrinsicRef.current) ceIntrinsicRef.current.applyOptions({ visible: showIntrinsic })
@@ -466,23 +410,21 @@ export default function EzayChart() {
 
   useEffect(() => {
     if (!showSignals) {
-      if (ceMarkersRef.current) ceMarkersRef.current.setMarkers([])
-      if (peMarkersRef.current) peMarkersRef.current.setMarkers([])
-      if (cpCeMarkersRef.current) cpCeMarkersRef.current.setMarkers([])
-      if (combinedExtrinsicMarkersRef.current) combinedExtrinsicMarkersRef.current.setMarkers([])
-    } else if (chartReadyRef.current && selectedStrike) {
+      ceMarkersRef.current?.setMarkers([])
+      peMarkersRef.current?.setMarkers([])
+      cpCeMarkersRef.current?.setMarkers([])
+      combinedExtrinsicMarkersRef.current?.setMarkers([])
+    } else {
       loadData()
     }
-  }, [showSignals, loadData, selectedStrike])
+  }, [showSignals, loadData])
 
   useEffect(() => {
     if (updaterRef.current) window.clearInterval(updaterRef.current)
     if (selectedStrike) {
       updaterRef.current = window.setInterval(() => loadData(), 60000)
     }
-    return () => {
-      if (updaterRef.current) window.clearInterval(updaterRef.current)
-    }
+    return () => { if (updaterRef.current) window.clearInterval(updaterRef.current) }
   }, [selectedStrike, loadData])
 
   const loadStrikes = async () => {
@@ -505,9 +447,10 @@ export default function EzayChart() {
 
   const handleStrikeChange = (val: string) => {
     setSelectedStrike(val)
-    if (chartReadyRef.current && chartRef.current && val) {
-      createSeries()
-    }
+  }
+
+  const handleIntervalChange = (val: string) => {
+    setInterval(val)
   }
 
   return (
@@ -523,35 +466,21 @@ export default function EzayChart() {
           </div>
           <div className="h-4 w-px bg-border hidden sm:block" />
           <Button variant="ghost" size="sm" className="h-7 text-xs hidden sm:flex" asChild>
-            <Link to="/madhan/madhan01">
-              <BarChart3 className="h-3.5 w-3.5 mr-1.5" />
-              NiftyFetcher
-            </Link>
+            <Link to="/madhan/madhan01"><BarChart3 className="h-3.5 w-3.5 mr-1.5" />NiftyFetcher</Link>
           </Button>
           <Button variant="ghost" size="sm" className="h-7 text-xs hidden sm:flex" asChild>
-            <Link to="/madhan/ATP-LTPStrategy">
-              <BarChart3 className="h-3.5 w-3.5 mr-1.5" />
-              ATPLTP
-            </Link>
+            <Link to="/madhan/ATP-LTPStrategy"><BarChart3 className="h-3.5 w-3.5 mr-1.5" />ATPLTP</Link>
           </Button>
           <Button variant="ghost" size="sm" className="h-7 text-xs hidden sm:flex" asChild>
-            <Link to="/madhan/nifty-chart">
-              <BarChart3 className="h-3.5 w-3.5 mr-1.5" />
-              NiftyChart
-            </Link>
+            <Link to="/madhan/nifty-chart"><BarChart3 className="h-3.5 w-3.5 mr-1.5" />NiftyChart</Link>
           </Button>
           <Button variant="ghost" size="sm" className="h-7 text-xs hidden sm:flex" asChild>
-            <Link to="/madhan/ezay-chart">
-              <BarChart3 className="h-3.5 w-3.5 mr-1.5" />
-              EzayChart
-            </Link>
+            <Link to="/madhan/ezay-chart"><BarChart3 className="h-3.5 w-3.5 mr-1.5" />EzayChart</Link>
           </Button>
         </div>
         <div className="flex items-center gap-2">
-          <Badge
-            variant={appMode === 'live' ? 'default' : 'secondary'}
-            className={cn('text-xs hidden sm:flex', appMode === 'analyzer' && 'bg-purple-500 hover:bg-purple-600 text-white')}
-          >
+          <Badge variant={appMode === 'live' ? 'default' : 'secondary'}
+            className={cn('text-xs hidden sm:flex', appMode === 'analyzer' && 'bg-purple-500 hover:bg-purple-600 text-white')}>
             {appMode === 'live' ? 'Live Mode' : 'Analyze Mode'}
           </Badge>
           <Button variant="ghost" size="icon" className="h-8 w-8" onClick={async () => {
@@ -565,22 +494,14 @@ export default function EzayChart() {
               toast.error(result.message || 'Failed to toggle mode')
             }
           }} disabled={isTogglingMode} title={`Switch to ${appMode === 'live' ? 'Analyze' : 'Live'} mode`}>
-            {isTogglingMode ? (
-              <div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
-            ) : appMode === 'live' ? (
-              <Zap className="h-4 w-4" />
-            ) : (
-              <BarChart3 className="h-4 w-4" />
-            )}
+            {isTogglingMode ? <div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
+              : appMode === 'live' ? <Zap className="h-4 w-4" /> : <BarChart3 className="h-4 w-4" />}
           </Button>
           <Button variant="ghost" size="icon" className="h-8 w-8" onClick={toggleMode} title={themeMode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}>
             {themeMode === 'light' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
           </Button>
           <Button variant="ghost" size="sm" className="h-7 text-xs hidden sm:flex" asChild>
-            <Link to="/dashboard">
-              <Home className="h-3.5 w-3.5 mr-1.5" />
-              Dashboard
-            </Link>
+            <Link to="/dashboard"><Home className="h-3.5 w-3.5 mr-1.5" />Dashboard</Link>
           </Button>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -591,8 +512,7 @@ export default function EzayChart() {
             <DropdownMenuContent align="end" className="w-56">
               {profileMenuItems.map((item) => (
                 <DropdownMenuItem key={item.href} onSelect={() => navigate(item.href)}>
-                  <item.icon className="mr-2 h-4 w-4" />
-                  <span>{item.label}</span>
+                  <item.icon className="mr-2 h-4 w-4" /><span>{item.label}</span>
                 </DropdownMenuItem>
               ))}
             </DropdownMenuContent>
@@ -604,17 +524,12 @@ export default function EzayChart() {
         <div className="flex items-center gap-1.5">
           <Label className="text-[11px]" style={{ color: t.textSecondary }}>Strike:</Label>
           <Select value={selectedStrike} onValueChange={handleStrikeChange}>
-            <SelectTrigger className="h-7 w-24 text-[11px]">
-              <SelectValue placeholder="Select" />
-            </SelectTrigger>
+            <SelectTrigger className="h-7 w-24 text-[11px]"><SelectValue placeholder="Select" /></SelectTrigger>
             <SelectContent>
               {strikes.map((s) => (
-                <SelectItem
-                  key={s}
-                  value={String(s)}
+                <SelectItem key={s} value={String(s)}
                   className={s === atmStrike ? 'font-bold' : ''}
-                  style={s === atmStrike ? { backgroundColor: themeMode === 'dark' ? 'rgba(41,98,255,0.2)' : 'rgba(37,99,235,0.15)', color: themeMode === 'dark' ? '#2962ff' : '#2563eb' } : undefined}
-                >
+                  style={s === atmStrike ? { backgroundColor: themeMode === 'dark' ? 'rgba(41,98,255,0.2)' : 'rgba(37,99,235,0.15)', color: themeMode === 'dark' ? '#2962ff' : '#2563eb' } : undefined}>
                   {s}{s === atmStrike ? ' ATM' : ''}
                 </SelectItem>
               ))}
@@ -622,16 +537,23 @@ export default function EzayChart() {
           </Select>
         </div>
         <div className="flex items-center gap-1.5">
+          <Label className="text-[11px]" style={{ color: t.textSecondary }}>Time:</Label>
+          <Select value={interval} onValueChange={handleIntervalChange}>
+            <SelectTrigger className="h-7 w-16 text-[11px]"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="1m">1m</SelectItem>
+              <SelectItem value="3m">3m</SelectItem>
+              <SelectItem value="5m">5m</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="flex items-center gap-1.5">
           <Label className="text-[11px]" style={{ color: t.textSecondary }}>Chart:</Label>
-          <Select value={chartType} onValueChange={(v) => setChartType(v as ChartType)}>
-            <SelectTrigger className="h-7 w-24 text-[11px]">
-              <SelectValue />
-            </SelectTrigger>
+          <Select value={chartType} onValueChange={(v) => setChartType(v as 'candlestick' | 'line')}>
+            <SelectTrigger className="h-7 w-20 text-[11px]"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="candlestick">Candle</SelectItem>
               <SelectItem value="line">Line</SelectItem>
-              <SelectItem value="area">Area</SelectItem>
-              <SelectItem value="bar">Bar</SelectItem>
             </SelectContent>
           </Select>
         </div>
