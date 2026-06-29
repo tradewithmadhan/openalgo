@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import {
   CandlestickSeries,
@@ -24,7 +24,8 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { BarChart3, Home, Menu, Sun, Moon, Zap, ChevronLeft, ChevronRight } from 'lucide-react'
+import { BarChart3, Home, Menu, Sun, Moon, Zap, ChevronLeft, ChevronRight, Wifi, WifiOff } from 'lucide-react'
+import { useMarketData } from '@/hooks/useMarketData'
 import { useThemeStore } from '@/stores/themeStore'
 import { useAuthStore } from '@/stores/authStore'
 import { useProfileMenuItems } from '@/hooks/useProfileMenuItems'
@@ -145,6 +146,13 @@ export default function EzayChart() {
   const [atmStrike, setAtmStrike] = useState<number | null>(null)
   const [strikePanelOpen, setStrikePanelOpen] = useState(true)
   const [showRealtime, setShowRealtime] = useState(false)
+  const [ceSymbol, setCeSymbol] = useState('')
+  const [peSymbol, setPeSymbol] = useState('')
+  const [liveSpot, setLiveSpot] = useState(0)
+  const liveSpotRef = useRef(0)
+
+  const currentOhlcRef = useRef<Map<string, { time: number; open: number; high: number; low: number; close: number }>>(new Map())
+  const strikeNumRef = useRef(0)
 
   const { mode: themeMode, toggleMode, appMode, toggleAppMode, isTogglingMode } = useThemeStore()
   const t = chartTheme[themeMode]
@@ -156,6 +164,17 @@ export default function EzayChart() {
     if (val.endsWith('m')) return Math.max(1, Number(val.slice(0, -1) || '1'))
     return 1
   }
+
+  const wsSymbols = useMemo(() => {
+    const syms: Array<{ symbol: string; exchange: string }> = [
+      { symbol: 'NIFTY', exchange: 'NSE_INDEX' },
+    ]
+    if (ceSymbol) syms.push({ symbol: ceSymbol, exchange: 'NFO' })
+    if (peSymbol) syms.push({ symbol: peSymbol, exchange: 'NFO' })
+    return syms
+  }, [ceSymbol, peSymbol])
+
+  const { data: wsData, isConnected } = useMarketData({ symbols: wsSymbols, mode: 'LTP' })
 
   const getChartColors = useCallback(() => {
     const dark = document.documentElement.classList.contains('dark')
@@ -363,6 +382,10 @@ export default function EzayChart() {
       const json: OptionDataResponse = await res.json()
       if (json.status !== 'success' || !json.data) return
       rawDataRef.current = json.data
+      strikeNumRef.current = json.data.strike
+      currentOhlcRef.current.clear()
+      setCeSymbol(json.data.ce_symbol || '')
+      setPeSymbol(json.data.pe_symbol || '')
       setChartInfo(`Strike ${json.data.strike} - CE: ${json.data.ce_symbol || 'N/A'} | PE: ${json.data.pe_symbol || 'N/A'} (${json.data.timezone || 'UTC'})`)
       applyData()
     } catch (err) {
@@ -480,6 +503,90 @@ export default function EzayChart() {
     const el = strikeListRef.current.querySelector(`[data-strike="${selectedStrike}"]`)
     if (el) el.scrollIntoView({ block: 'center', behavior: 'smooth' })
   }, [selectedStrike, strikes])
+
+  useEffect(() => {
+    if (!wsData || wsData.size === 0 || !chartRef.current) return
+    const ct = chartTypeRef.current
+    const intervalMin = getIntervalMinutes(intervalRef.current)
+    const strike = strikeNumRef.current
+    if (!strike) return
+
+    const nowSec = Math.floor(Date.now() / 1000)
+    const bucketSec = intervalMin * 60
+    const time = Math.floor(nowSec / bucketSec) * bucketSec as Time
+
+    const spotEntry = wsData.get('NSE_INDEX:NIFTY')
+    const spotLtp = spotEntry?.data?.ltp
+    if (spotLtp) {
+      liveSpotRef.current = spotLtp
+      setLiveSpot(spotLtp)
+    }
+    const spot = spotLtp || liveSpotRef.current || 0
+    if (!spot) return
+
+    const ceEntry = ceSymbol ? wsData.get(`NFO:${ceSymbol}`) : undefined
+    const peEntry = peSymbol ? wsData.get(`NFO:${peSymbol}`) : undefined
+    const ceLtp = ceEntry?.data?.ltp || 0
+    const peLtp = peEntry?.data?.ltp || 0
+    const ceVol = ceEntry?.data?.volume || 0
+    const peVol = peEntry?.data?.volume || 0
+    const ceO = ceEntry?.data?.open || 0
+    const peO = peEntry?.data?.open || 0
+
+    const ceIntrinsic = Math.max(0, spot - strike)
+    const peIntrinsic = Math.max(0, strike - spot)
+    const ceExtrinsic = Math.max(0, ceLtp - ceIntrinsic)
+    const peExtrinsic = Math.max(0, peLtp - peIntrinsic)
+    const combinedPremium = ceLtp + peLtp
+    const combinedExtrinsic = ceExtrinsic + peExtrinsic
+    const combinedVolume = ceVol + peVol
+
+    const updateCandle = (key: string, series: ISeriesApi<any>, ltp: number, open: number) => {
+      if (!ltp) return
+      const existing = currentOhlcRef.current.get(key)
+      if (existing && time === existing.time) {
+        existing.high = Math.max(existing.high, ltp)
+        existing.low = Math.min(existing.low, ltp)
+        existing.close = ltp
+      } else {
+        const newCandle = { time: time as number, open: open || ltp, high: ltp, low: ltp, close: ltp }
+        currentOhlcRef.current.set(key, newCandle)
+      }
+      const c = currentOhlcRef.current.get(key)!
+      if (ct === 'candlestick') {
+        series.update({ time: c.time as Time, open: c.open, high: c.high, low: c.low, close: c.close })
+      } else {
+        series.update({ time: c.time as Time, value: c.close })
+      }
+    }
+
+    if (ceSeriesRef.current && ceLtp) updateCandle('ce', ceSeriesRef.current, ceLtp, ceO)
+    if (peSeriesRef.current && peLtp) updateCandle('pe', peSeriesRef.current, peLtp, peO)
+
+    const updateLine = (key: string, series: ISeriesApi<any>, value: number) => {
+      if (!series || !value) return
+      const existing = currentOhlcRef.current.get(key)
+      if (existing && time === existing.time) {
+        existing.close = value
+      } else {
+        currentOhlcRef.current.set(key, { time: time as number, open: value, high: value, low: value, close: value })
+      }
+      series.update({ time: time as Time, value })
+    }
+
+    if (combinedSeriesRef.current) updateLine('combined', combinedSeriesRef.current, combinedPremium)
+    if (llpSeriesRef.current) updateLine('llp', llpSeriesRef.current, rawDataRef.current?.llp || 0)
+    if (ceIntrinsicRef.current) updateLine('ceIntrinsic', ceIntrinsicRef.current, ceIntrinsic)
+    if (peIntrinsicRef.current) updateLine('peIntrinsic', peIntrinsicRef.current, peIntrinsic)
+    if (ceExtrinsicRef.current) updateLine('ceExtrinsic', ceExtrinsicRef.current, ceExtrinsic)
+    if (peExtrinsicRef.current) updateLine('peExtrinsic', peExtrinsicRef.current, peExtrinsic)
+    if (combinedExtrinsicRef.current) updateLine('combinedExtrinsic', combinedExtrinsicRef.current, combinedExtrinsic)
+
+    if (volumeRef.current) {
+      const dark = document.documentElement.classList.contains('dark')
+      volumeRef.current.update({ time: time as Time, value: combinedVolume, color: dark ? 'rgba(38,166,154,0.5)' : 'rgba(38,166,154,0.6)' })
+    }
+  }, [wsData, ceSymbol, peSymbol])
 
   const loadStrikes = async () => {
     try {
@@ -618,7 +725,18 @@ export default function EzayChart() {
             Realtime
           </Button>
         </div>
-        <div className="ml-auto">
+        <div className="ml-auto flex items-center gap-3">
+          {liveSpot > 0 && (
+            <span className="text-[11px] font-mono font-semibold" style={{ color: t.text }}>
+              NIFTY {liveSpot.toFixed(2)}
+            </span>
+          )}
+          <div className="flex items-center gap-1">
+            {isConnected ? <Wifi className="h-3 w-3 text-green-500" /> : <WifiOff className="h-3 w-3 text-red-500" />}
+            <span className="text-[10px]" style={{ color: isConnected ? '#22c55e' : '#ef4444' }}>
+              {isConnected ? 'Live' : 'Offline'}
+            </span>
+          </div>
           <span className="text-[11px]" style={{ color: chartInfo ? t.text : t.textMuted }}>{chartInfo || 'No Strike Selected'}</span>
         </div>
       </div>
