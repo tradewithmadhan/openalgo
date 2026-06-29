@@ -184,7 +184,7 @@ export default function RealtimeTable({ onClose, standalone = false }: Props) {
     const currentAtmStrike = strikes.reduce((p, c) => Math.abs(c - spot) < Math.abs(p - spot) ? c : p, strikes[0])
 
     if (openAtmStrikeRef.current === null) {
-      openAtmStrikeRef.current = currentAtmStrike
+      openAtmStrikeRef.current = strikes[Math.floor(strikes.length / 2)]
     }
 
     let limited: number[]
@@ -290,7 +290,7 @@ export default function RealtimeTable({ onClose, standalone = false }: Props) {
             </tr>
           </thead>
           <tbody className="flex-1">
-            {tableData.map((row, idx) => {
+            {tableData.map((row) => {
               const ceLtp = parseFloat(row.ceLtp), peLtp = parseFloat(row.peLtp)
               const ceOpen = parseFloat(row.ceOpen), peOpen = parseFloat(row.peOpen)
               const ceVwap = parseFloat(row.ceVwap), peVwap = parseFloat(row.peVwap)
@@ -299,25 +299,20 @@ export default function RealtimeTable({ onClose, standalone = false }: Props) {
               const combinedExtrinsic = parseFloat(row.combinedExtrinsic)
               const ceHigh = parseFloat(row.ceHigh), peHigh = parseFloat(row.peHigh)
               const isOpenAtm = row.strike === openAtmStrikeRef.current
-              const isCurrentAtm = row.strike === parseInt(spotPriceRef.current.toFixed(0))
-
-              let rowBg: string | undefined
-              if (isOpenAtm) {
-                rowBg = 'rgba(234,179,8,0.5)'
-              } else if (idx % 2 === 0) {
-                rowBg = themeMode === 'dark' ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.02)'
-              }
+              const isCurrentAtm = row.strike === Math.round(spotPriceRef.current / 50) * 50
 
               return (
                 <tr
                   key={row.strike}
                   style={{
                     height: rowHeight,
-                    backgroundColor: rowBg,
                     borderBottom: isCurrentAtm && !isOpenAtm ? '2px solid rgba(234,179,8,0.8)' : undefined,
                   }}
                 >
-                  <td className="px-1 py-1.5 text-center font-bold border whitespace-nowrap" style={{ borderColor: t.border }}>{row.strike}</td>
+                  <td className="px-1 py-1.5 text-center font-bold border whitespace-nowrap" style={{
+                    borderColor: t.border,
+                    backgroundColor: isOpenAtm ? 'rgba(234,179,8,0.5)' : isCurrentAtm ? 'rgba(234,179,8,0.2)' : undefined,
+                  }}>{row.strike}</td>
                   <td className="px-1 py-1.5 text-center border whitespace-nowrap" style={{ borderColor: t.border, color: parseFloat(row.cePercentChange) > 0 ? '#22c55e' : parseFloat(row.cePercentChange) < 0 ? '#ef4444' : undefined }}>{row.cePercentChange}%</td>
                   <td className="px-1 py-1.5 text-center border whitespace-nowrap" style={{ borderColor: t.border, color: parseFloat(row.pePercentChange) > 0 ? '#22c55e' : parseFloat(row.pePercentChange) < 0 ? '#ef4444' : undefined }}>{row.pePercentChange}%</td>
                   <td className="px-1 py-1.5 text-center border whitespace-nowrap" style={{ borderColor: t.border, backgroundColor: cellBg(ceLtp > 0 && ceOpen > 0 && ceLtp > ceOpen, 'green') }}>{row.ceLtp}</td>

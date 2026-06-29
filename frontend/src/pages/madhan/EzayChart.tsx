@@ -146,6 +146,8 @@ export default function EzayChart() {
   const [atmStrike, setAtmStrike] = useState<number | null>(null)
   const [strikePanelOpen, setStrikePanelOpen] = useState(true)
   const [showRealtime, setShowRealtime] = useState(false)
+  const [semiTransparent, setSemiTransparent] = useState(false)
+  const semiTransparentRef = useRef(false)
   const [ceSymbol, setCeSymbol] = useState('')
   const [peSymbol, setPeSymbol] = useState('')
   const [liveSpot, setLiveSpot] = useState(0)
@@ -212,15 +214,18 @@ export default function EzayChart() {
     if (!chart) return
     removeAllSeries()
 
-    const ceDown = '#FF4444'
-    const peDown = '#6610F2'
+    const semi = semiTransparentRef.current
+    const ceUp = semi ? 'rgba(0,200,81,0.5)' : '#00C851'
+    const ceDown = semi ? 'rgba(255,68,68,0.5)' : '#FF4444'
+    const peUp = semi ? 'rgba(224,64,251,0.5)' : '#E040FB'
+    const peDown = semi ? 'rgba(136,14,79,0.5)' : '#880E4F'
     const ct = chartTypeRef.current
 
-    const makeSeries = (opts: Record<string, any>): ISeriesApi<any> => {
+    const makeCeSeries = (opts: Record<string, any>): ISeriesApi<any> => {
       if (ct === 'candlestick') {
         return chart.addSeries(CandlestickSeries, {
-          upColor: '#00C851', downColor: ceDown, borderVisible: false,
-          wickUpColor: '#00C851', wickDownColor: ceDown, ...opts,
+          upColor: ceUp, downColor: ceDown, borderVisible: false,
+          wickUpColor: ceUp, wickDownColor: ceDown, ...opts,
         })
       }
       return chart.addSeries(LineSeries, {
@@ -228,8 +233,20 @@ export default function EzayChart() {
       })
     }
 
-    ceSeriesRef.current = makeSeries({ title: 'CE Premium', color: '#2962FF' })
-    peSeriesRef.current = makeSeries({ title: 'PE Premium', color: '#ff6b6b', downColor: peDown })
+    const makePeSeries = (opts: Record<string, any>): ISeriesApi<any> => {
+      if (ct === 'candlestick') {
+        return chart.addSeries(CandlestickSeries, {
+          upColor: peUp, downColor: peDown, borderVisible: false,
+          wickUpColor: peUp, wickDownColor: peDown, ...opts,
+        })
+      }
+      return chart.addSeries(LineSeries, {
+        lineWidth: 2, priceLineVisible: false, lastValueVisible: false, ...opts,
+      })
+    }
+
+    ceSeriesRef.current = makeCeSeries({ title: 'CE Premium', color: '#2962FF' })
+    peSeriesRef.current = makePeSeries({ title: 'PE Premium', color: '#E040FB' })
 
     combinedSeriesRef.current = chart.addSeries(LineSeries, {
       color: '#2196f3', lineWidth: 3, title: 'Combined Premium',
@@ -466,6 +483,14 @@ export default function EzayChart() {
       loadData()
     }
   }, [chartType, createAllSeries, loadData])
+
+  useEffect(() => {
+    semiTransparentRef.current = semiTransparent
+    if (chartReadyRef.current && chartRef.current) {
+      createAllSeries()
+      loadData()
+    }
+  }, [semiTransparent, createAllSeries, loadData])
 
   useEffect(() => {
     if (ceIntrinsicRef.current) ceIntrinsicRef.current.applyOptions({ visible: showIntrinsic })
@@ -714,6 +739,10 @@ export default function EzayChart() {
           <div className="flex items-center gap-1">
             <Checkbox checked={showSignals} onCheckedChange={(v) => setShowSignals(!!v)} />
             <Label className="text-[11px]" style={{ color: t.textSecondary }}>Signals</Label>
+          </div>
+          <div className="flex items-center gap-1">
+            <Checkbox checked={semiTransparent} onCheckedChange={(v) => setSemiTransparent(!!v)} />
+            <Label className="text-[11px]" style={{ color: t.textSecondary }}>50% Candles</Label>
           </div>
           <div className="h-4 w-px" style={{ backgroundColor: t.border }} />
           <Button
