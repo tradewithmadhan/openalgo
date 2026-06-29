@@ -30,6 +30,7 @@ import { useAuthStore } from '@/stores/authStore'
 import { useProfileMenuItems } from '@/hooks/useProfileMenuItems'
 import { cn } from '@/lib/utils'
 import { chartTheme } from './chartTheme'
+import RealtimeTable from './RealtimeTable'
 
 type OptionDataResponse = {
   status: string
@@ -143,6 +144,7 @@ export default function EzayChart() {
   const [chartInfo, setChartInfo] = useState('')
   const [atmStrike, setAtmStrike] = useState<number | null>(null)
   const [strikePanelOpen, setStrikePanelOpen] = useState(true)
+  const [showRealtime, setShowRealtime] = useState(false)
 
   const { mode: themeMode, toggleMode, appMode, toggleAppMode, isTogglingMode } = useThemeStore()
   const t = chartTheme[themeMode]
@@ -603,6 +605,15 @@ export default function EzayChart() {
             <Checkbox checked={showSignals} onCheckedChange={(v) => setShowSignals(!!v)} />
             <Label className="text-[11px]" style={{ color: t.textSecondary }}>Signals</Label>
           </div>
+          <div className="h-4 w-px" style={{ backgroundColor: t.border }} />
+          <Button
+            size="sm"
+            variant={showRealtime ? 'default' : 'ghost'}
+            className="h-6 px-2 text-[10px]"
+            onClick={() => setShowRealtime(!showRealtime)}
+          >
+            Realtime
+          </Button>
         </div>
         <div className="ml-auto">
           <span className="text-[11px]" style={{ color: chartInfo ? t.text : t.textMuted }}>{chartInfo || 'No Strike Selected'}</span>
@@ -667,7 +678,10 @@ export default function EzayChart() {
             </>
           )}
         </div>
-        <div ref={chartContainerRef} className="flex-1 min-h-0 min-w-0" style={{ backgroundColor: t.panelDarker }} />
+        <div className="flex-1 min-h-0 min-w-0 relative" style={{ backgroundColor: t.panelDarker }}>
+          <div ref={chartContainerRef} className="absolute inset-0" />
+          {showRealtime && <RealtimeTable onClose={() => setShowRealtime(false)} />}
+        </div>
       </div>
     </div>
   )
