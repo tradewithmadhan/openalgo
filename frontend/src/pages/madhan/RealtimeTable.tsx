@@ -41,6 +41,7 @@ export default function RealtimeTable({ onClose, standalone = false }: Props) {
   const strikeSymbolsRef = useRef<Map<string, StrikeSymbol>>(new Map())
   const realtimeDataRef = useRef<Map<string, ProcessedData>>(new Map())
   const spotPriceRef = useRef(25500)
+  const openAtmStrikeRef = useRef<number | null>(null)
   const showAllRef = useRef(false)
   const containerRef = useRef<HTMLDivElement | null>(null)
   const theadRef = useRef<HTMLTableSectionElement | null>(null)
@@ -180,12 +181,17 @@ export default function RealtimeTable({ onClose, standalone = false }: Props) {
 
     if (strikes.length === 0) { setTableData([]); return }
 
+    const currentAtmStrike = strikes.reduce((p, c) => Math.abs(c - spot) < Math.abs(p - spot) ? c : p, strikes[0])
+
+    if (openAtmStrikeRef.current === null) {
+      openAtmStrikeRef.current = currentAtmStrike
+    }
+
     let limited: number[]
     if (showAllRef.current) {
       limited = strikes
     } else {
-      const atmStrike = strikes.reduce((p, c) => Math.abs(c - spot) < Math.abs(p - spot) ? c : p, strikes[0])
-      const atmIdx = strikes.indexOf(atmStrike)
+      const atmIdx = strikes.indexOf(currentAtmStrike)
       limited = strikes.slice(Math.max(0, atmIdx - 5), atmIdx + 6)
     }
 
@@ -292,18 +298,23 @@ export default function RealtimeTable({ onClose, standalone = false }: Props) {
               const ceExtrinsic = parseFloat(row.ceExtrinsic), peExtrinsic = parseFloat(row.peExtrinsic)
               const combinedExtrinsic = parseFloat(row.combinedExtrinsic)
               const ceHigh = parseFloat(row.ceHigh), peHigh = parseFloat(row.peHigh)
-              const isSelectedStrike = row.strike === parseInt(spotPriceRef.current.toFixed(0))
+              const isOpenAtm = row.strike === openAtmStrikeRef.current
+              const isCurrentAtm = row.strike === parseInt(spotPriceRef.current.toFixed(0))
+
+              let rowBg: string | undefined
+              if (isOpenAtm) {
+                rowBg = 'rgba(234,179,8,0.5)'
+              } else if (idx % 2 === 0) {
+                rowBg = themeMode === 'dark' ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.02)'
+              }
 
               return (
                 <tr
                   key={row.strike}
                   style={{
                     height: rowHeight,
-                    backgroundColor: isSelectedStrike
-                      ? (themeMode === 'dark' ? 'rgba(41,98,255,0.15)' : 'rgba(37,99,235,0.1)')
-                      : idx % 2 === 0
-                        ? (themeMode === 'dark' ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.02)')
-                        : undefined,
+                    backgroundColor: rowBg,
+                    borderBottom: isCurrentAtm && !isOpenAtm ? '2px solid rgba(234,179,8,0.8)' : undefined,
                   }}
                 >
                   <td className="px-1 py-1.5 text-center font-bold border whitespace-nowrap" style={{ borderColor: t.border }}>{row.strike}</td>
