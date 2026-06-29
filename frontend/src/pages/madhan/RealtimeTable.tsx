@@ -238,73 +238,77 @@ export default function RealtimeTable({ onClose, standalone = false }: Props) {
   )
 
   const tableContent = (
-    <div className="flex-1 overflow-auto min-h-0">
+    <div className="flex-1 overflow-hidden min-h-0 flex flex-col">
       {tableData.length === 0 ? (
         <div className="flex items-center justify-center h-full" style={{ color: t.textMuted }}>
           {wsStatus === 'connected' ? 'Waiting for market data...' : 'Click Connect to start'}
         </div>
       ) : (
-        <table className="w-full border-collapse text-[10px]" style={{ color: t.text }}>
-          <thead>
-            <tr style={{ backgroundColor: t.panel, position: 'sticky', top: 0, zIndex: 1 }}>
-              {['Strike', 'CE%', 'PE%', 'CE-LTP', 'PE-LTP', 'CE-VWAP', 'PE-VWAP', 'CE-O', 'PE-O', 'CE-Intr', 'PE-Intr', 'CE-Ext', 'PE-Ext', 'Comb-Ext', 'Comb-Prem', 'Open-Comb', 'LLP'].map((h) => (
-                <th key={h} className="px-1 py-0.5 text-center border whitespace-nowrap" style={{ borderColor: t.border }}>{h}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {tableData.map((row) => {
-              const ceLtp = parseFloat(row.ceLtp), peLtp = parseFloat(row.peLtp)
-              const ceOpen = parseFloat(row.ceOpen), peOpen = parseFloat(row.peOpen)
-              const ceVwap = parseFloat(row.ceVwap), peVwap = parseFloat(row.peVwap)
-              const ceIntrinsic = parseFloat(row.ceIntrinsic), peIntrinsic = parseFloat(row.peIntrinsic)
-              const ceExtrinsic = parseFloat(row.ceExtrinsic), peExtrinsic = parseFloat(row.peExtrinsic)
-              const combinedExtrinsic = parseFloat(row.combinedExtrinsic)
-              const ceHigh = parseFloat(row.ceHigh), peHigh = parseFloat(row.peHigh)
-              const isSelectedStrike = row.strike === parseInt(spotPriceRef.current.toFixed(0))
+        <div className="flex-1 overflow-auto min-h-0">
+          <table className="w-full border-collapse text-[11px]" style={{ color: t.text }}>
+            <thead className="sticky top-0 z-10">
+              <tr style={{ backgroundColor: t.panel }}>
+                {['Strike', 'CE%', 'PE%', 'CE-LTP', 'PE-LTP', 'CE-VWAP', 'PE-VWAP', 'CE-O', 'PE-O', 'CE-Intr', 'PE-Intr', 'CE-Ext', 'PE-Ext', 'Comb-Ext', 'Comb-Prem', 'Open-Comb', 'LLP'].map((h) => (
+                  <th key={h} className="px-1 py-1.5 text-center border whitespace-nowrap" style={{ borderColor: t.border }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {tableData.map((row, idx) => {
+                const ceLtp = parseFloat(row.ceLtp), peLtp = parseFloat(row.peLtp)
+                const ceOpen = parseFloat(row.ceOpen), peOpen = parseFloat(row.peOpen)
+                const ceVwap = parseFloat(row.ceVwap), peVwap = parseFloat(row.peVwap)
+                const ceIntrinsic = parseFloat(row.ceIntrinsic), peIntrinsic = parseFloat(row.peIntrinsic)
+                const ceExtrinsic = parseFloat(row.ceExtrinsic), peExtrinsic = parseFloat(row.peExtrinsic)
+                const combinedExtrinsic = parseFloat(row.combinedExtrinsic)
+                const ceHigh = parseFloat(row.ceHigh), peHigh = parseFloat(row.peHigh)
+                const isSelectedStrike = row.strike === parseInt(spotPriceRef.current.toFixed(0))
 
-              return (
-                <tr
-                  key={row.strike}
-                  style={{
-                    backgroundColor: isSelectedStrike
-                      ? (themeMode === 'dark' ? 'rgba(41,98,255,0.15)' : 'rgba(37,99,235,0.1)')
-                      : undefined,
-                  }}
-                >
-                  <td className="px-1 py-0.5 text-center font-bold border whitespace-nowrap" style={{ borderColor: t.border }}>{row.strike}</td>
-                  <td className="px-1 py-0.5 text-center border whitespace-nowrap" style={{ borderColor: t.border, color: parseFloat(row.cePercentChange) > 0 ? '#22c55e' : parseFloat(row.cePercentChange) < 0 ? '#ef4444' : undefined }}>{row.cePercentChange}%</td>
-                  <td className="px-1 py-0.5 text-center border whitespace-nowrap" style={{ borderColor: t.border, color: parseFloat(row.pePercentChange) > 0 ? '#22c55e' : parseFloat(row.pePercentChange) < 0 ? '#ef4444' : undefined }}>{row.pePercentChange}%</td>
-                  <td className="px-1 py-0.5 text-center border whitespace-nowrap" style={{ borderColor: t.border, backgroundColor: cellBg(ceLtp > 0 && ceOpen > 0 && ceLtp > ceOpen, 'green') }}>{row.ceLtp}</td>
-                  <td className="px-1 py-0.5 text-center border whitespace-nowrap" style={{ borderColor: t.border, backgroundColor: cellBg(peLtp > 0 && peOpen > 0 && peLtp > peOpen, 'red') }}>{row.peLtp}</td>
-                  <td className="px-1 py-0.5 text-center border whitespace-nowrap" style={{ borderColor: t.border, backgroundColor: cellBg(ceLtp > 0 && ceVwap > 0 && ceLtp > ceVwap, 'green') }}>{row.ceVwap}</td>
-                  <td className="px-1 py-0.5 text-center border whitespace-nowrap" style={{ borderColor: t.border, backgroundColor: cellBg(peLtp > 0 && peVwap > 0 && peLtp > peVwap, 'red') }}>{row.peVwap}</td>
-                  <td className="px-1 py-0.5 text-center border whitespace-nowrap" style={{ borderColor: t.border, backgroundColor: cellBg(ceLtp > 0 && ceOpen > 0 && ceLtp > ceOpen, 'green') }}>{row.ceO}</td>
-                  <td className="px-1 py-0.5 text-center border whitespace-nowrap" style={{ borderColor: t.border, backgroundColor: cellBg(peLtp > 0 && peOpen > 0 && peLtp > peOpen, 'red') }}>{row.peO}</td>
-                  <td className="px-1 py-0.5 text-center border whitespace-nowrap" style={{ borderColor: t.border, backgroundColor: cellBg(ceLtp > 0 && ceIntrinsic > 0 && ceLtp > ceIntrinsic, 'green') }}>{row.ceIntrinsic}</td>
-                  <td className="px-1 py-0.5 text-center border whitespace-nowrap" style={{ borderColor: t.border, backgroundColor: cellBg(peLtp > 0 && peIntrinsic > 0 && peLtp > peIntrinsic, 'red') }}>{row.peIntrinsic}</td>
-                  <td className="px-1 py-0.5 text-center border whitespace-nowrap" style={{ borderColor: t.border, backgroundColor: cellBg(ceLtp > 0 && ceExtrinsic > 0 && ceLtp > ceExtrinsic && ceLtp > peLtp, 'green') }}>{row.ceExtrinsic}</td>
-                  <td className="px-1 py-0.5 text-center border whitespace-nowrap" style={{ borderColor: t.border, backgroundColor: cellBg(peLtp > 0 && peExtrinsic > 0 && peLtp > peExtrinsic && peLtp > ceLtp, 'red') }}>{row.peExtrinsic}</td>
-                  <td
-                    className="px-1 py-0.5 text-center border whitespace-nowrap font-semibold"
+                return (
+                  <tr
+                    key={row.strike}
                     style={{
-                      borderColor: t.border,
-                      color: combinedExtrinsic > 0 && ((ceHigh > 0 && ceHigh > combinedExtrinsic) || (peHigh > 0 && peHigh > combinedExtrinsic)) ? '#2196f3' : undefined,
-                      backgroundColor: combinedExtrinsic > 0
-                        ? (ceLtp > 0 && ceLtp > combinedExtrinsic ? 'rgba(34,197,94,0.2)' : peLtp > 0 && peLtp > combinedExtrinsic ? 'rgba(239,68,68,0.2)' : undefined)
-                        : undefined,
+                      backgroundColor: isSelectedStrike
+                        ? (themeMode === 'dark' ? 'rgba(41,98,255,0.15)' : 'rgba(37,99,235,0.1)')
+                        : idx % 2 === 0
+                          ? (themeMode === 'dark' ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.02)')
+                          : undefined,
                     }}
                   >
-                    {row.combinedExtrinsic}
-                  </td>
-                  <td className="px-1 py-0.5 text-center border whitespace-nowrap" style={{ borderColor: t.border }}>{row.combinedPremium}</td>
-                  <td className="px-1 py-0.5 text-center border whitespace-nowrap" style={{ borderColor: t.border }}>{row.openCombined}</td>
-                  <td className="px-1 py-0.5 text-center border whitespace-nowrap" style={{ borderColor: t.border, color: t.textMuted }}>{row.llp}</td>
-                </tr>
-              )
-            })}
-          </tbody>
-        </table>
+                    <td className="px-1 py-1 text-center font-bold border whitespace-nowrap" style={{ borderColor: t.border }}>{row.strike}</td>
+                    <td className="px-1 py-1 text-center border whitespace-nowrap" style={{ borderColor: t.border, color: parseFloat(row.cePercentChange) > 0 ? '#22c55e' : parseFloat(row.cePercentChange) < 0 ? '#ef4444' : undefined }}>{row.cePercentChange}%</td>
+                    <td className="px-1 py-1 text-center border whitespace-nowrap" style={{ borderColor: t.border, color: parseFloat(row.pePercentChange) > 0 ? '#22c55e' : parseFloat(row.pePercentChange) < 0 ? '#ef4444' : undefined }}>{row.pePercentChange}%</td>
+                    <td className="px-1 py-1 text-center border whitespace-nowrap" style={{ borderColor: t.border, backgroundColor: cellBg(ceLtp > 0 && ceOpen > 0 && ceLtp > ceOpen, 'green') }}>{row.ceLtp}</td>
+                    <td className="px-1 py-1 text-center border whitespace-nowrap" style={{ borderColor: t.border, backgroundColor: cellBg(peLtp > 0 && peOpen > 0 && peLtp > peOpen, 'red') }}>{row.peLtp}</td>
+                    <td className="px-1 py-1 text-center border whitespace-nowrap" style={{ borderColor: t.border, backgroundColor: cellBg(ceLtp > 0 && ceVwap > 0 && ceLtp > ceVwap, 'green') }}>{row.ceVwap}</td>
+                    <td className="px-1 py-1 text-center border whitespace-nowrap" style={{ borderColor: t.border, backgroundColor: cellBg(peLtp > 0 && peVwap > 0 && peLtp > peVwap, 'red') }}>{row.peVwap}</td>
+                    <td className="px-1 py-1 text-center border whitespace-nowrap" style={{ borderColor: t.border, backgroundColor: cellBg(ceLtp > 0 && ceOpen > 0 && ceLtp > ceOpen, 'green') }}>{row.ceO}</td>
+                    <td className="px-1 py-1 text-center border whitespace-nowrap" style={{ borderColor: t.border, backgroundColor: cellBg(peLtp > 0 && peOpen > 0 && peLtp > peOpen, 'red') }}>{row.peO}</td>
+                    <td className="px-1 py-1 text-center border whitespace-nowrap" style={{ borderColor: t.border, backgroundColor: cellBg(ceLtp > 0 && ceIntrinsic > 0 && ceLtp > ceIntrinsic, 'green') }}>{row.ceIntrinsic}</td>
+                    <td className="px-1 py-1 text-center border whitespace-nowrap" style={{ borderColor: t.border, backgroundColor: cellBg(peLtp > 0 && peIntrinsic > 0 && peLtp > peIntrinsic, 'red') }}>{row.peIntrinsic}</td>
+                    <td className="px-1 py-1 text-center border whitespace-nowrap" style={{ borderColor: t.border, backgroundColor: cellBg(ceLtp > 0 && ceExtrinsic > 0 && ceLtp > ceExtrinsic && ceLtp > peLtp, 'green') }}>{row.ceExtrinsic}</td>
+                    <td className="px-1 py-1 text-center border whitespace-nowrap" style={{ borderColor: t.border, backgroundColor: cellBg(peLtp > 0 && peExtrinsic > 0 && peLtp > peExtrinsic && peLtp > ceLtp, 'red') }}>{row.peExtrinsic}</td>
+                    <td
+                      className="px-1 py-1 text-center border whitespace-nowrap font-semibold"
+                      style={{
+                        borderColor: t.border,
+                        color: combinedExtrinsic > 0 && ((ceHigh > 0 && ceHigh > combinedExtrinsic) || (peHigh > 0 && peHigh > combinedExtrinsic)) ? '#2196f3' : undefined,
+                        backgroundColor: combinedExtrinsic > 0
+                          ? (ceLtp > 0 && ceLtp > combinedExtrinsic ? 'rgba(34,197,94,0.2)' : peLtp > 0 && peLtp > combinedExtrinsic ? 'rgba(239,68,68,0.2)' : undefined)
+                          : undefined,
+                      }}
+                    >
+                      {row.combinedExtrinsic}
+                    </td>
+                    <td className="px-1 py-1 text-center border whitespace-nowrap" style={{ borderColor: t.border }}>{row.combinedPremium}</td>
+                    <td className="px-1 py-1 text-center border whitespace-nowrap" style={{ borderColor: t.border }}>{row.openCombined}</td>
+                    <td className="px-1 py-1 text-center border whitespace-nowrap" style={{ borderColor: t.border, color: t.textMuted }}>{row.llp}</td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   )
@@ -329,8 +333,8 @@ export default function RealtimeTable({ onClose, standalone = false }: Props) {
     )
   }
 
-  return (
-    <div className="h-full w-full p-0 flex flex-col">
+    return (
+    <div className="h-screen w-full p-0 flex flex-col">
       <div className="h-12 border-b border-border flex items-center px-4 bg-card/50 shrink-0 justify-between">
         <div className="flex items-center gap-2">
           <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-foreground hover:bg-accent md:hidden">
@@ -354,7 +358,7 @@ export default function RealtimeTable({ onClose, standalone = false }: Props) {
             <Link to="/madhan/ezay-chart"><BarChart3 className="h-3.5 w-3.5 mr-1.5" />EzayChart</Link>
           </Button>
           <Button variant="ghost" size="sm" className="h-7 text-xs hidden sm:flex" asChild>
-            <Link to="/madhan/realtime-table"><BarChart3 className="h-3.5 w-3.5 mr-1.5" />RealtimeTable</Link>
+            <Link to="/madhan/realtime-table"><BarChart3 className="h-3.5 w-3.5 mr-1.5" />EzayOptionsTable</Link>
           </Button>
         </div>
         <div className="flex items-center gap-2">

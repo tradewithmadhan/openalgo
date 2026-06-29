@@ -241,7 +241,7 @@ export default function ATPLTPStrategy() {
              <Button variant="ghost" size="sm" className="h-7 text-xs hidden sm:flex" asChild>
                 <Link to="/madhan/realtime-table">
                 <BarChart3 className="h-3.5 w-3.5 mr-1.5" />
-                RealtimeTable
+                EzayOptionsTable
                 </Link>
             </Button>
           </div>
