@@ -44,28 +44,29 @@ export default function RealtimeTable({ onClose, standalone = false }: Props) {
   const showAllRef = useRef(false)
   const containerRef = useRef<HTMLDivElement | null>(null)
   const theadRef = useRef<HTMLTableSectionElement | null>(null)
-  const [containerHeight, setContainerHeight] = useState(0)
   const [wsStatus, setWsStatus] = useState<'disconnected' | 'connecting' | 'connected'>('disconnected')
   const [tableData, setTableData] = useState<TableRow[]>([])
   const [showAllStrikes, setShowAllStrikes] = useState(false)
+  const [availHeight, setAvailHeight] = useState(0)
 
   useEffect(() => {
-    const el = containerRef.current
-    if (!el) return
-    const ro = new ResizeObserver((entries) => {
-      const entry = entries[0]
-      if (entry) setContainerHeight(entry.contentRect.height)
-    })
-    ro.observe(el)
-    return () => ro.disconnect()
+    const calc = () => {
+      const wrapper = containerRef.current?.parentElement
+      if (wrapper) {
+        setAvailHeight(wrapper.clientHeight)
+      }
+    }
+    calc()
+    window.addEventListener('resize', calc)
+    return () => window.removeEventListener('resize', calc)
   }, [])
 
   const rowHeight = useMemo(() => {
-    if (tableData.length === 0) return 32
-    const headerH = theadRef.current?.getBoundingClientRect().height ?? 32
-    const avail = Math.max(0, containerHeight - headerH)
-    return Math.max(32, avail / tableData.length)
-  }, [containerHeight, tableData.length])
+    if (tableData.length === 0 || availHeight === 0) return 36
+    const headerH = theadRef.current?.getBoundingClientRect().height ?? 36
+    const avail = Math.max(0, availHeight - headerH)
+    return Math.max(28, avail / tableData.length)
+  }, [availHeight, tableData.length])
 
   const { mode: themeMode, toggleMode, appMode, toggleAppMode, isTogglingMode } = useThemeStore()
   const t = chartTheme[themeMode]
@@ -439,7 +440,7 @@ export default function RealtimeTable({ onClose, standalone = false }: Props) {
         {wsBar}
       </div>
 
-      <div className="flex-1 min-h-0 overflow-hidden" style={{ backgroundColor: t.panelDarker }}>
+      <div className="flex-1 min-h-0 overflow-hidden flex flex-col" style={{ backgroundColor: t.panelDarker }}>
         {tableContent}
       </div>
     </div>
