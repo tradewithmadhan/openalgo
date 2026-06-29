@@ -244,7 +244,12 @@ export default function EzayChart() {
       priceLineVisible: false,
       lastValueVisible: false,
       priceFormat: { type: 'volume' },
-    }, 1)
+      priceScaleId: 'volume',
+    })
+
+    chart.priceScale('volume').applyOptions({
+      scaleMargins: { top: 0.8, bottom: 0 },
+    })
 
     ceMarkersRef.current = createSeriesMarkers(ceSeriesRef.current, [])
     peMarkersRef.current = createSeriesMarkers(peSeriesRef.current, [])
