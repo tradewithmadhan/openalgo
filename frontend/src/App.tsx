@@ -124,6 +124,7 @@ const Madhan01 = lazy(() => import('@/pages/madhan/Madhan01'))
 const NiftyChart = lazy(() => import('@/pages/madhan/NiftyChart'))
 const ATPLTPStrategy = lazy(() => import('@/pages/madhan/ATPLTPStrategy'))
 const EzayChart = lazy(() => import('@/pages/madhan/EzayChart'))
+const RealtimeTablePage = lazy(() => import('@/pages/madhan/RealtimeTable'))
 
 // Admin pages
 const AdminIndex = lazy(() => import('@/pages/admin/AdminIndex'))
@@ -291,6 +292,7 @@ function App() {
                 <Route path="/madhan/nifty-chart" element={<NiftyChart />} />
                 <Route path="/madhan/ATP-LTPStrategy" element={<ATPLTPStrategy />} />
                 <Route path="/madhan/ezay-chart" element={<EzayChart />} />
+                <Route path="/madhan/realtime-table" element={<RealtimeTablePage standalone />} />
                 <Route path="/playground" element={<Playground />} />
                 <Route path="/historify" element={<Historify />} />
                 <Route path="/historify/charts" element={<HistorifyCharts />} />
