@@ -1039,23 +1039,27 @@ export default function NiftyChart() {
           _data: CoiHistoryDay[]
           _candles: Candle[]
           _show: boolean
+          _interval: string
           _lastCandleMap: Map<string, number>
-          constructor(series: any, data: CoiHistoryDay[], candles: Candle[]) {
+          constructor(series: any, data: CoiHistoryDay[], candles: Candle[], interval: string) {
             this._series = series
             this._data = data
             this._candles = candles
             this._show = false
+            this._interval = interval
             this._lastCandleMap = new Map()
             this._buildMap()
           }
           _buildMap() {
             this._lastCandleMap.clear()
-            // Build from API dates directly — use 15:30 IST (market close) as last candle time
+            // Interval in seconds to calculate last candle start time
+            const intervalSec = this._interval === '1m' ? 60 : this._interval === '5m' ? 300 : this._interval === '15m' ? 900 : 300
+            // Market closes at 15:30 IST = 10:00 UTC. Last candle starts at close - interval.
+            const closeUtcMin = 10 * 60 + 30 // 15:30 IST in UTC minutes
+            const lastCandleUtcMin = closeUtcMin - intervalSec / 60
             for (const day of this._data) {
-              // Parse YYYY-MM-DD and create 15:30 IST timestamp
               const [y, m, d] = day.date.split('-').map(Number)
-              // 15:30 IST = 10:00 UTC
-              const utcTs = Math.floor(Date.UTC(y, m - 1, d, 10, 0, 0) / 1000)
+              const utcTs = Math.floor(Date.UTC(y, m - 1, d, 0, lastCandleUtcMin, 0) / 1000)
               this._lastCandleMap.set(day.date, utcTs)
             }
           }
@@ -1102,17 +1106,18 @@ export default function NiftyChart() {
               },
             }]
           }
-          setData(data: CoiHistoryDay[], candles: Candle[]) {
+          setData(data: CoiHistoryDay[], candles: Candle[], interval: string) {
             this._data = data
             this._candles = candles
+            this._interval = interval
             this._buildMap()
           }
           toggle() { this._show = !this._show; return this._show }
-        })(seriesAny, json.data, candles)
+        })(seriesAny, json.data, candles, interval)
         seriesAny.attachPrimitive(prim)
         coiHistoryPrimitiveRef.current = prim
       } else {
-        coiHistoryPrimitiveRef.current.setData(json.data, candles)
+        coiHistoryPrimitiveRef.current.setData(json.data, candles, interval)
       }
       repaintOverlay()
     } catch {
