@@ -688,6 +688,7 @@ def get_coi_history(days: int = 30):
 
         # COI = today - yesterday
         coi_by_date = {}
+        today_str = today.strftime('%Y-%m-%d')
         for i in range(1, len(sorted_dates)):
             today_d = sorted_dates[i]
             prev_d = sorted_dates[i - 1]
@@ -701,7 +702,8 @@ def get_coi_history(days: int = 30):
                 pe_coi = today_pe - prev_pe
                 if ce_coi != 0 or pe_coi != 0:
                     strikes_map[strike] = {'price': strike, 'ceOI': ce_coi, 'peOI': pe_coi}
-            if strikes_map:
+            # Skip current day — already shown by the live COI panel
+            if today_d != today_str and strikes_map:
                 coi_by_date[today_d] = [strikes_map[s] for s in sorted(strikes_map.keys())]
 
         return coi_by_date
