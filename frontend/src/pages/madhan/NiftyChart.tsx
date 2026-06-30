@@ -59,6 +59,16 @@ type OIProfileResponse = {
   coi: { strikes: Array<{ price: number; ceOI: number; peOI: number }> }
 }
 
+type CoiHistoryDay = {
+  date: string
+  strikes: Array<{ price: number; ceOI: number; peOI: number }>
+}
+
+type CoiHistoryResponse = {
+  status: string
+  data: CoiHistoryDay[]
+}
+
 type IndicatorInstance = {
   key: string
   indicatorId: string
@@ -136,6 +146,7 @@ export default function NiftyChart() {
   const coiShowValuesRef = useRef(true)
   const sqrtPrimitiveRef = useRef<any>(null)
   const sqrtActiveRef = useRef(false)
+  const coiHistoryPrimitiveRef = useRef<any>(null)
 
   const [interval, setIntervalValue] = useState('5m')
   const [oiActive, setOiActive] = useState(true)
@@ -144,6 +155,7 @@ export default function NiftyChart() {
   const [dayOpenActive, setDayOpenActive] = useState(false)
   const [prevOhlcActive, setPrevOhlcActive] = useState(false)
   const [sqrtActive, setSqrtActive] = useState(false)
+  const [coiHistoryActive, setCoiHistoryActive] = useState(false)
   const [oiX, setOiX] = useState(100)
   const [coiX, setCoiX] = useState(80)
   const [oiShowStrike, setOiShowStrike] = useState(false)
@@ -1013,6 +1025,109 @@ export default function NiftyChart() {
     coiPrimitiveRef.current.setValues(coiShowValuesRef.current)
   }
 
+  const fetchCoiHistory = async () => {
+    if (!candleRef.current) return
+    try {
+      const res = await fetch(`/madhan/api/nifty/coi_history?days=30&_=${Date.now()}`)
+      const json: CoiHistoryResponse = await res.json()
+      if (json?.status !== 'success' || !json?.data?.length) return
+      const candles = priceDataRef.current
+      const seriesAny = candleRef.current as any
+      if (!coiHistoryPrimitiveRef.current) {
+        const prim = new (class {
+          _series: any
+          _data: CoiHistoryDay[]
+          _candles: Candle[]
+          _show: boolean
+          _lastCandleMap: Map<string, number>
+          constructor(series: any, data: CoiHistoryDay[], candles: Candle[]) {
+            this._series = series
+            this._data = data
+            this._candles = candles
+            this._show = false
+            this._lastCandleMap = new Map()
+            this._buildMap()
+          }
+          _buildMap() {
+            this._lastCandleMap.clear()
+            const dayLastTs = new Map<string, number>()
+            for (const c of this._candles) {
+              const d = new Date(c.time * 1000).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' })
+              dayLastTs.set(d, c.time)
+            }
+            for (const day of this._data) {
+              const ts = dayLastTs.get(day.date)
+              if (ts != null) this._lastCandleMap.set(day.date, ts)
+            }
+          }
+          paneViews() {
+            const self = this
+            return [{
+              zOrder() { return 'top' as const },
+              renderer() {
+                return {
+                  draw(target: any) {
+                    if (!self._show || !self._data.length) return
+                    const chart = self._series.chart?.()
+                    if (!chart) return
+                    const timeScale = chart.timeScale()
+                    target.useBitmapCoordinateSpace((scope: any) => {
+                      const ctx = scope.context
+                      const hpr = scope.horizontalPixelRatio
+                      const vpr = scope.verticalPixelRatio
+                      for (const day of self._data) {
+                        const lastTs = self._lastCandleMap.get(day.date)
+                        if (lastTs == null) continue
+                        const x = timeScale.timeToCoordinate(lastTs as Time)
+                        if (x == null) continue
+                        const bx = x * hpr
+                        const maxAbs = Math.max(1, ...day.strikes.map((s) => Math.max(Math.abs(s.ceOI || 0), Math.abs(s.peOI || 0))))
+                        for (const s of day.strikes) {
+                          const y = self._series.priceToCoordinate(s.price)
+                          if (y == null) continue
+                          const by = y * vpr
+                          const ceVal = s.ceOI || 0
+                          const peVal = s.peOI || 0
+                          const ceW = Math.max(2, (Math.abs(ceVal) / maxAbs) * 120) * hpr
+                          const peW = Math.max(2, (Math.abs(peVal) / maxAbs) * 120) * hpr
+                          const barH = 5 * vpr
+                          ctx.fillStyle = ceVal >= 0 ? 'rgba(244,67,54,0.6)' : 'rgba(76,175,80,0.6)'
+                          ctx.fillRect(bx - ceW, by - barH - 1, ceW, barH)
+                          ctx.fillStyle = peVal >= 0 ? 'rgba(76,175,80,0.6)' : 'rgba(244,67,54,0.6)'
+                          ctx.fillRect(bx - peW, by + 1, peW, barH)
+                        }
+                      }
+                    })
+                  },
+                }
+              },
+            }]
+          }
+          setData(data: CoiHistoryDay[], candles: Candle[]) {
+            this._data = data
+            this._candles = candles
+            this._buildMap()
+          }
+          toggle() { this._show = !this._show; return this._show }
+        })(seriesAny, json.data, candles)
+        seriesAny.attachPrimitive(prim)
+        coiHistoryPrimitiveRef.current = prim
+      } else {
+        coiHistoryPrimitiveRef.current.setData(json.data, candles)
+      }
+      repaintOverlay()
+    } catch {
+      // silently ignore fetch errors
+    }
+  }
+
+  const toggleCoiHistory = () => {
+    if (!coiHistoryPrimitiveRef.current) return
+    const v = coiHistoryPrimitiveRef.current.toggle()
+    setCoiHistoryActive(v)
+    repaintOverlay()
+  }
+
   const fetchOptionCombinedVolume = async () => {
     if (!optionVolumeRef.current) return
     const res = await fetch(
@@ -1226,6 +1341,7 @@ export default function NiftyChart() {
       })
     }
     await Promise.all([fetchOiProfiles(), fetchOptionCombinedVolume()])
+    fetchCoiHistory()
   }
 
   const repaintOverlay = () => {
@@ -2155,6 +2271,7 @@ export default function NiftyChart() {
               <Label className="text-[11px]">Values</Label>
             </div>
           </div>
+          <Button variant={coiHistoryActive ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={toggleCoiHistory}>COI Hist</Button>
           <div className="flex items-center gap-1.5 ml-auto">
             <div className="flex items-center gap-1" title={wsError || (isConnected ? 'Connected' : isConnecting ? 'Connecting...' : 'Disconnected')}>
               {isConnected ? (

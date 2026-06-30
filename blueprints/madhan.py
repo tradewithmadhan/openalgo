@@ -7,7 +7,7 @@ from collections import defaultdict
 from bisect import bisect_right
 from services.history_service import get_history
 from services.madhan.nifty_fetch_service import nifty_fetcher
-from database.madhan_db import get_nifty_data, get_option_data, get_nifty_data_count, get_previous_day_oi, get_nth_candle_oi_for_all_symbols, get_current_day_historical_data, get_current_day_instrument_data, SessionLocal, NiftyData, get_tracked_symbols
+from database.madhan_db import get_nifty_data, get_option_data, get_nifty_data_count, get_previous_day_oi, get_nth_candle_oi_for_all_symbols, get_current_day_historical_data, get_current_day_instrument_data, get_coi_history, SessionLocal, NiftyData, get_tracked_symbols
 from database.auth_db import get_api_key_for_tradingview
 from blueprints.react_app import serve_react_app
 
@@ -1398,6 +1398,27 @@ def oi_profile_data():
     oi_data, coi_data = build_oi_and_coi_data(prev_day_data, current_oi_map, change_oi_map)
 
     return jsonify({"oi": oi_data, "coi": coi_data})
+
+
+@madhan_bp.route('/api/nifty/coi_history')
+@check_session_validity
+def coi_history():
+    """Returns daily COI (Change in OI) history for all tracked option symbols."""
+    days = request.args.get('days', 30, type=int)
+    days = min(max(days, 1), 90)  # clamp 1-90
+
+    data = get_coi_history(days)
+
+    # Convert to list format for easier frontend consumption
+    result = []
+    for date_str in sorted(data.keys()):
+        result.append({
+            'date': date_str,
+            'strikes': data[date_str],
+        })
+
+    return jsonify({"status": "success", "data": result})
+
 
 import re
 def extract_strike(symbol: str) -> int | None:

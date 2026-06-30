@@ -596,3 +596,85 @@ def get_current_day_instrument_data(symbol: str):
         return []
     finally:
         session.close()
+
+
+def get_coi_history(days: int = 30):
+    """
+    Returns daily COI (Change in OI) history for all tracked option symbols.
+
+    COI for a day = end-of-day OI - previous day's end-of-day OI.
+
+    Returns a dict keyed by date string ('YYYY-MM-DD'), each containing
+    a list of {symbol, strike, type, coi, oi} dicts.
+    """
+    session = SessionLocal()
+    try:
+        today = get_valid_trading_day(exchange="NSE")
+        # Go back further to account for weekends/holidays
+        lookback = today - timedelta(days=days * 2)
+        start_ts = int(datetime.combine(lookback, time.min).timestamp())
+        end_ts = int(datetime.combine(today, time.max).timestamp())
+
+        # Get all option data in range
+        rows = session.query(
+            OptionData.symbol,
+            OptionData.timestamp,
+            OptionData.oi,
+        ).filter(
+            OptionData.timestamp >= start_ts,
+            OptionData.timestamp <= end_ts,
+        ).order_by(
+            OptionData.symbol, OptionData.timestamp.asc()
+        ).all()
+
+        if not rows:
+            return {}
+
+        # Group by symbol, then by date -> last candle OI
+        from collections import defaultdict
+        symbol_dates = defaultdict(lambda: defaultdict(int))  # sym -> date_str -> last_oi
+
+        for sym, ts, oi in rows:
+            dt = datetime.fromtimestamp(ts)
+            date_str = dt.strftime('%Y-%m-%d')
+            if oi is not None:
+                symbol_dates[sym][date_str] = oi
+
+        # Get sorted list of all trading dates
+        all_dates = sorted({d for sd in symbol_dates.values() for d in sd})
+
+        # Build COI: for each date, COI = that date's EOD OI - previous date's EOD OI
+        coi_by_date = {}
+
+        for i, date_str in enumerate(all_dates):
+            if i == 0:
+                continue
+            prev_date = all_dates[i - 1]
+            strikes_map = {}
+            for sym, dates_oi in symbol_dates.items():
+                today_oi = dates_oi.get(date_str, 0)
+                prev_oi = dates_oi.get(prev_date, 0)
+                if today_oi == 0 and prev_oi == 0:
+                    continue
+                strike = extract_strike(sym)
+                if strike is None:
+                    continue
+                coi_val = today_oi - prev_oi
+                if strike not in strikes_map:
+                    strikes_map[strike] = {'ceOI': 0, 'peOI': 0}
+                if sym.endswith('CE'):
+                    strikes_map[strike]['ceOI'] = coi_val
+                else:
+                    strikes_map[strike]['peOI'] = coi_val
+            coi_by_date[date_str] = [
+                {'price': s, **v} for s, v in sorted(strikes_map.items())
+            ]
+
+        recent_dates = all_dates[-days:]
+        return {d: coi_by_date[d] for d in recent_dates if d in coi_by_date}
+
+    except Exception as e:
+        logger.error(f"Error fetching COI history: {e}", exc_info=True)
+        return {}
+    finally:
+        session.close()
