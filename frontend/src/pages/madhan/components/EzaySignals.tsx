@@ -8,7 +8,7 @@ export type SignalRow = {
   strike: number
   ce_signal: boolean
   pe_signal: boolean
-  cp_signal: boolean
+  cp_signal: 'CE' | 'PE' | false
   cp_ce_signal: boolean
 }
 
@@ -155,22 +155,26 @@ export default function EzaySignals({ className }: EzaySignalsProps) {
           const rows = grouped.get(ts)!
           return (
             <div key={ts} style={{ borderBottom: `1px solid ${t.border}` }}>
-              <div className="px-2 py-1" style={{ borderBottom: `1px solid ${t.border}` }}>
-                <span className="text-[10px] font-mono font-semibold" style={{ color: t.textSecondary }}>{formatTime(ts)}</span>
+              <div className="px-2 py-0.5">
+                <span className="text-[11px] font-mono font-bold" style={{ color: t.text }}>{formatTime(ts)}</span>
               </div>
               {rows.map((row) => {
-                const rowBg = row.ce_signal ? 'rgba(0,200,81,0.2)'
-                  : row.pe_signal ? 'rgba(255,68,68,0.2)'
-                  : row.cp_signal ? 'rgba(255,214,0,0.2)'
-                  : row.cp_ce_signal ? 'rgba(33,150,243,0.2)'
+                const strikeBg = row.ce_signal ? 'rgba(0,200,81,0.4)'
+                  : row.pe_signal ? 'rgba(255,68,68,0.4)'
+                  : row.cp_signal === 'CE' ? 'rgba(0,200,81,0.4)'
+                  : row.cp_signal === 'PE' ? 'rgba(255,68,68,0.4)'
                   : undefined
                 return (
-                  <div key={row.strike} className="grid grid-cols-[50px_50px_1fr_1fr_1fr_1fr] gap-0 px-2 py-0.5 items-center" style={{ backgroundColor: rowBg }}>
+                  <div key={row.strike} className="grid grid-cols-[50px_50px_1fr_1fr_1fr_1fr] gap-0 px-2 py-0.5 items-center">
                     <span />
-                    <span className="text-[10px] font-mono text-right" style={{ color: t.text }}>{row.strike}</span>
+                    <span className="text-[11px] font-mono font-bold text-right px-1 py-0 rounded" style={{ color: t.text, backgroundColor: strikeBg }}>{row.strike}</span>
                     <div className="flex justify-center">{signalDot(row.ce_signal, '#00C851')}</div>
                     <div className="flex justify-center">{signalDot(row.pe_signal, '#E040FB')}</div>
-                    <div className="flex justify-center">{signalDot(row.cp_signal, '#FFD600')}</div>
+                    <div className="flex justify-center">
+                      {row.cp_signal ? (
+                        <span className="text-[9px] font-bold" style={{ color: row.cp_signal === 'CE' ? '#00C851' : '#FF4444' }}>{row.cp_signal}</span>
+                      ) : signalDot(false, '#FFD600')}
+                    </div>
                     <div className="flex justify-center">{signalDot(row.cp_ce_signal, '#2196f3')}</div>
                   </div>
                 )

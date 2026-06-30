@@ -1806,10 +1806,12 @@ def ezay_chart_signals():
                     ce_c2 = (ce_item['low'] < combined_extrinsic and ce_item['close'] > combined_extrinsic and ce_item['close'] > pe_item['close'])
                     pe_c1 = (prev_pe['low'] < prev_combined_ext and pe_item['close'] > combined_extrinsic and pe_item['close'] > ce_item['close'])
                     pe_c2 = (pe_item['low'] < combined_extrinsic and pe_item['close'] > combined_extrinsic and pe_item['close'] > ce_item['close'])
-                    if ce_c1 or ce_c2 or pe_c1 or pe_c2:
-                        if not prev_cp_signal:
-                            cp_signal = True
-                prev_cp_signal = cp_signal
+                    if not prev_cp_signal:
+                        if ce_c1 or ce_c2:
+                            cp_signal = 'CE'
+                        elif pe_c1 or pe_c2:
+                            cp_signal = 'PE'
+                prev_cp_signal = bool(cp_signal)
 
                 # CP_CE signal
                 cp_ce_signal = False
