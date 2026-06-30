@@ -1819,14 +1819,15 @@ def ezay_chart_signals():
                         cp_ce_signal = True
                 prev_cp_ce_sig = cp_ce_signal
 
-                all_signals.append({
-                    'time': ts,
-                    'strike': strike_price,
-                    'ce_signal': ce_item['signal'],
-                    'pe_signal': pe_item['signal'],
-                    'cp_signal': cp_signal,
-                    'cp_ce_signal': cp_ce_signal,
-                })
+                if ce_item['signal'] or pe_item['signal'] or cp_signal or cp_ce_signal:
+                    all_signals.append({
+                        'time': ts,
+                        'strike': strike_price,
+                        'ce_signal': ce_item['signal'],
+                        'pe_signal': pe_item['signal'],
+                        'cp_signal': cp_signal,
+                        'cp_ce_signal': cp_ce_signal,
+                    })
 
         all_signals.sort(key=lambda x: (x['time'], x['strike']))
 
