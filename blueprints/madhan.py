@@ -1655,8 +1655,8 @@ def ezay_chart_data():
                 
                 # CP_CE Signal detection: Combined Premium ≈ Combined Extrinsic (within 5%)
                 cp_ce_signal = False
-                if combined_extrinsic > 0:  # Avoid division by zero
-                    tolerance = combined_extrinsic * 0.015  # 1.5% tolerance
+                if (ce_item.get('extrinsic_signal', False) or pe_item.get('extrinsic_signal', False)) and combined_extrinsic > 0:
+                    tolerance = combined_extrinsic * 0.01
                     if abs(combined_premium - combined_extrinsic) <= tolerance:
                         cp_ce_signal = True
                 
@@ -1813,10 +1813,10 @@ def ezay_chart_signals():
                             cp_signal = 'PE'
                 prev_cp_signal = bool(cp_signal)
 
-                # CP_CE signal
+                # CP_CE signal - only valid when CE or PE signal is also present
                 cp_ce_signal = False
-                if combined_extrinsic > 0:
-                    tolerance = combined_extrinsic * 0.015
+                if (ce_item['signal'] or pe_item['signal']) and combined_extrinsic > 0:
+                    tolerance = combined_extrinsic * 0.01
                     if abs(combined_premium - combined_extrinsic) <= tolerance:
                         cp_ce_signal = True
                 prev_cp_ce_sig = cp_ce_signal

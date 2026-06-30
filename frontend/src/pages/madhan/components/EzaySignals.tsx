@@ -94,8 +94,8 @@ export default function EzaySignals({ className }: EzaySignalsProps) {
 
   return (
     <div
-      className={cn('flex flex-col min-h-0', className)}
-      style={{ width: 320, borderLeft: `1px solid ${t.border}`, backgroundColor: t.panelDarker }}
+      className={cn('flex flex-col min-h-0 w-full', className)}
+      style={{ borderLeft: `1px solid ${t.border}`, backgroundColor: t.panelDarker }}
     >
       <div className="shrink-0 px-2 py-1.5 flex items-center gap-2" style={{ borderBottom: `1px solid ${t.border}` }}>
         <span className="text-[11px] font-semibold" style={{ color: t.text }}>EzaySignals</span>

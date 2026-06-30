@@ -41,6 +41,7 @@ import DrawingListPanel from './DrawingListPanel'
 import TextEditorModal from './TextEditorModal'
 import ChartLayout from './ChartLayout'
 import WidgetBar from './WidgetBar'
+import EzaySignals from './components/EzaySignals'
 import IndicatorPanel, { INDICATOR_CATEGORIES } from './IndicatorPanel'
 import { PlotFillPrimitive, LineBrPrimitive, ExtendedMarkerPrimitive, BgColorPrimitive, LabelPrimitive, BoxPrimitive, LineDrawingPrimitive, TablePrimitive, CrossPlotPrimitive, applyTransparency } from './chartPrimitives'
 
@@ -2193,7 +2194,7 @@ export default function NiftyChart() {
             </>
           }
           rightPanel={
-            <WidgetBar>
+            <WidgetBar ezaySignals={<EzaySignals className="h-full" />}>
               <DrawingListPanel
                 drawingManager={drawingManagerRef.current}
                 selectedDrawingId={selectedDrawingId}
