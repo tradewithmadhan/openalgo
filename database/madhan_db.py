@@ -601,77 +601,93 @@ def get_current_day_instrument_data(symbol: str):
 def get_coi_history(days: int = 30):
     """
     Returns daily COI (Change in OI) history for all tracked option symbols.
-
+    Uses ROW_NUMBER() partitioned by symbol+date to get last candle OI per day,
+    same pattern as get_option_data().
+    
     COI for a day = end-of-day OI - previous day's end-of-day OI.
-
-    Returns a dict keyed by date string ('YYYY-MM-DD'), each containing
-    a list of {price, ceOI, peOI} dicts (same shape as oi_profile coi).
     """
     from datetime import timezone as tz
+    from sqlalchemy.orm import aliased
     IST = tz(timedelta(hours=5, minutes=30))
 
     session = SessionLocal()
     try:
         today = get_valid_trading_day(exchange="NSE")
         lookback = today - timedelta(days=days * 2)
-        # Use IST for timestamp boundaries
-        start_ts = int(datetime.combine(lookback, time.min, tzinfo=IST).timestamp())
-        end_ts = int(datetime.combine(today, time.max, tzinfo=IST).timestamp())
+        start_ts = int(datetime.combine(lookback, time.min).timestamp())
+        end_ts = int(datetime.combine(today, time.max).timestamp())
+
+        # Use ROW_NUMBER() to get last candle per symbol per day — same pattern as get_option_data()
+        # SQLite datetime() converts Unix timestamp (seconds) to datetime string
+        subq = (
+            select(
+                OptionData.symbol,
+                OptionData.timestamp,
+                OptionData.oi,
+                # Extract date from Unix timestamp using SQLite datetime function
+                func.date(func.datetime(OptionData.timestamp, 'unixepoch', '+5 hours', '+30 minutes')).label('day'),
+                func.row_number().over(
+                    partition_by=[OptionData.symbol, func.date(func.datetime(OptionData.timestamp, 'unixepoch', '+5 hours', '+30 minutes'))],
+                    order_by=OptionData.timestamp.desc()
+                ).label('rn'),
+            ).filter(
+                OptionData.timestamp >= start_ts,
+                OptionData.timestamp <= end_ts,
+            )
+        ).subquery()
 
         rows = session.query(
-            OptionData.symbol,
-            OptionData.timestamp,
-            OptionData.oi,
-        ).filter(
-            OptionData.timestamp >= start_ts,
-            OptionData.timestamp <= end_ts,
-        ).order_by(
-            OptionData.symbol, OptionData.timestamp.asc()
-        ).all()
+            subq.c.symbol,
+            subq.c.day,
+            subq.c.oi,
+        ).filter(subq.c.rn == 1).all()
 
-        logger.info(f"COI history: queried {len(rows)} rows (ts {start_ts}..{end_ts})")
+        logger.info(f"COI history: got {len(rows)} last-candle-per-symbol-per-day rows")
         if not rows:
             return {}
 
+        # Group by date -> {strike: {ceOI, peOI}}
         from collections import defaultdict
-        symbol_dates = defaultdict(lambda: defaultdict(int))
+        day_strikes = defaultdict(lambda: defaultdict(lambda: {'ceOI': 0, 'peOI': 0}))
+        all_dates = set()
 
-        for sym, ts, oi in rows:
-            dt = datetime.fromtimestamp(ts, tz=IST)
-            date_str = dt.strftime('%Y-%m-%d')
-            if oi is not None:
-                symbol_dates[sym][date_str] = oi
-
-        all_dates = sorted({d for sd in symbol_dates.values() for d in sd})
-        logger.info(f"COI history: {len(all_dates)} trading dates found: {all_dates}")
-
-        coi_by_date = {}
-        for i, date_str in enumerate(all_dates):
-            if i == 0:
+        for sym, day, oi in rows:
+            if not sym or not day or oi is None:
                 continue
-            prev_date = all_dates[i - 1]
-            strikes_map = {}
-            for sym, dates_oi in symbol_dates.items():
-                today_oi = dates_oi.get(date_str, 0)
-                prev_oi = dates_oi.get(prev_date, 0)
-                if today_oi == 0 and prev_oi == 0:
-                    continue
-                strike = extract_strike(sym)
-                if strike is None:
-                    continue
-                coi_val = today_oi - prev_oi
-                if strike not in strikes_map:
-                    strikes_map[strike] = {'ceOI': 0, 'peOI': 0}
-                if sym.endswith('CE'):
-                    strikes_map[strike]['ceOI'] = coi_val
-                else:
-                    strikes_map[strike]['peOI'] = coi_val
-            coi_by_date[date_str] = [
-                {'price': s, **v} for s, v in sorted(strikes_map.items())
-            ]
+            all_dates.add(day)
+            strike = extract_strike(sym)
+            if strike is None:
+                continue
+            if sym.endswith('CE'):
+                day_strikes[day][strike]['ceOI'] = oi
+            elif sym.endswith('PE'):
+                day_strikes[day][strike]['peOI'] = oi
 
-        recent_dates = all_dates[-days:]
-        return {d: coi_by_date[d] for d in recent_dates if d in coi_by_date}
+        sorted_dates = sorted(all_dates)
+        logger.info(f"COI history: {len(sorted_dates)} dates: {sorted_dates}")
+
+        if len(sorted_dates) < 2:
+            return {}
+
+        # COI = today - yesterday
+        coi_by_date = {}
+        for i in range(1, len(sorted_dates)):
+            today_d = sorted_dates[i]
+            prev_d = sorted_dates[i - 1]
+            strikes_map = {}
+            for strike in sorted(set(list(day_strikes[today_d].keys()) + list(day_strikes[prev_d].keys()))):
+                today_ce = day_strikes[today_d].get(strike, {}).get('ceOI', 0)
+                prev_ce = day_strikes[prev_d].get(strike, {}).get('ceOI', 0)
+                today_pe = day_strikes[today_d].get(strike, {}).get('peOI', 0)
+                prev_pe = day_strikes[prev_d].get(strike, {}).get('peOI', 0)
+                ce_coi = today_ce - prev_ce
+                pe_coi = today_pe - prev_pe
+                if ce_coi != 0 or pe_coi != 0:
+                    strikes_map[strike] = {'price': strike, 'ceOI': ce_coi, 'peOI': pe_coi}
+            if strikes_map:
+                coi_by_date[today_d] = [strikes_map[s] for s in sorted(strikes_map.keys())]
+
+        return coi_by_date
 
     except Exception as e:
         logger.error(f"Error fetching COI history: {e}", exc_info=True)
