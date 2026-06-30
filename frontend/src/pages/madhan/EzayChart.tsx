@@ -32,6 +32,7 @@ import { useProfileMenuItems } from '@/hooks/useProfileMenuItems'
 import { cn } from '@/lib/utils'
 import { chartTheme } from './chartTheme'
 import RealtimeTable from './RealtimeTable'
+import EzaySignals from './components/EzaySignals'
 
 type OptionDataResponse = {
   status: string
@@ -146,6 +147,7 @@ export default function EzayChart() {
   const [atmStrike, setAtmStrike] = useState<number | null>(null)
   const [strikePanelOpen, setStrikePanelOpen] = useState(true)
   const [showRealtime, setShowRealtime] = useState(false)
+  const [showEzaySignals, setShowEzaySignals] = useState(false)
   const [semiTransparent, setSemiTransparent] = useState(false)
   const semiTransparentRef = useRef(false)
   const [ceSymbol, setCeSymbol] = useState('')
@@ -772,6 +774,14 @@ export default function EzayChart() {
           >
             Realtime
           </Button>
+          <Button
+            size="sm"
+            variant={showEzaySignals ? 'default' : 'ghost'}
+            className="h-6 px-2 text-[10px]"
+            onClick={() => setShowEzaySignals(!showEzaySignals)}
+          >
+            EzaySignals
+          </Button>
         </div>
         <div className="ml-auto flex items-center gap-3">
           {liveSpot > 0 && (
@@ -851,6 +861,7 @@ export default function EzayChart() {
           <div ref={chartContainerRef} className="absolute inset-0" />
           {showRealtime && <RealtimeTable onClose={() => setShowRealtime(false)} />}
         </div>
+        {showEzaySignals && <EzaySignals />}
       </div>
     </div>
   )

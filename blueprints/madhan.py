@@ -1706,6 +1706,136 @@ def ezay_chart_data():
         logger.error(f"Error fetching ezayChart data: {str(e)}")
         return jsonify({'status': 'error', 'message': f'Error fetching chart data: {str(e)}'}), 500
 
+@madhan_bp.route('/api/ezayChart_signals')
+@check_session_validity
+def ezay_chart_signals():
+    """Gets signal data for all strikes - lightweight endpoint for EzaySignals panel."""
+    try:
+        import pytz
+
+        tracked_symbols = get_tracked_symbols()
+        ist_tz = pytz.timezone('Asia/Kolkata')
+
+        # Group symbols by strike
+        strikes_map = {}
+        for symbol in tracked_symbols:
+            strike = extract_strike(symbol)
+            if strike is None:
+                continue
+            if strike not in strikes_map:
+                strikes_map[strike] = {'ce': None, 'pe': None}
+            if symbol.endswith('CE'):
+                strikes_map[strike]['ce'] = symbol
+            elif symbol.endswith('PE'):
+                strikes_map[strike]['pe'] = symbol
+
+        spot_data = get_current_day_instrument_data('NIFTY')
+        spot_lookup = {item['timestamp']: item['close'] for item in spot_data}
+
+        all_signals = []
+
+        for strike_price, symbols in sorted(strikes_map.items()):
+            ce_symbol = symbols['ce']
+            pe_symbol = symbols['pe']
+            if not ce_symbol or not pe_symbol:
+                continue
+
+            ce_data = get_current_day_instrument_data(ce_symbol)
+            pe_data = get_current_day_instrument_data(pe_symbol)
+            if not ce_data or not pe_data:
+                continue
+
+            def compute_extrinsic(data, option_type):
+                result = []
+                for i, item in enumerate(data):
+                    if item['open'] is None or item['close'] is None:
+                        continue
+                    utc_dt = datetime.fromtimestamp(item['timestamp'], tz=pytz.UTC)
+                    ist_dt = utc_dt.astimezone(ist_tz)
+                    ist_ts = int(ist_dt.timestamp())
+                    spot_close = spot_lookup.get(item['timestamp'], 0)
+                    if option_type == 'CE':
+                        intrinsic = max(spot_close - strike_price, 0)
+                    else:
+                        intrinsic = max(strike_price - spot_close, 0)
+                    extrinsic = item['close'] - intrinsic
+
+                    extrinsic_signal = False
+                    if i > 0:
+                        prev_item = data[i - 1]
+                        prev_spot = spot_lookup.get(prev_item['timestamp'], 0)
+                        if option_type == 'CE':
+                            prev_ext = prev_item['close'] - max(prev_spot - strike_price, 0)
+                        else:
+                            prev_ext = prev_item['close'] - max(strike_price - prev_spot, 0)
+                        c1 = (prev_item['low'] is not None and prev_item['low'] < prev_ext and item['close'] > extrinsic)
+                        c2 = (item['low'] is not None and item['low'] < extrinsic and item['close'] > extrinsic)
+                        if c1 or c2:
+                            prev_had = result[-1].get('signal', False) if result else False
+                            if not prev_had:
+                                extrinsic_signal = True
+
+                    result.append({'time': ist_ts, 'close': item['close'], 'low': item['low'],
+                                   'extrinsic': round(extrinsic, 2), 'signal': extrinsic_signal})
+                return result
+
+            ce_enhanced = compute_extrinsic(ce_data, 'CE')
+            pe_enhanced = compute_extrinsic(pe_data, 'PE')
+
+            ce_dict = {item['time']: item for item in ce_enhanced}
+            pe_dict = {item['time']: item for item in pe_enhanced}
+            common_ts = sorted(set(ce_dict.keys()) & set(pe_dict.keys()))
+
+            prev_cp_signal = False
+            prev_cp_ce_sig = False
+
+            for i, ts in enumerate(common_ts):
+                ce_item = ce_dict[ts]
+                pe_item = pe_dict[ts]
+                combined_premium = ce_item['close'] + pe_item['close']
+                combined_extrinsic = ce_item['extrinsic'] + pe_item['extrinsic']
+
+                # CP (Combined Extrinsic) signal
+                cp_signal = False
+                if i > 0:
+                    prev_ts = common_ts[i - 1]
+                    prev_ce = ce_dict[prev_ts]
+                    prev_pe = pe_dict[prev_ts]
+                    prev_combined_ext = prev_ce['extrinsic'] + prev_pe['extrinsic']
+                    ce_c1 = (prev_ce['low'] < prev_combined_ext and ce_item['close'] > combined_extrinsic and ce_item['close'] > pe_item['close'])
+                    ce_c2 = (ce_item['low'] < combined_extrinsic and ce_item['close'] > combined_extrinsic and ce_item['close'] > pe_item['close'])
+                    pe_c1 = (prev_pe['low'] < prev_combined_ext and pe_item['close'] > combined_extrinsic and pe_item['close'] > ce_item['close'])
+                    pe_c2 = (pe_item['low'] < combined_extrinsic and pe_item['close'] > combined_extrinsic and pe_item['close'] > ce_item['close'])
+                    if ce_c1 or ce_c2 or pe_c1 or pe_c2:
+                        if not prev_cp_signal:
+                            cp_signal = True
+                prev_cp_signal = cp_signal
+
+                # CP_CE signal
+                cp_ce_signal = False
+                if combined_extrinsic > 0:
+                    tolerance = combined_extrinsic * 0.015
+                    if abs(combined_premium - combined_extrinsic) <= tolerance:
+                        cp_ce_signal = True
+                prev_cp_ce_sig = cp_ce_signal
+
+                all_signals.append({
+                    'time': ts,
+                    'strike': strike_price,
+                    'ce_signal': ce_item['signal'],
+                    'pe_signal': pe_item['signal'],
+                    'cp_signal': cp_signal,
+                    'cp_ce_signal': cp_ce_signal,
+                })
+
+        all_signals.sort(key=lambda x: (x['time'], x['strike']))
+
+        return jsonify({'status': 'success', 'data': all_signals})
+
+    except Exception as e:
+        logger.error(f"Error fetching ezayChart signals: {str(e)}")
+        return jsonify({'status': 'error', 'message': f'Error fetching signals: {str(e)}'}), 500
+
 @madhan_bp.route('/api/strikes')
 @check_session_validity
 def get_strikes():
