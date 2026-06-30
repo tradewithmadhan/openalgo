@@ -605,17 +605,19 @@ def get_coi_history(days: int = 30):
     COI for a day = end-of-day OI - previous day's end-of-day OI.
 
     Returns a dict keyed by date string ('YYYY-MM-DD'), each containing
-    a list of {symbol, strike, type, coi, oi} dicts.
+    a list of {price, ceOI, peOI} dicts (same shape as oi_profile coi).
     """
+    from datetime import timezone as tz
+    IST = tz(timedelta(hours=5, minutes=30))
+
     session = SessionLocal()
     try:
         today = get_valid_trading_day(exchange="NSE")
-        # Go back further to account for weekends/holidays
         lookback = today - timedelta(days=days * 2)
-        start_ts = int(datetime.combine(lookback, time.min).timestamp())
-        end_ts = int(datetime.combine(today, time.max).timestamp())
+        # Use IST for timestamp boundaries
+        start_ts = int(datetime.combine(lookback, time.min, tzinfo=IST).timestamp())
+        end_ts = int(datetime.combine(today, time.max, tzinfo=IST).timestamp())
 
-        # Get all option data in range
         rows = session.query(
             OptionData.symbol,
             OptionData.timestamp,
@@ -627,25 +629,23 @@ def get_coi_history(days: int = 30):
             OptionData.symbol, OptionData.timestamp.asc()
         ).all()
 
+        logger.info(f"COI history: queried {len(rows)} rows (ts {start_ts}..{end_ts})")
         if not rows:
             return {}
 
-        # Group by symbol, then by date -> last candle OI
         from collections import defaultdict
-        symbol_dates = defaultdict(lambda: defaultdict(int))  # sym -> date_str -> last_oi
+        symbol_dates = defaultdict(lambda: defaultdict(int))
 
         for sym, ts, oi in rows:
-            dt = datetime.fromtimestamp(ts)
+            dt = datetime.fromtimestamp(ts, tz=IST)
             date_str = dt.strftime('%Y-%m-%d')
             if oi is not None:
                 symbol_dates[sym][date_str] = oi
 
-        # Get sorted list of all trading dates
         all_dates = sorted({d for sd in symbol_dates.values() for d in sd})
+        logger.info(f"COI history: {len(all_dates)} trading dates found: {all_dates}")
 
-        # Build COI: for each date, COI = that date's EOD OI - previous date's EOD OI
         coi_by_date = {}
-
         for i, date_str in enumerate(all_dates):
             if i == 0:
                 continue
