@@ -148,8 +148,8 @@ export default function EzayChart() {
   const [strikePanelOpen, setStrikePanelOpen] = useState(true)
   const [showRealtime, setShowRealtime] = useState(false)
   const [showEzaySignals, setShowEzaySignals] = useState(false)
-  const [semiTransparent, setSemiTransparent] = useState(false)
-  const semiTransparentRef = useRef(false)
+  const [semiTransparent, setSemiTransparent] = useState(true)
+  const semiTransparentRef = useRef(true)
   const [ceSymbol, setCeSymbol] = useState('')
   const [peSymbol, setPeSymbol] = useState('')
   const [liveSpot, setLiveSpot] = useState(0)
@@ -768,19 +768,19 @@ export default function EzayChart() {
           <div className="h-4 w-px" style={{ backgroundColor: t.border }} />
           <Button
             size="sm"
+            variant={showEzaySignals ? 'default' : 'ghost'}
+            className={cn('h-6 px-2 text-[10px] font-medium', showEzaySignals && 'bg-primary text-primary-foreground')}
+            onClick={() => setShowEzaySignals(!showEzaySignals)}
+          >
+            EzaySignals
+          </Button>
+          <Button
+            size="sm"
             variant={showRealtime ? 'default' : 'ghost'}
             className="h-6 px-2 text-[10px]"
             onClick={() => setShowRealtime(!showRealtime)}
           >
             Realtime
-          </Button>
-          <Button
-            size="sm"
-            variant={showEzaySignals ? 'default' : 'ghost'}
-            className="h-6 px-2 text-[10px]"
-            onClick={() => setShowEzaySignals(!showEzaySignals)}
-          >
-            EzaySignals
           </Button>
         </div>
         <div className="ml-auto flex items-center gap-3">
