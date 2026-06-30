@@ -2,6 +2,7 @@
 Database setup and utility functions for MadhaN's custom data.
 """
 import os
+import re
 import pandas as pd
 from datetime import datetime, time, date, timedelta
 from sqlalchemy import create_engine, Column, Integer, Float, String, Index, text, func, select, literal_column, and_, case
@@ -596,6 +597,22 @@ def get_current_day_instrument_data(symbol: str):
         return []
     finally:
         session.close()
+
+
+def extract_strike(symbol: str) -> int | None:
+    m = re.search(r'(\d+)(CE|PE)$', symbol)
+    if not m:
+        return None
+    tail = m.group(1)
+    candidates = []
+    if len(tail) >= 6:
+        candidates.append(int(tail[-6:]))
+    if len(tail) >= 5:
+        candidates.append(int(tail[-5:]))
+    for cand in candidates:
+        if 10000 <= cand <= 100000 and cand % 50 == 0:
+            return cand
+    return int(tail[-5:]) if len(tail) >= 5 else None
 
 
 def get_coi_history(days: int = 30):
