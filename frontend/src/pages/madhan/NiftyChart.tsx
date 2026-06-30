@@ -1095,10 +1095,14 @@ export default function NiftyChart() {
                           const ceW = Math.max(2, (Math.abs(ceVal) / maxAbs) * 120) * hpr
                           const peW = Math.max(2, (Math.abs(peVal) / maxAbs) * 120) * hpr
                           const barH = 5 * vpr
+                          // CE: positive left (red), negative right (green)
+                          const ceX = ceVal >= 0 ? bx - ceW : bx
                           ctx.fillStyle = ceVal >= 0 ? 'rgba(244,67,54,0.6)' : 'rgba(76,175,80,0.6)'
-                          ctx.fillRect(bx - ceW, by - barH - 1, ceW, barH)
+                          ctx.fillRect(ceX, by - barH - 1, ceW, barH)
+                          // PE: positive left (green), negative right (red)
+                          const peX = peVal >= 0 ? bx - peW : bx
                           ctx.fillStyle = peVal >= 0 ? 'rgba(76,175,80,0.6)' : 'rgba(244,67,54,0.6)'
-                          ctx.fillRect(bx - peW, by + 1, peW, barH)
+                          ctx.fillRect(peX, by + 1, peW, barH)
                         }
                       }
                     })
