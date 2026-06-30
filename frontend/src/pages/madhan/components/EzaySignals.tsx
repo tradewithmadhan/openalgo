@@ -155,24 +155,26 @@ export default function EzaySignals({ className }: EzaySignalsProps) {
           const rows = grouped.get(ts)!
           return (
             <div key={ts} style={{ borderBottom: `1px solid ${t.border}` }}>
-              <div className="grid grid-cols-[50px_50px_1fr_1fr_1fr_1fr] gap-0 px-2 py-1 items-center">
-                <span className="text-[10px] font-mono" style={{ color: t.textSecondary }}>{formatTime(ts)}</span>
-                <span />
-                <div />
-                <div />
-                <div />
-                <div />
+              <div className="px-2 py-1" style={{ borderBottom: `1px solid ${t.border}` }}>
+                <span className="text-[10px] font-mono font-semibold" style={{ color: t.textSecondary }}>{formatTime(ts)}</span>
               </div>
-              {rows.map((row) => (
-                <div key={row.strike} className="grid grid-cols-[50px_50px_1fr_1fr_1fr_1fr] gap-0 px-2 py-0.5 items-center hover:bg-[rgba(128,128,128,0.1)]">
-                  <span />
-                  <span className="text-[10px] font-mono text-right" style={{ color: t.text }}>{row.strike}</span>
-                  <div className="flex justify-center">{signalDot(row.ce_signal, '#00C851')}</div>
-                  <div className="flex justify-center">{signalDot(row.pe_signal, '#E040FB')}</div>
-                  <div className="flex justify-center">{signalDot(row.cp_signal, '#FFD600')}</div>
-                  <div className="flex justify-center">{signalDot(row.cp_ce_signal, '#2196f3')}</div>
-                </div>
-              ))}
+              {rows.map((row) => {
+                const rowBg = row.ce_signal ? 'rgba(0,200,81,0.2)'
+                  : row.pe_signal ? 'rgba(255,68,68,0.2)'
+                  : row.cp_signal ? 'rgba(255,214,0,0.2)'
+                  : row.cp_ce_signal ? 'rgba(33,150,243,0.2)'
+                  : undefined
+                return (
+                  <div key={row.strike} className="grid grid-cols-[50px_50px_1fr_1fr_1fr_1fr] gap-0 px-2 py-0.5 items-center" style={{ backgroundColor: rowBg }}>
+                    <span />
+                    <span className="text-[10px] font-mono text-right" style={{ color: t.text }}>{row.strike}</span>
+                    <div className="flex justify-center">{signalDot(row.ce_signal, '#00C851')}</div>
+                    <div className="flex justify-center">{signalDot(row.pe_signal, '#E040FB')}</div>
+                    <div className="flex justify-center">{signalDot(row.cp_signal, '#FFD600')}</div>
+                    <div className="flex justify-center">{signalDot(row.cp_ce_signal, '#2196f3')}</div>
+                  </div>
+                )
+              })}
             </div>
           )
         })}
