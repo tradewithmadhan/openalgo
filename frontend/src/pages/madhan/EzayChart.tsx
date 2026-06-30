@@ -555,9 +555,6 @@ export default function EzayChart() {
     const peLtp = peEntry?.data?.ltp || 0
     const ceVol = ceEntry?.data?.volume || 0
     const peVol = peEntry?.data?.volume || 0
-    const ceO = ceEntry?.data?.open || 0
-    const peO = peEntry?.data?.open || 0
-
     const ceIntrinsic = Math.max(0, spot - strike)
     const peIntrinsic = Math.max(0, strike - spot)
     const ceExtrinsic = Math.max(0, ceLtp - ceIntrinsic)
@@ -566,7 +563,7 @@ export default function EzayChart() {
     const combinedExtrinsic = ceExtrinsic + peExtrinsic
     const combinedVolume = ceVol + peVol
 
-    const updateCandle = (key: string, series: ISeriesApi<any>, ltp: number, open: number) => {
+    const updateCandle = (key: string, series: ISeriesApi<any>, ltp: number) => {
       if (!ltp) return
       const existing = currentOhlcRef.current.get(key)
       if (existing && time === existing.time) {
@@ -574,7 +571,7 @@ export default function EzayChart() {
         existing.low = Math.min(existing.low, ltp)
         existing.close = ltp
       } else {
-        const newCandle = { time: time as number, open: open || ltp, high: ltp, low: ltp, close: ltp }
+        const newCandle = { time: time as number, open: ltp, high: ltp, low: ltp, close: ltp }
         currentOhlcRef.current.set(key, newCandle)
       }
       const c = currentOhlcRef.current.get(key)!
@@ -585,8 +582,8 @@ export default function EzayChart() {
       }
     }
 
-    if (ceSeriesRef.current && ceLtp) updateCandle('ce', ceSeriesRef.current, ceLtp, ceO)
-    if (peSeriesRef.current && peLtp) updateCandle('pe', peSeriesRef.current, peLtp, peO)
+    if (ceSeriesRef.current && ceLtp) updateCandle('ce', ceSeriesRef.current, ceLtp)
+    if (peSeriesRef.current && peLtp) updateCandle('pe', peSeriesRef.current, peLtp)
 
     const updateLine = (key: string, series: ISeriesApi<any>, value: number) => {
       if (!series || !value) return
