@@ -1050,14 +1050,13 @@ export default function NiftyChart() {
           }
           _buildMap() {
             this._lastCandleMap.clear()
-            const dayLastTs = new Map<string, number>()
-            for (const c of this._candles) {
-              const d = new Date(c.time * 1000).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' })
-              dayLastTs.set(d, c.time)
-            }
+            // Build from API dates directly — use 15:30 IST (market close) as last candle time
             for (const day of this._data) {
-              const ts = dayLastTs.get(day.date)
-              if (ts != null) this._lastCandleMap.set(day.date, ts)
+              // Parse YYYY-MM-DD and create 15:30 IST timestamp
+              const [y, m, d] = day.date.split('-').map(Number)
+              // 15:30 IST = 10:00 UTC
+              const utcTs = Math.floor(Date.UTC(y, m - 1, d, 10, 0, 0) / 1000)
+              this._lastCandleMap.set(day.date, utcTs)
             }
           }
           paneViews() {
