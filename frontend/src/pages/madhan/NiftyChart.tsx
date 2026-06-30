@@ -1038,13 +1038,15 @@ export default function NiftyChart() {
       if (!coiHistoryPrimitiveRef.current) {
         const prim = new (class {
           _series: any
+          _chart: any
           _data: CoiHistoryDay[]
           _candles: Candle[]
           _show: boolean
           _interval: string
           _lastCandleMap: Map<string, number>
-          constructor(series: any, data: CoiHistoryDay[], candles: Candle[], interval: string) {
+          constructor(series: any, chart: any, data: CoiHistoryDay[], candles: Candle[], interval: string) {
             this._series = series
+            this._chart = chart
             this._data = data
             this._candles = candles
             this._show = false
@@ -1072,9 +1074,8 @@ export default function NiftyChart() {
                 return {
                   draw(target: any) {
                     if (!self._show || !self._data.length) return
-                    const chart = self._series.chart?.()
-                    if (!chart) { console.log('[COI-HIST] no chart'); return }
-                    const timeScale = chart.timeScale()
+                    if (!self._chart) { console.log('[COI-HIST] no chart ref'); return }
+                    const timeScale = self._chart.timeScale()
                     let logged = false
                     target.useBitmapCoordinateSpace((scope: any) => {
                       const ctx = scope.context
@@ -1119,7 +1120,7 @@ export default function NiftyChart() {
             this._buildMap()
           }
           toggle() { this._show = !this._show; console.log('[COI-HIST] toggle:', this._show); return this._show }
-        })(seriesAny, json.data, candles, interval)
+        })(seriesAny, chartRef.current, json.data, candles, interval)
         seriesAny.attachPrimitive(prim)
         coiHistoryPrimitiveRef.current = prim
         console.log('[COI-HIST] primitive attached')
