@@ -66,11 +66,12 @@ export default function EzaySignals({ className }: EzaySignalsProps) {
   }, [data])
 
   const filtered = data.filter((row) => {
-    if (ceFilter && !row.ce_signal) return false
-    if (peFilter && !row.pe_signal) return false
-    if (cpFilter && !row.cp_signal) return false
-    if (cpCeFilter && !row.cp_ce_signal) return false
-    return true
+    if (!hasAnyFilter) return true
+    if (ceFilter && row.ce_signal) return true
+    if (peFilter && row.pe_signal) return true
+    if (cpFilter && row.cp_signal) return true
+    if (cpCeFilter && row.cp_ce_signal) return true
+    return false
   })
 
   const grouped = new Map<number, SignalRow[]>()
@@ -100,22 +101,22 @@ export default function EzaySignals({ className }: EzaySignalsProps) {
         <span className="text-[11px] font-semibold" style={{ color: t.text }}>EzaySignals</span>
         <div className="ml-auto flex items-center gap-1.5 text-[10px]" style={{ color: t.textSecondary }}>
           <button
-            onClick={() => { setCeFilter(!ceFilter); setPeFilter(false); setCpFilter(false); setCpCeFilter(false) }}
+            onClick={() => setCeFilter(!ceFilter)}
             className={cn('px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors', ceFilter ? 'bg-green-600 text-white' : 'hover:bg-gray-600')}
             style={ceFilter ? {} : { color: t.textSecondary }}
           >CE</button>
           <button
-            onClick={() => { setPeFilter(!peFilter); setCeFilter(false); setCpFilter(false); setCpCeFilter(false) }}
+            onClick={() => setPeFilter(!peFilter)}
             className={cn('px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors', peFilter ? 'bg-red-600 text-white' : 'hover:bg-gray-600')}
             style={peFilter ? {} : { color: t.textSecondary }}
           >PE</button>
           <button
-            onClick={() => { setCpFilter(!cpFilter); setCeFilter(false); setPeFilter(false); setCpCeFilter(false) }}
+            onClick={() => setCpFilter(!cpFilter)}
             className={cn('px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors', cpFilter ? 'bg-yellow-500 text-black' : 'hover:bg-gray-600')}
             style={cpFilter ? {} : { color: t.textSecondary }}
           >CP</button>
           <button
-            onClick={() => { setCpCeFilter(!cpCeFilter); setCeFilter(false); setPeFilter(false); setCpFilter(false) }}
+            onClick={() => setCpCeFilter(!cpCeFilter)}
             className={cn('px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors', cpCeFilter ? 'bg-blue-600 text-white' : 'hover:bg-gray-600')}
             style={cpCeFilter ? {} : { color: t.textSecondary }}
           >CP_CE</button>
