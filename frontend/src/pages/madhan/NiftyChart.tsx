@@ -1030,9 +1030,11 @@ export default function NiftyChart() {
     try {
       const res = await fetch(`/madhan/api/nifty/coi_history?days=30&_=${Date.now()}`)
       const json: CoiHistoryResponse = await res.json()
+      console.log('[COI-HIST] API response:', json?.data?.length, 'days', JSON.stringify(json?.data?.map(d => ({ date: d.date, strikes: d.strikes.length }))))
       if (json?.status !== 'success' || !json?.data?.length) return
       const candles = priceDataRef.current
       const seriesAny = candleRef.current as any
+      console.log('[COI-HIST] chart candles:', candles.length, 'interval:', interval)
       if (!coiHistoryPrimitiveRef.current) {
         const prim = new (class {
           _series: any
@@ -1052,16 +1054,15 @@ export default function NiftyChart() {
           }
           _buildMap() {
             this._lastCandleMap.clear()
-            // Interval in seconds to calculate last candle start time
             const intervalSec = this._interval === '1m' ? 60 : this._interval === '5m' ? 300 : this._interval === '15m' ? 900 : 300
-            // Market closes at 15:30 IST = 10:00 UTC. Last candle starts at close - interval.
-            const closeUtcMin = 10 * 60 + 30 // 15:30 IST in UTC minutes
+            const closeUtcMin = 10 * 60 + 30
             const lastCandleUtcMin = closeUtcMin - intervalSec / 60
             for (const day of this._data) {
               const [y, m, d] = day.date.split('-').map(Number)
               const utcTs = Math.floor(Date.UTC(y, m - 1, d, 0, lastCandleUtcMin, 0) / 1000)
               this._lastCandleMap.set(day.date, utcTs)
             }
+            console.log('[COI-HIST] _lastCandleMap:', Array.from(this._lastCandleMap.entries()))
           }
           paneViews() {
             const self = this
@@ -1072,8 +1073,9 @@ export default function NiftyChart() {
                   draw(target: any) {
                     if (!self._show || !self._data.length) return
                     const chart = self._series.chart?.()
-                    if (!chart) return
+                    if (!chart) { console.log('[COI-HIST] no chart'); return }
                     const timeScale = chart.timeScale()
+                    let logged = false
                     target.useBitmapCoordinateSpace((scope: any) => {
                       const ctx = scope.context
                       const hpr = scope.horizontalPixelRatio
@@ -1082,6 +1084,10 @@ export default function NiftyChart() {
                         const lastTs = self._lastCandleMap.get(day.date)
                         if (lastTs == null) continue
                         const x = timeScale.timeToCoordinate(lastTs as Time)
+                        if (!logged) {
+                          console.log('[COI-HIST] draw:', day.date, 'ts:', lastTs, 'x:', x, 'strikes:', day.strikes.length)
+                          logged = true
+                        }
                         if (x == null) continue
                         const bx = x * hpr
                         const maxAbs = Math.max(1, ...day.strikes.map((s) => Math.max(Math.abs(s.ceOI || 0), Math.abs(s.peOI || 0))))
@@ -1112,16 +1118,18 @@ export default function NiftyChart() {
             this._interval = interval
             this._buildMap()
           }
-          toggle() { this._show = !this._show; return this._show }
+          toggle() { this._show = !this._show; console.log('[COI-HIST] toggle:', this._show); return this._show }
         })(seriesAny, json.data, candles, interval)
         seriesAny.attachPrimitive(prim)
         coiHistoryPrimitiveRef.current = prim
+        console.log('[COI-HIST] primitive attached')
       } else {
         coiHistoryPrimitiveRef.current.setData(json.data, candles, interval)
+        console.log('[COI-HIST] data updated')
       }
       repaintOverlay()
-    } catch {
-      // silently ignore fetch errors
+    } catch (e) {
+      console.error('[COI-HIST] error:', e)
     }
   }
 
