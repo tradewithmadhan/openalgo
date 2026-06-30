@@ -861,7 +861,7 @@ export default function EzayChart() {
           <div ref={chartContainerRef} className="absolute inset-0" />
           {showRealtime && <RealtimeTable onClose={() => setShowRealtime(false)} />}
         </div>
-        {showEzaySignals && <EzaySignals />}
+        {showEzaySignals && <EzaySignals className="shrink-0" style={{ width: 320 }} />}
       </div>
     </div>
   )

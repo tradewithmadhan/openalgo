@@ -14,6 +14,7 @@ export type SignalRow = {
 
 type EzaySignalsProps = {
   className?: string
+  style?: React.CSSProperties
 }
 
 const formatTime = (ts: number) => {
@@ -21,7 +22,7 @@ const formatTime = (ts: number) => {
   return d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' })
 }
 
-export default function EzaySignals({ className }: EzaySignalsProps) {
+export default function EzaySignals({ className, style }: EzaySignalsProps) {
   const { mode: themeMode } = useThemeStore()
   const t = chartTheme[themeMode]
   const [data, setData] = useState<SignalRow[]>([])
@@ -95,7 +96,7 @@ export default function EzaySignals({ className }: EzaySignalsProps) {
   return (
     <div
       className={cn('flex flex-col min-h-0 w-full', className)}
-      style={{ borderLeft: `1px solid ${t.border}`, backgroundColor: t.panelDarker }}
+      style={{ borderLeft: `1px solid ${t.border}`, backgroundColor: t.panelDarker, ...style }}
     >
       <div className="shrink-0 px-2 py-1.5 flex items-center gap-2" style={{ borderBottom: `1px solid ${t.border}` }}>
         <span className="text-[11px] font-semibold" style={{ color: t.text }}>EzaySignals</span>
