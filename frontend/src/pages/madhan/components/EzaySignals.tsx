@@ -65,6 +65,8 @@ export default function EzaySignals({ className }: EzaySignalsProps) {
     prevDataLenRef.current = data.length
   }, [data])
 
+  const hasAnyFilter = ceFilter || peFilter || cpFilter || cpCeFilter
+
   const filtered = data.filter((row) => {
     if (!hasAnyFilter) return true
     if (ceFilter && row.ce_signal) return true
@@ -89,8 +91,6 @@ export default function EzaySignals({ className }: EzaySignalsProps) {
       style={{ backgroundColor: active ? color : 'transparent', border: `1px solid ${active ? color : t.border}` }}
     />
   )
-
-  const hasAnyFilter = ceFilter || peFilter || cpFilter || cpCeFilter
 
   return (
     <div
