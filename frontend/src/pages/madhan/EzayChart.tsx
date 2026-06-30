@@ -154,6 +154,8 @@ export default function EzayChart() {
   const liveSpotRef = useRef(0)
 
   const currentOhlcRef = useRef<Map<string, { time: number; open: number; high: number; low: number; close: number }>>(new Map())
+  const lastDayVolRef = useRef<Map<string, number>>(new Map())
+  const candleVolRef = useRef<Map<string, number>>(new Map())
   const strikeNumRef = useRef(0)
 
   const { mode: themeMode, toggleMode, appMode, toggleAppMode, isTogglingMode } = useThemeStore()
@@ -401,6 +403,8 @@ export default function EzayChart() {
       rawDataRef.current = json.data
       strikeNumRef.current = json.data.strike
       currentOhlcRef.current.clear()
+      lastDayVolRef.current.clear()
+      candleVolRef.current.clear()
       setCeSymbol(json.data.ce_symbol || '')
       setPeSymbol(json.data.pe_symbol || '')
       setChartInfo(`Strike ${json.data.strike} - CE: ${json.data.ce_symbol || 'N/A'} | PE: ${json.data.pe_symbol || 'N/A'} (${json.data.timezone || 'UTC'})`)
@@ -555,13 +559,31 @@ export default function EzayChart() {
     const peLtp = peEntry?.data?.ltp || 0
     const ceVol = ceEntry?.data?.volume || 0
     const peVol = peEntry?.data?.volume || 0
+
+    const tickVolDelta = (key: string, dayVol: number) => {
+      const prev = lastDayVolRef.current.get(key) ?? dayVol
+      const delta = Math.max(0, dayVol - prev)
+      lastDayVolRef.current.set(key, dayVol)
+      const volKey = `vol_${time}`
+      const prevCandleVol = candleVolRef.current.get(volKey) ?? 0
+      candleVolRef.current.set(volKey, prevCandleVol + delta)
+      return prevCandleVol + delta
+    }
+    const ceTickVol = tickVolDelta('ce', ceVol)
+    const peTickVol = tickVolDelta('pe', peVol)
+    const combinedVolume = ceTickVol + peTickVol
+
+    for (const [k] of candleVolRef.current) {
+      const kTime = parseInt(k.replace('vol_', ''), 10)
+      if (kTime < (time as number)) candleVolRef.current.delete(k)
+    }
+
     const ceIntrinsic = Math.max(0, spot - strike)
     const peIntrinsic = Math.max(0, strike - spot)
     const ceExtrinsic = Math.max(0, ceLtp - ceIntrinsic)
     const peExtrinsic = Math.max(0, peLtp - peIntrinsic)
     const combinedPremium = ceLtp + peLtp
     const combinedExtrinsic = ceExtrinsic + peExtrinsic
-    const combinedVolume = ceVol + peVol
 
     const updateCandle = (key: string, series: ISeriesApi<any>, ltp: number) => {
       if (!ltp) return
