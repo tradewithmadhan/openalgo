@@ -17,6 +17,7 @@ export type SignalRow = {
 type EzaySignalsProps = {
   className?: string
   style?: React.CSSProperties
+  backtestDate?: string
 }
 
 const formatTime = (ts: number) => {
@@ -24,7 +25,7 @@ const formatTime = (ts: number) => {
   return d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' })
 }
 
-export default function EzaySignals({ className, style }: EzaySignalsProps) {
+export default function EzaySignals({ className, style, backtestDate }: EzaySignalsProps) {
   const { mode: themeMode } = useThemeStore()
   const t = chartTheme[themeMode]
   const [data, setData] = useState<SignalRow[]>([])
@@ -42,7 +43,11 @@ export default function EzaySignals({ className, style }: EzaySignalsProps) {
     try {
       setLoading(true)
       setError('')
-      const res = await fetch(`/madhan/api/ezayChart_signals?_=${Date.now()}`)
+      // Use backtest endpoint when backtestDate is provided
+      const url = backtestDate
+        ? `/madhan/api/nifty/backtest_signals?date=${backtestDate}&_=${Date.now()}`
+        : `/madhan/api/ezayChart_signals?_=${Date.now()}`
+      const res = await fetch(url)
       const json = await res.json()
       if (json.status === 'success' && json.data) {
         setData(json.data)
@@ -55,13 +60,15 @@ export default function EzaySignals({ className, style }: EzaySignalsProps) {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [backtestDate])
 
   useEffect(() => {
     fetchData()
+    // Disable auto-refresh in backtest mode (historical data doesn't change)
+    if (backtestDate) return
     const iv = setInterval(fetchData, 60_000)
     return () => clearInterval(iv)
-  }, [fetchData])
+  }, [fetchData, backtestDate])
 
   useEffect(() => {
     if (scrollRef.current && data.length > prevDataLenRef.current) {

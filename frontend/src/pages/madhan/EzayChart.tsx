@@ -135,15 +135,19 @@ export default function EzayChart() {
   const chartTypeRef = useRef<'candlestick' | 'line'>('candlestick')
   const intervalRef = useRef('1m')
   const showSignalsRef = useRef(true)
+  const showHCRef = useRef(true)
 
   const [chartType, setChartType] = useState<'candlestick' | 'line'>('candlestick')
   const [interval, setInterval] = useState('1m')
   const [strikes, setStrikes] = useState<number[]>([])
   const [selectedStrike, setSelectedStrike] = useState<string>('')
+  const [showCE, setShowCE] = useState(true)
+  const [showPE, setShowPE] = useState(true)
   const [showIntrinsic, setShowIntrinsic] = useState(true)
   const [showExtrinsic, setShowExtrinsic] = useState(true)
   const [showCombinedAll, setShowCombinedAll] = useState(true)
   const [showSignals, setShowSignals] = useState(true)
+  const [showHC, setShowHC] = useState(true)
   const [chartInfo, setChartInfo] = useState('')
   const [atmStrike, setAtmStrike] = useState<number | null>(null)
   const [strikePanelOpen, setStrikePanelOpen] = useState(true)
@@ -155,6 +159,10 @@ export default function EzayChart() {
   const [peSymbol, setPeSymbol] = useState('')
   const [liveSpot, setLiveSpot] = useState(0)
   const liveSpotRef = useRef(0)
+  const [isBacktest, setIsBacktest] = useState(false)
+  const [backtestDate, setBacktestDate] = useState('')
+  const isBacktestRef = useRef(false)
+  const backtestDateRef = useRef('')
 
   const currentAtmStrike = liveSpot > 0 ? Math.round(liveSpot / 50) * 50 : null
 
@@ -175,13 +183,15 @@ export default function EzayChart() {
   }
 
   const wsSymbols = useMemo(() => {
+    // Don't subscribe to WS in backtest mode
+    if (isBacktest) return []
     const syms: Array<{ symbol: string; exchange: string }> = [
       { symbol: 'NIFTY', exchange: 'NSE_INDEX' },
     ]
     if (ceSymbol) syms.push({ symbol: ceSymbol, exchange: 'NFO' })
     if (peSymbol) syms.push({ symbol: peSymbol, exchange: 'NFO' })
     return syms
-  }, [ceSymbol, peSymbol])
+  }, [ceSymbol, peSymbol, isBacktest])
 
   const { data: wsData, isConnected } = useMarketData({ symbols: wsSymbols, mode: 'LTP' })
 
@@ -373,8 +383,22 @@ export default function EzayChart() {
       })))
     }
 
+    // Build PE close lookup for HC filter
+    const peCloseMap = new Map<number, number>()
+    for (const item of peData) peCloseMap.set(item.time, item.close)
+    const ceCloseMap = new Map<number, number>()
+    for (const item of ceData) ceCloseMap.set(item.time, item.close)
+    const hc = showHCRef.current
+
     const ceMarkers = signals
-      ? ceData.filter((item) => item.extrinsic_signal).map((point) => ({
+      ? ceData.filter((item) => {
+          if (!item.extrinsic_signal) return false
+          if (hc) {
+            const peClose = peCloseMap.get(item.time) ?? 0
+            if (item.close <= peClose) return false
+          }
+          return true
+        }).map((point) => ({
           time: point.time as Time, position: 'aboveBar' as const,
           color: '#00ff00', shape: 'circle' as const, text: 'CE↑',
         }))
@@ -382,7 +406,14 @@ export default function EzayChart() {
     ceMarkersRef.current?.setMarkers(ceMarkers)
 
     const peMarkers = signals
-      ? peData.filter((item) => item.extrinsic_signal).map((point) => ({
+      ? peData.filter((item) => {
+          if (!item.extrinsic_signal) return false
+          if (hc) {
+            const ceClose = ceCloseMap.get(item.time) ?? 0
+            if (item.close <= ceClose) return false
+          }
+          return true
+        }).map((point) => ({
           time: point.time as Time, position: 'aboveBar' as const,
           color: '#ff0000', shape: 'circle' as const, text: 'PE↑',
         }))
@@ -409,6 +440,23 @@ export default function EzayChart() {
   const loadData = useCallback(async () => {
     if (!selectedStrike) return
     try {
+      // In backtest mode, load from parquet via backtest endpoint
+      if (isBacktest && backtestDate) {
+        const res = await fetch(`/madhan/api/nifty/backtest_chart_data?date=${backtestDate}&strike=${selectedStrike}&_=${Date.now()}`)
+        const json: OptionDataResponse = await res.json()
+        if (json.status !== 'success' || !json.data) return
+        rawDataRef.current = json.data
+        strikeNumRef.current = json.data.strike
+        currentOhlcRef.current.clear()
+        lastDayVolRef.current.clear()
+        candleVolRef.current.clear()
+        setCeSymbol(json.data.ce_symbol || '')
+        setPeSymbol(json.data.pe_symbol || '')
+        setChartInfo(`[Backtest ${backtestDate}] Strike ${json.data.strike} - CE: ${json.data.ce_symbol || 'N/A'} | PE: ${json.data.pe_symbol || 'N/A'}`)
+        applyData()
+        return
+      }
+      // Live mode — existing logic
       const res = await fetch(`/madhan/api/ezayChart_data?strike=${selectedStrike}&_=${Date.now()}`)
       const json: OptionDataResponse = await res.json()
       if (json.status !== 'success' || !json.data) return
@@ -424,7 +472,7 @@ export default function EzayChart() {
     } catch (err) {
       console.error('Error loading EzayChart data:', err)
     }
-  }, [selectedStrike, applyData])
+  }, [selectedStrike, applyData, isBacktest, backtestDate])
 
   useEffect(() => {
     if (!chartContainerRef.current) return
@@ -505,6 +553,8 @@ export default function EzayChart() {
       if (combinedSeriesRef.current) combinedSeriesRef.current.applyOptions({ visible: showCombinedAll })
       if (llpSeriesRef.current) llpSeriesRef.current.applyOptions({ visible: showCombinedAll })
       if (combinedExtrinsicRef.current) combinedExtrinsicRef.current.applyOptions({ visible: showCombinedAll })
+      if (ceSeriesRef.current) ceSeriesRef.current.applyOptions({ visible: showCE })
+      if (peSeriesRef.current) peSeriesRef.current.applyOptions({ visible: showPE })
     }
   }, [chartType, createAllSeries, loadData])
 
@@ -521,6 +571,8 @@ export default function EzayChart() {
       if (combinedSeriesRef.current) combinedSeriesRef.current.applyOptions({ visible: showCombinedAll })
       if (llpSeriesRef.current) llpSeriesRef.current.applyOptions({ visible: showCombinedAll })
       if (combinedExtrinsicRef.current) combinedExtrinsicRef.current.applyOptions({ visible: showCombinedAll })
+      if (ceSeriesRef.current) ceSeriesRef.current.applyOptions({ visible: showCE })
+      if (peSeriesRef.current) peSeriesRef.current.applyOptions({ visible: showPE })
     }
   }, [semiTransparent, createAllSeries, loadData])
 
@@ -532,6 +584,11 @@ export default function EzayChart() {
   }, [showIntrinsic, showExtrinsic])
 
   useEffect(() => {
+    if (ceSeriesRef.current) ceSeriesRef.current.applyOptions({ visible: showCE })
+    if (peSeriesRef.current) peSeriesRef.current.applyOptions({ visible: showPE })
+  }, [showCE, showPE])
+
+  useEffect(() => {
     if (combinedSeriesRef.current) combinedSeriesRef.current.applyOptions({ visible: showCombinedAll })
     if (llpSeriesRef.current) llpSeriesRef.current.applyOptions({ visible: showCombinedAll })
     if (combinedExtrinsicRef.current) combinedExtrinsicRef.current.applyOptions({ visible: showCombinedAll })
@@ -539,8 +596,9 @@ export default function EzayChart() {
 
   useEffect(() => {
     showSignalsRef.current = showSignals
+    showHCRef.current = showHC
     applyData()
-  }, [showSignals, applyData])
+  }, [showSignals, showHC, applyData])
 
   useEffect(() => {
     intervalRef.current = interval
@@ -549,6 +607,8 @@ export default function EzayChart() {
 
   useEffect(() => {
     if (updaterRef.current) window.clearInterval(updaterRef.current)
+    // Skip auto-refresh in backtest mode
+    if (isBacktest) return
     if (selectedStrike) {
       updaterRef.current = window.setInterval(() => loadData(), 60000)
     }
@@ -562,6 +622,8 @@ export default function EzayChart() {
   }, [selectedStrike, strikes])
 
   useEffect(() => {
+    // Skip WS processing in backtest mode — no live data
+    if (isBacktest) return
     if (!wsData || wsData.size === 0 || !chartRef.current) return
     const ct = chartTypeRef.current
     const intervalMin = getIntervalMinutes(intervalRef.current)
@@ -662,6 +724,22 @@ export default function EzayChart() {
 
   const loadStrikes = async () => {
     try {
+      const bt = isBacktestRef.current
+      const dt = backtestDateRef.current
+      // In backtest mode, load strikes from parquet data for the selected date
+      if (bt && dt) {
+        const res = await fetch(`/madhan/api/nifty/backtest_strikes?date=${dt}`)
+        const json = await res.json()
+        if (json.status === 'success' && json.data) {
+          const sorted = json.data.sort((a: number, b: number) => b - a)
+          setStrikes(sorted)
+          const atm = json.open_atm || sorted[Math.floor(sorted.length / 2)]
+          setAtmStrike(atm)
+          setSelectedStrike(String(atm))
+        }
+        return
+      }
+      // Live mode — existing logic
       const res = await fetch('/madhan/api/strikes')
       const json = await res.json()
       if (json.status === 'success' && json.data) {
@@ -772,6 +850,16 @@ export default function EzayChart() {
         </div>
         <div className="flex items-center gap-2">
           <div className="flex items-center gap-1">
+            <Checkbox checked={showCE} onCheckedChange={(v) => setShowCE(!!v)} />
+            <Label className="text-[11px] font-semibold" style={{ color: t.textSecondary }}>CE</Label>
+          </div>
+          <div className="flex items-center gap-1">
+            <Checkbox checked={showPE} onCheckedChange={(v) => setShowPE(!!v)} />
+            <Label className="text-[11px] font-semibold" style={{ color: t.textSecondary }}>PE</Label>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1">
             <Checkbox checked={showIntrinsic} onCheckedChange={(v) => setShowIntrinsic(!!v)} />
             <Label className="text-[11px]" style={{ color: t.textSecondary }}>Intrinsic</Label>
           </div>
@@ -788,8 +876,45 @@ export default function EzayChart() {
             <Label className="text-[11px]" style={{ color: t.textSecondary }}>Signals</Label>
           </div>
           <div className="flex items-center gap-1">
+            <Checkbox checked={showHC} onCheckedChange={(v) => setShowHC(!!v)} />
+            <Label className="text-[11px]" style={{ color: t.textSecondary }}>HC</Label>
+          </div>
+          <div className="flex items-center gap-1">
             <Checkbox checked={semiTransparent} onCheckedChange={(v) => setSemiTransparent(!!v)} />
             <Label className="text-[11px]" style={{ color: t.textSecondary }}>50% Candles</Label>
+          </div>
+          <div className="h-4 w-px" style={{ backgroundColor: t.border }} />
+          <div className="flex items-center gap-1.5">
+            <Button
+              size="sm"
+              variant={isBacktest ? 'default' : 'ghost'}
+              className={cn('h-6 px-2 text-[10px] font-medium', isBacktest && 'bg-orange-500 hover:bg-orange-600 text-white')}
+              onClick={() => {
+                const newBacktest = !isBacktest
+                setIsBacktest(newBacktest)
+                isBacktestRef.current = newBacktest
+                if (!newBacktest) {
+                  setBacktestDate('')
+                  backtestDateRef.current = ''
+                }
+                loadStrikes()
+              }}
+            >
+              {isBacktest ? 'Backtest' : 'Live'}
+            </Button>
+            {isBacktest && (
+              <input
+                type="date"
+                value={backtestDate}
+                onChange={(e) => {
+                  setBacktestDate(e.target.value)
+                  backtestDateRef.current = e.target.value
+                  loadStrikes()
+                }}
+                className="h-6 px-1 text-[10px] rounded border"
+                style={{ backgroundColor: t.panelDarker, color: t.text, borderColor: t.border }}
+              />
+            )}
           </div>
           <div className="h-4 w-px" style={{ backgroundColor: t.border }} />
           <Button
@@ -893,7 +1018,7 @@ export default function EzayChart() {
           <div ref={chartContainerRef} className="absolute inset-0" />
           {showRealtime && <RealtimeTable onClose={() => setShowRealtime(false)} />}
         </div>
-        {showEzaySignals && <EzaySignals className="shrink-0" style={{ width: 320 }} />}
+        {showEzaySignals && <EzaySignals className="shrink-0" style={{ width: 320 }} backtestDate={isBacktest ? backtestDate : undefined} />}
       </div>
     </div>
   )
