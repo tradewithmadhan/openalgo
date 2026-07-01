@@ -1754,6 +1754,7 @@ def ezay_chart_signals():
         spot_lookup = {item['timestamp']: item['close'] for item in spot_data}
 
         all_signals = []
+        last_data_time = 0
 
         for strike_price, symbols in sorted(strikes_map.items()):
             ce_symbol = symbols['ce']
@@ -1765,6 +1766,12 @@ def ezay_chart_signals():
             pe_data = get_current_day_instrument_data(pe_symbol)
             if not ce_data or not pe_data:
                 continue
+
+            # Track the latest candle timestamp across all symbols
+            if ce_data and ce_data[-1].get('timestamp', 0) > last_data_time:
+                last_data_time = ce_data[-1]['timestamp']
+            if pe_data and pe_data[-1].get('timestamp', 0) > last_data_time:
+                last_data_time = pe_data[-1]['timestamp']
 
             def compute_extrinsic(data, option_type):
                 result = []
@@ -1850,11 +1857,13 @@ def ezay_chart_signals():
                         'pe_signal': pe_item['signal'],
                         'cp_signal': cp_signal,
                         'cp_ce_signal': cp_ce_signal,
+                        'ce_close': ce_item['close'],
+                        'pe_close': pe_item['close'],
                     })
 
         all_signals.sort(key=lambda x: (x['time'], x['strike']))
 
-        return jsonify({'status': 'success', 'data': all_signals})
+        return jsonify({'status': 'success', 'last_time': last_data_time, 'data': all_signals})
 
     except Exception as e:
         logger.error(f"Error fetching ezayChart signals: {str(e)}")

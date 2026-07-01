@@ -10,6 +10,8 @@ export type SignalRow = {
   pe_signal: boolean
   cp_signal: 'CE' | 'PE' | false
   cp_ce_signal: boolean
+  ce_close: number
+  pe_close: number
 }
 
 type EzaySignalsProps = {
@@ -26,12 +28,13 @@ export default function EzaySignals({ className, style }: EzaySignalsProps) {
   const { mode: themeMode } = useThemeStore()
   const t = chartTheme[themeMode]
   const [data, setData] = useState<SignalRow[]>([])
+  const [lastTime, setLastTime] = useState<number>(0)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [ceFilter, setCeFilter] = useState(false)
   const [peFilter, setPeFilter] = useState(false)
   const [cpFilter, setCpFilter] = useState(false)
-  const [cpCeFilter, setCpCeFilter] = useState(false)
+  const [hcFilter, setHcFilter] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
   const prevDataLenRef = useRef(0)
 
@@ -43,6 +46,7 @@ export default function EzaySignals({ className, style }: EzaySignalsProps) {
       const json = await res.json()
       if (json.status === 'success' && json.data) {
         setData(json.data)
+        setLastTime(json.last_time || 0)
       } else {
         setError(json.message || 'Failed to load signals')
       }
@@ -66,15 +70,24 @@ export default function EzaySignals({ className, style }: EzaySignalsProps) {
     prevDataLenRef.current = data.length
   }, [data])
 
-  const hasAnyFilter = ceFilter || peFilter || cpFilter || cpCeFilter
+  const hasAnyFilter = ceFilter || peFilter || cpFilter || hcFilter
 
   const filtered = data.filter((row) => {
-    if (!hasAnyFilter) return true
-    if (ceFilter && row.ce_signal) return true
-    if (peFilter && row.pe_signal) return true
-    if (cpFilter && row.cp_signal) return true
-    if (cpCeFilter && row.cp_ce_signal) return true
-    return false
+    // Signal type filters (OR logic)
+    const signalMatch = !hasAnyFilter ||
+      (ceFilter && row.ce_signal) ||
+      (peFilter && row.pe_signal) ||
+      (cpFilter && row.cp_signal) ||
+      hcFilter
+    if (!signalMatch) return false
+    // HC filter: CE signal needs ce_close > pe_close, PE signal needs pe_close > ce_close
+    if (hcFilter) {
+      if (row.ce_signal && !(row.ce_close > row.pe_close)) return false
+      if (row.pe_signal && !(row.pe_close > row.ce_close)) return false
+      // CP and CP_CE pass through (no close filter needed)
+      if (!row.ce_signal && !row.pe_signal && !row.cp_signal && !row.cp_ce_signal) return false
+    }
+    return true
   })
 
   const grouped = new Map<number, SignalRow[]>()
@@ -117,13 +130,14 @@ export default function EzaySignals({ className, style }: EzaySignalsProps) {
             style={cpFilter ? {} : { color: t.textSecondary }}
           >CP</button>
           <button
-            onClick={() => setCpCeFilter(!cpCeFilter)}
-            className={cn('px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors', cpCeFilter ? 'bg-blue-600 text-white' : 'hover:bg-gray-600')}
-            style={cpCeFilter ? {} : { color: t.textSecondary }}
-          >CP_CE</button>
+            onClick={() => setHcFilter(!hcFilter)}
+            className={cn('px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors', hcFilter ? 'bg-cyan-700 text-white' : 'hover:bg-gray-600')}
+            style={hcFilter ? {} : { color: t.textSecondary }}
+            title="Higher Close: CE signal only if CE>PE, PE signal only if PE>CE"
+          >HC</button>
           {hasAnyFilter && (
             <button
-              onClick={() => { setCeFilter(false); setPeFilter(false); setCpFilter(false); setCpCeFilter(false) }}
+              onClick={() => { setCeFilter(false); setPeFilter(false); setCpFilter(false); setHcFilter(false) }}
               className="px-1 py-0.5 rounded text-[10px] hover:bg-gray-600"
               style={{ color: t.textMuted }}
             >Clear</button>
@@ -157,8 +171,8 @@ export default function EzaySignals({ className, style }: EzaySignalsProps) {
           return (
             <div key={ts}>
               {rows.map((row, idx) => {
-                const strikeBg = row.ce_signal ? 'rgba(0,200,81,0.4)'
-                  : row.pe_signal ? 'rgba(255,68,68,0.4)'
+                const strikeBg = row.ce_signal ? 'rgba(0,200,81,0.2)'
+                  : row.pe_signal ? 'rgba(255,68,68,0.2)'
                   : row.cp_signal === 'CE' ? 'rgba(0,200,81,0.4)'
                   : row.cp_signal === 'PE' ? 'rgba(255,68,68,0.4)'
                   : undefined
@@ -184,6 +198,11 @@ export default function EzaySignals({ className, style }: EzaySignalsProps) {
 
       <div className="shrink-0 px-2 py-1 text-[9px] flex items-center justify-between" style={{ borderTop: `1px solid ${t.border}`, color: t.textMuted }}>
         <span>{filtered.length} signals</span>
+        {lastTime > 0 && (
+          <span title="Last candle time used for calculation">
+            Last: {formatTime(lastTime)}
+          </span>
+        )}
         <button onClick={fetchData} className="hover:underline" style={{ color: t.textSecondary }}>Refresh</button>
       </div>
     </div>
