@@ -184,6 +184,8 @@ export default function NiftyChart() {
   const [editingTextDrawing, setEditingTextDrawing] = useState<IDrawing | null>(null)
   const [chartReady, setChartReady] = useState(false)
   const [crosshairOHLCV, setCrosshairOHLCV] = useState<{ time: string; open: number; high: number; low: number; close: number; volume?: number; change?: number; changePct?: number } | null>(null)
+  const [niftyStatus, setNiftyStatus] = useState<string>('')
+  const [niftyRunning, setNiftyRunning] = useState<boolean>(false)
   const wsSymbols = useMemo(() => [{ symbol: 'NIFTY', exchange: 'NSE_INDEX' }], [])
   const { data: wsData, isConnected, isConnecting, error: wsError, connect: wsConnect } = useMarketData({
     symbols: wsSymbols,
@@ -1423,6 +1425,23 @@ export default function NiftyChart() {
     }
   }, [interval])
 
+  const fetchNiftyStatus = useCallback(async () => {
+    try {
+      const res = await fetch(`/madhan/api/nifty/status?_=${Date.now()}`)
+      const json = await res.json()
+      if (json?.status === 'success' && json?.message) {
+        setNiftyStatus(json.message)
+        setNiftyRunning(!!json.is_running)
+      }
+    } catch {}
+  }, [])
+
+  useEffect(() => {
+    fetchNiftyStatus()
+    const id = window.setInterval(fetchNiftyStatus, 60000)
+    return () => window.clearInterval(id)
+  }, [fetchNiftyStatus])
+
   useEffect(() => {
     const live = wsData.get('NSE_INDEX:NIFTY')
     const ltp = live?.data?.ltp
@@ -2286,6 +2305,12 @@ export default function NiftyChart() {
           </div>
           <Button variant={coiHistoryActive ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={toggleCoiHistory}>COI Hist</Button>
           <div className="flex items-center gap-1.5 ml-auto">
+            {niftyStatus && (
+              <div className="flex items-center gap-1" title={niftyStatus}>
+                <div className={cn('h-1.5 w-1.5 rounded-full', niftyRunning ? 'bg-green-500' : 'bg-red-500')} />
+                <span className="text-[10px] text-muted-foreground">{niftyStatus}</span>
+              </div>
+            )}
             <div className="flex items-center gap-1" title={wsError || (isConnected ? 'Connected' : isConnecting ? 'Connecting...' : 'Disconnected')}>
               {isConnected ? (
                 <Zap className="h-3 w-3 text-yellow-500 fill-yellow-500" />

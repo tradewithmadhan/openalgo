@@ -156,6 +156,8 @@ export default function EzayChart() {
   const [liveSpot, setLiveSpot] = useState(0)
   const liveSpotRef = useRef(0)
 
+  const currentAtmStrike = liveSpot > 0 ? Math.round(liveSpot / 50) * 50 : null
+
   const currentOhlcRef = useRef<Map<string, { time: number; open: number; high: number; low: number; close: number }>>(new Map())
   const lastDayVolRef = useRef<Map<string, number>>(new Map())
   const candleVolRef = useRef<Map<string, number>>(new Map())
@@ -495,6 +497,14 @@ export default function EzayChart() {
       chartTypeRef.current = chartType
       createAllSeries()
       loadData()
+      // Re-apply visibility after series recreation
+      if (ceIntrinsicRef.current) ceIntrinsicRef.current.applyOptions({ visible: showIntrinsic })
+      if (peIntrinsicRef.current) peIntrinsicRef.current.applyOptions({ visible: showIntrinsic })
+      if (ceExtrinsicRef.current) ceExtrinsicRef.current.applyOptions({ visible: showExtrinsic })
+      if (peExtrinsicRef.current) peExtrinsicRef.current.applyOptions({ visible: showExtrinsic })
+      if (combinedSeriesRef.current) combinedSeriesRef.current.applyOptions({ visible: showCombinedAll })
+      if (llpSeriesRef.current) llpSeriesRef.current.applyOptions({ visible: showCombinedAll })
+      if (combinedExtrinsicRef.current) combinedExtrinsicRef.current.applyOptions({ visible: showCombinedAll })
     }
   }, [chartType, createAllSeries, loadData])
 
@@ -503,6 +513,14 @@ export default function EzayChart() {
     if (chartReadyRef.current && chartRef.current) {
       createAllSeries()
       loadData()
+      // Re-apply visibility after series recreation
+      if (ceIntrinsicRef.current) ceIntrinsicRef.current.applyOptions({ visible: showIntrinsic })
+      if (peIntrinsicRef.current) peIntrinsicRef.current.applyOptions({ visible: showIntrinsic })
+      if (ceExtrinsicRef.current) ceExtrinsicRef.current.applyOptions({ visible: showExtrinsic })
+      if (peExtrinsicRef.current) peExtrinsicRef.current.applyOptions({ visible: showExtrinsic })
+      if (combinedSeriesRef.current) combinedSeriesRef.current.applyOptions({ visible: showCombinedAll })
+      if (llpSeriesRef.current) llpSeriesRef.current.applyOptions({ visible: showCombinedAll })
+      if (combinedExtrinsicRef.current) combinedExtrinsicRef.current.applyOptions({ visible: showCombinedAll })
     }
   }, [semiTransparent, createAllSeries, loadData])
 
@@ -832,7 +850,8 @@ export default function EzayChart() {
               <div ref={strikeListRef} className="flex-1 overflow-y-auto min-h-0" style={{ scrollbarWidth: 'thin' }}>
                 {strikes.map((s) => {
                   const isSelected = String(s) === selectedStrike
-                  const isAtm = s === atmStrike
+                  const isOpen = s === atmStrike
+                  const isCurrentAtm = currentAtmStrike !== null && s === currentAtmStrike
                   return (
                     <button
                       key={s}
@@ -847,17 +866,22 @@ export default function EzayChart() {
                       style={{
                         color: isSelected
                           ? (themeMode === 'dark' ? '#2962ff' : '#2563eb')
-                          : isAtm
-                            ? (themeMode === 'dark' ? '#d1d4dc' : '#1f2937')
-                            : t.textSecondary,
+                          : isCurrentAtm
+                            ? '#854d0e'
+                            : isOpen
+                              ? (themeMode === 'dark' ? '#d1d4dc' : '#1f2937')
+                              : t.textSecondary,
                         backgroundColor: isSelected
                           ? (themeMode === 'dark' ? 'rgba(41,98,255,0.2)' : 'rgba(37,99,235,0.15)')
-                          : undefined,
+                          : isCurrentAtm
+                            ? (themeMode === 'dark' ? 'rgba(234,179,8,0.15)' : 'rgba(234,179,8,0.12)')
+                            : undefined,
                         borderBottom: `1px solid ${t.border}`,
                       }}
                     >
                       {s}
-                      {isAtm && <span className="ml-1 text-[9px] font-bold" style={{ color: themeMode === 'dark' ? '#2962ff' : '#2563eb' }}>ATM</span>}
+                      {isCurrentAtm && <span className="ml-1 text-[9px] font-bold" style={{ color: '#eab308' }}>C-ATM</span>}
+                      {isOpen && !isCurrentAtm && <span className="ml-1 text-[9px] font-bold" style={{ color: themeMode === 'dark' ? '#2962ff' : '#2563eb' }}>Open</span>}
                     </button>
                   )
                 })}
