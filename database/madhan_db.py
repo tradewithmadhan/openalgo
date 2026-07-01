@@ -713,3 +713,503 @@ def get_coi_history(days: int = 30):
         return {}
     finally:
         session.close()
+
+
+# ---------------------------------------------------------------------------
+# Backtest helpers — read parquet files from db/options_data/
+# ---------------------------------------------------------------------------
+
+import pytz as _pytz
+
+# Parquet data directory (relative to project root)
+_BACKTEST_DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'db', 'options_data')
+
+
+def _parquet_path(date_str: str) -> str:
+    """Returns the expected parquet file path for a given date string (YYYY-MM-DD)."""
+    return os.path.join(_BACKTEST_DATA_DIR, f'{date_str}-index-nfo-data.parquet')
+
+
+def get_backtest_available_dates() -> list[str]:
+    """Scans the parquet data directory and returns sorted list of available dates.
+    Extracts date from filenames like '2025-11-04-index-nfo-data.parquet'."""
+    if not os.path.isdir(_BACKTEST_DATA_DIR):
+        return []
+    dates = []
+    for f in os.listdir(_BACKTEST_DATA_DIR):
+        if f.endswith('-index-nfo-data.parquet'):
+            d = f.replace('-index-nfo-data.parquet', '')
+            # Validate date format
+            try:
+                datetime.strptime(d, '%Y-%m-%d')
+                dates.append(d)
+            except ValueError:
+                continue
+    return sorted(dates)
+
+
+def get_backtest_day_data(date_str: str) -> dict | None:
+    """Reads a parquet file for the given date and returns pre-processed data.
+
+    Returns None if file not found.  Result dict contains:
+        - spot_data: list[dict] — NIFTY 50 SPOT 1-min candles (timestamp, open, high, low, close, volume)
+        - options_df: DataFrame — all NIFTY CE/PE options for the day
+        - open_atm: int — round(NIFTY_50_SPOT_first_candle_open / 50) * 50
+        - expiry: datetime.date — nearest expiry (>= date, skip same-day expiry)
+        - expiry_str: str — expiry formatted for symbol like '25N04' (Nov 4 weekly)
+        - spot_lookup: dict[int, float] — {timestamp: close} for intrinsic/extrinsic calc
+
+    Matches live system logic:
+        - Open ATM: nifty_fetch_service.py:236 (first candle OPEN, not close)
+        - Expiry selection: nifty_fetch_service.py:256 (skip same-day expiry)
+    """
+    path = _parquet_path(date_str)
+    if not os.path.exists(path):
+        return None
+
+    df = pd.read_parquet(path)
+
+    # --- NIFTY 50 SPOT data (instrument_type='SPOT', name='NIFTY 50') ---
+    spot = df[(df['name'] == 'NIFTY 50') & (df['instrument_type'] == 'SPOT')].copy()
+    spot = spot.sort_values('date')
+    if spot.empty:
+        return None
+
+    # Convert datetime to unix timestamp (seconds) for consistency with live system
+    ist_tz = _pytz.timezone('Asia/Kolkata')
+    spot['timestamp'] = spot['date'].apply(lambda d: int(d.timestamp()))
+
+    spot_data = spot[['timestamp', 'open', 'high', 'low', 'close', 'volume']].to_dict('records')
+
+    # --- Open ATM: first candle OPEN rounded to nearest 50 ---
+    # Matches nifty_fetch_service.py:236 — open_price = today_df['open'].iloc[0]
+    open_price = float(spot.iloc[0]['open'])
+    open_atm = round(open_price / 50) * 50
+
+    # --- Nearest expiry: first expiry >= date, skip same-day expiry ---
+    # Matches nifty_fetch_service.py:256 — if current date == expiry, use next
+    nifty_opts = df[(df['name'] == 'NIFTY') & (df['instrument_type'].isin(['CE', 'PE']))].copy()
+    all_expiries = sorted(nifty_opts['expiry'].dropna().unique())
+    selected_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+    nearest_expiry = None
+    for exp in all_expiries:
+        if exp >= selected_date:
+            if exp == selected_date and all_expiries.index(exp) < len(all_expiries) - 1:
+                # On expiry day — skip to next expiry (matches live behavior)
+                continue
+            nearest_expiry = exp
+            break
+
+    if nearest_expiry is None and all_expiries:
+        nearest_expiry = all_expiries[-1]
+
+    if nearest_expiry is None:
+        return None
+
+    # Filter options to nearest expiry only
+    nifty_opts = nifty_opts[nifty_opts['expiry'] == nearest_expiry].copy()
+
+    # Build spot_lookup: {unix_timestamp: close} for intrinsic/extrinsic calculations
+    spot_lookup = {int(row['timestamp']): float(row['close']) for _, row in spot.iterrows()}
+
+    # Format expiry for symbol matching (e.g., 2025-11-04 -> '25N04' for weekly, '25DEC' for monthly)
+    # We store the actual expiry date and let callers match by expiry column
+    expiry_str = nearest_expiry.strftime('%d%b%y').upper()
+
+    return {
+        'spot_data': spot_data,
+        'options_df': nifty_opts,
+        'open_atm': int(open_atm),
+        'expiry': nearest_expiry,
+        'expiry_str': expiry_str,
+        'spot_lookup': spot_lookup,
+    }
+
+
+def get_backtest_strikes(date_str: str) -> dict | None:
+    """Returns strike list for backtest — 10 above and 10 below Open ATM.
+
+    Matches live system pattern (nifty_fetch_service.py:268):
+        strikes = [open_atm + (i * 50)] for i in range(-10, 11)
+        = 21 strikes total, 42 symbols (CE + PE each)
+
+    Returns None if parquet file not found.
+    Response format matches /api/strikes:
+        { status, data: [strikes], strikes_data: {...}, symbols_map: {...} }
+    """
+    day = get_backtest_day_data(date_str)
+    if day is None:
+        return None
+
+    open_atm = day['open_atm']
+    expiry = day['expiry']
+    options_df = day['options_df']
+    expiry_str = expiry.strftime('%d%b%y').upper()
+
+    # Generate 21 strikes: open_atm ± 10 × 50
+    strikes = [open_atm + (i * 50) for i in range(-10, 11)]
+
+    # Build strikes_data and symbols_map matching live /api/strikes format
+    strikes_data = {}
+    symbols_map = {}
+
+    for strike in strikes:
+        # Find CE and PE symbols for this strike from parquet data
+        ce_rows = options_df[(options_df['strike'] == strike) & (options_df['instrument_type'] == 'CE')]
+        pe_rows = options_df[(options_df['strike'] == strike) & (options_df['instrument_type'] == 'PE')]
+
+        ce_symbol = ce_rows['symbol'].iloc[0] if not ce_rows.empty else None
+        pe_symbol = pe_rows['symbol'].iloc[0] if not pe_rows.empty else None
+
+        strikes_data[strike] = {'ce_symbol': ce_symbol, 'pe_symbol': pe_symbol}
+
+        if ce_symbol:
+            symbols_map[f'{strike}_CE'] = {
+                'symbol': ce_symbol, 'exchange': 'NFO', 'strike': strike, 'type': 'CE',
+            }
+        if pe_symbol:
+            symbols_map[f'{strike}_PE'] = {
+                'symbol': pe_symbol, 'exchange': 'NFO', 'strike': strike, 'type': 'PE',
+            }
+
+    return {
+        'status': 'success',
+        'data': strikes,
+        'strikes_data': strikes_data,
+        'symbols_map': symbols_map,
+        'open_atm': open_atm,
+        'expiry': expiry_str,
+    }
+
+
+def _format_backtest_chart_enhanced(rows: list[dict], option_type: str, strike_price: int, spot_lookup: dict) -> list[dict]:
+    """Formats parquet option rows into enhanced chart data with intrinsic/extrinsic/signals.
+
+    Mirrors the logic of format_chart_data_enhanced() in blueprints/madhan.py:1548.
+    Input rows should already be sorted by timestamp ascending.
+    """
+    ist_tz = _pytz.timezone('Asia/Kolkata')
+    enhanced = []
+
+    for i, item in enumerate(rows):
+        if item['open'] is None or item['close'] is None:
+            continue
+
+        # Convert unix timestamp to IST (parquet date is already IST-aware, but we use timestamp)
+        utc_dt = datetime.fromtimestamp(item['timestamp'], tz=_pytz.UTC)
+        ist_dt = utc_dt.astimezone(ist_tz)
+        ist_timestamp = int(ist_dt.timestamp())
+
+        # Get corresponding spot price for this candle
+        spot_close = spot_lookup.get(item['timestamp'], 0)
+
+        # Intrinsic / extrinsic — same as live ezayChart_data:1565
+        if option_type == 'CE':
+            intrinsic = max(spot_close - strike_price, 0)
+        else:
+            intrinsic = max(strike_price - spot_close, 0)
+        extrinsic = item['close'] - intrinsic
+
+        # Signal detection — same as live ezayChart_data:1579
+        extrinsic_signal = False
+        if i > 0:
+            prev_item = rows[i - 1]
+            prev_spot_close = spot_lookup.get(prev_item['timestamp'], 0)
+            if option_type == 'CE':
+                prev_intrinsic = max(prev_spot_close - strike_price, 0)
+            else:
+                prev_intrinsic = max(strike_price - prev_spot_close, 0)
+            prev_extrinsic = prev_item['close'] - prev_intrinsic
+
+            condition1 = (prev_item['low'] is not None and prev_item['low'] < prev_extrinsic and item['close'] > extrinsic)
+            condition2 = (item['low'] is not None and item['low'] < extrinsic and item['close'] > extrinsic)
+
+            if condition1 or condition2:
+                prev_had_signal = enhanced[-1].get('extrinsic_signal', False) if enhanced else False
+                if not prev_had_signal:
+                    extrinsic_signal = True
+
+        enhanced.append({
+            'time': ist_timestamp,
+            'open': round(item['open'], 2),
+            'high': round(item['high'], 2),
+            'low': round(item['low'], 2),
+            'close': round(item['close'], 2),
+            'volume': item['volume'],
+            'intrinsic': round(intrinsic, 2),
+            'extrinsic': round(extrinsic, 2),
+            'spot_close': round(spot_close, 2),
+            'extrinsic_signal': extrinsic_signal,
+        })
+
+    return enhanced
+
+
+def get_backtest_chart_data(date_str: str, strike_price: int) -> dict | None:
+    """Returns chart data for a specific strike from parquet — same format as /api/ezayChart_data.
+
+    Response format:
+        {
+          status, data: {
+            strike, ce_symbol, pe_symbol,
+            ce_data: [...], pe_data: [...], combined_data: [...],
+            llp, timezone
+          }
+        }
+    """
+    day = get_backtest_day_data(date_str)
+    if day is None:
+        return None
+
+    options_df = day['options_df']
+    spot_lookup = day['spot_lookup']
+    spot_data = day['spot_data']
+
+    # Find CE and PE symbols for the requested strike
+    ce_rows = options_df[(options_df['strike'] == strike_price) & (options_df['instrument_type'] == 'CE')]
+    pe_rows = options_df[(options_df['strike'] == strike_price) & (options_df['instrument_type'] == 'PE')]
+
+    ce_symbol = ce_rows['symbol'].iloc[0] if not ce_rows.empty else None
+    pe_symbol = pe_rows['symbol'].iloc[0] if not pe_rows.empty else None
+
+    if not ce_symbol and not pe_symbol:
+        return None
+
+    # Convert parquet rows to list-of-dicts sorted by timestamp
+    def df_to_rows(df_slice):
+        if df_slice.empty:
+            return []
+        df_sorted = df_slice.sort_values('date')
+        df_sorted['timestamp'] = df_sorted['date'].apply(lambda d: int(d.timestamp()))
+        return df_sorted[['timestamp', 'open', 'high', 'low', 'close', 'volume']].to_dict('records')
+
+    ce_raw = df_to_rows(ce_rows)
+    pe_raw = df_to_rows(pe_rows)
+
+    # Format enhanced data — mirrors blueprints/madhan.py:1622
+    formatted_ce = _format_backtest_chart_enhanced(ce_raw, 'CE', strike_price, spot_lookup) if ce_raw else []
+    formatted_pe = _format_backtest_chart_enhanced(pe_raw, 'PE', strike_price, spot_lookup) if pe_raw else []
+
+    # Build combined data — mirrors blueprints/madhan.py:1626-1698
+    combined_data = []
+    running_llp = None
+
+    if formatted_ce and formatted_pe:
+        ce_dict = {item['time']: item for item in formatted_ce}
+        pe_dict = {item['time']: item for item in formatted_pe}
+        common_timestamps = sorted(set(ce_dict.keys()) & set(pe_dict.keys()))
+
+        for i, ts in enumerate(common_timestamps):
+            ce_item = ce_dict[ts]
+            pe_item = pe_dict[ts]
+
+            open_combined_premium = ce_item['open'] + pe_item['open']
+            combined_premium = ce_item['close'] + pe_item['close']
+            combined_extrinsic = ce_item['extrinsic'] + pe_item['extrinsic']
+
+            # Combined Extrinsic signal — mirrors blueprints/madhan.py:1646-1662
+            combined_extrinsic_signal = False
+            if i > 0:
+                prev_ts = common_timestamps[i - 1]
+                prev_ce = ce_dict[prev_ts]
+                prev_pe = pe_dict[prev_ts]
+                prev_combined_ext = prev_ce['extrinsic'] + prev_pe['extrinsic']
+
+                ce_c1 = prev_ce['low'] < prev_combined_ext and ce_item['close'] > combined_extrinsic and ce_item['close'] > pe_item['close']
+                ce_c2 = ce_item['low'] < combined_extrinsic and ce_item['close'] > combined_extrinsic and ce_item['close'] > pe_item['close']
+                pe_c1 = prev_pe['low'] < prev_combined_ext and pe_item['close'] > combined_extrinsic and pe_item['close'] > ce_item['close']
+                pe_c2 = pe_item['low'] < combined_extrinsic and pe_item['close'] > combined_extrinsic and pe_item['close'] > ce_item['close']
+
+                if ce_c1 or ce_c2 or pe_c1 or pe_c2:
+                    prev_had = combined_data[-1].get('combined_extrinsic_signal', False) if combined_data else False
+                    if not prev_had:
+                        combined_extrinsic_signal = True
+
+            # CP_CE signal — mirrors blueprints/madhan.py:1664-1668
+            cp_ce_signal = False
+            if (ce_item.get('extrinsic_signal') or pe_item.get('extrinsic_signal')) and combined_extrinsic > 0:
+                tolerance = combined_extrinsic * 0.01
+                if abs(combined_premium - combined_extrinsic) <= tolerance:
+                    cp_ce_signal = True
+
+            combined_volume = (ce_item.get('volume') or 0) + (pe_item.get('volume') or 0)
+
+            combined_data.append({
+                'time': ts,
+                'open_combined_premium': round(open_combined_premium, 2),
+                'combined_premium': round(combined_premium, 2),
+                'combined_extrinsic': round(combined_extrinsic, 2),
+                'ce_intrinsic': round(ce_item['intrinsic'], 2),
+                'pe_intrinsic': round(pe_item['intrinsic'], 2),
+                'ce_extrinsic': round(ce_item['extrinsic'], 2),
+                'pe_extrinsic': round(pe_item['extrinsic'], 2),
+                'spot_close': round(ce_item['spot_close'], 2),
+                'combined_volume': combined_volume,
+                'combined_extrinsic_signal': combined_extrinsic_signal,
+                'ce_extrinsic_signal': ce_item.get('extrinsic_signal', False),
+                'pe_extrinsic_signal': pe_item.get('extrinsic_signal', False),
+                'cp_ce_signal': cp_ce_signal,
+            })
+
+    # Running LLP — mirrors blueprints/madhan.py:1691-1697
+    for item in combined_data:
+        cp = item['combined_premium']
+        if running_llp is None or cp < running_llp:
+            running_llp = cp
+        item['llp'] = round(running_llp, 2)
+
+    return {
+        'strike': strike_price,
+        'ce_symbol': ce_symbol,
+        'pe_symbol': pe_symbol,
+        'ce_data': formatted_ce,
+        'pe_data': formatted_pe,
+        'combined_data': combined_data,
+        'llp': round(running_llp, 2) if running_llp is not None else 0,
+        'timezone': 'Asia/Kolkata',
+    }
+
+
+def get_backtest_signals(date_str: str) -> dict | None:
+    """Returns all-strike signals for a backtest date — same format as /api/ezayChart_signals.
+
+    Only processes 10 strikes above and 10 below Open ATM (21 strikes).
+    Response format: { status, last_time, data: [{ time, strike, ce_signal, pe_signal, cp_signal, cp_ce_signal, ce_close, pe_close }] }
+    """
+    day = get_backtest_day_data(date_str)
+    if day is None:
+        return None
+
+    open_atm = day['open_atm']
+    options_df = day['options_df']
+    spot_lookup = day['spot_lookup']
+    ist_tz = _pytz.timezone('Asia/Kolkata')
+
+    strikes = [open_atm + (i * 50) for i in range(-10, 11)]
+    all_signals = []
+    last_data_time = 0
+
+    for strike_price in strikes:
+        # Find CE and PE for this strike
+        ce_rows = options_df[(options_df['strike'] == strike_price) & (options_df['instrument_type'] == 'CE')]
+        pe_rows = options_df[(options_df['strike'] == strike_price) & (options_df['instrument_type'] == 'PE')]
+
+        if ce_rows.empty or pe_rows.empty:
+            continue
+
+        # Convert to sorted row dicts
+        def to_rows(df_slice):
+            df_sorted = df_slice.sort_values('date')
+            df_sorted['timestamp'] = df_sorted['date'].apply(lambda d: int(d.timestamp()))
+            return df_sorted[['timestamp', 'open', 'high', 'low', 'close', 'volume']].to_dict('records')
+
+        ce_data = to_rows(ce_rows)
+        pe_data = to_rows(pe_rows)
+
+        if not ce_data or not pe_data:
+            continue
+
+        # Track latest candle timestamp
+        if ce_data[-1]['timestamp'] > last_data_time:
+            last_data_time = ce_data[-1]['timestamp']
+        if pe_data[-1]['timestamp'] > last_data_time:
+            last_data_time = pe_data[-1]['timestamp']
+
+        # Compute extrinsic + signal for CE and PE — mirrors blueprints/madhan.py:1772-1804
+        def compute_extrinsic(data, option_type):
+            result = []
+            for i, item in enumerate(data):
+                if item['open'] is None or item['close'] is None:
+                    continue
+                utc_dt = datetime.fromtimestamp(item['timestamp'], tz=_pytz.UTC)
+                ist_dt = utc_dt.astimezone(ist_tz)
+                ist_ts = int(ist_dt.timestamp())
+                spot_close = spot_lookup.get(item['timestamp'], 0)
+
+                if option_type == 'CE':
+                    intrinsic = max(spot_close - strike_price, 0)
+                else:
+                    intrinsic = max(strike_price - spot_close, 0)
+                extrinsic = item['close'] - intrinsic
+
+                # Extrinsic signal — same logic as live
+                extrinsic_signal = False
+                if i > 0:
+                    prev_item = data[i - 1]
+                    prev_spot = spot_lookup.get(prev_item['timestamp'], 0)
+                    if option_type == 'CE':
+                        prev_ext = prev_item['close'] - max(prev_spot - strike_price, 0)
+                    else:
+                        prev_ext = prev_item['close'] - max(strike_price - prev_spot, 0)
+                    c1 = (prev_item['low'] is not None and prev_item['low'] < prev_ext and item['close'] > extrinsic)
+                    c2 = (item['low'] is not None and item['low'] < extrinsic and item['close'] > extrinsic)
+                    if c1 or c2:
+                        prev_had = result[-1].get('signal', False) if result else False
+                        if not prev_had:
+                            extrinsic_signal = True
+
+                result.append({
+                    'time': ist_ts,
+                    'close': item['close'],
+                    'low': item['low'],
+                    'extrinsic': round(extrinsic, 2),
+                    'signal': extrinsic_signal,
+                })
+            return result
+
+        ce_enhanced = compute_extrinsic(ce_data, 'CE')
+        pe_enhanced = compute_extrinsic(pe_data, 'PE')
+
+        ce_dict = {item['time']: item for item in ce_enhanced}
+        pe_dict = {item['time']: item for item in pe_enhanced}
+        common_ts = sorted(set(ce_dict.keys()) & set(pe_dict.keys()))
+
+        prev_cp_signal = False
+        prev_cp_ce_sig = False
+
+        for i, ts in enumerate(common_ts):
+            ce_item = ce_dict[ts]
+            pe_item = pe_dict[ts]
+            combined_premium = ce_item['close'] + pe_item['close']
+            combined_extrinsic = ce_item['extrinsic'] + pe_item['extrinsic']
+
+            # CP (Combined Extrinsic) signal — mirrors blueprints/madhan.py:1822-1838
+            cp_signal = False
+            if i > 0:
+                prev_ts = common_ts[i - 1]
+                prev_ce = ce_dict[prev_ts]
+                prev_pe = pe_dict[prev_ts]
+                prev_combined_ext = prev_ce['extrinsic'] + prev_pe['extrinsic']
+                ce_c1 = prev_ce['low'] < prev_combined_ext and ce_item['close'] > combined_extrinsic and ce_item['close'] > pe_item['close']
+                ce_c2 = ce_item['low'] < combined_extrinsic and ce_item['close'] > combined_extrinsic and ce_item['close'] > pe_item['close']
+                pe_c1 = prev_pe['low'] < prev_combined_ext and pe_item['close'] > combined_extrinsic and pe_item['close'] > ce_item['close']
+                pe_c2 = pe_item['low'] < combined_extrinsic and pe_item['close'] > combined_extrinsic and pe_item['close'] > ce_item['close']
+                if not prev_cp_signal:
+                    if ce_c1 or ce_c2:
+                        cp_signal = 'CE'
+                    elif pe_c1 or pe_c2:
+                        cp_signal = 'PE'
+            prev_cp_signal = bool(cp_signal)
+
+            # CP_CE signal — mirrors blueprints/madhan.py:1840-1846
+            cp_ce_signal = False
+            if (ce_item['signal'] or pe_item['signal']) and combined_extrinsic > 0:
+                tolerance = combined_extrinsic * 0.01
+                if abs(combined_premium - combined_extrinsic) <= tolerance:
+                    cp_ce_signal = True
+            prev_cp_ce_sig = cp_ce_signal
+
+            if ce_item['signal'] or pe_item['signal'] or cp_signal or cp_ce_signal:
+                all_signals.append({
+                    'time': ts,
+                    'strike': strike_price,
+                    'ce_signal': ce_item['signal'],
+                    'pe_signal': pe_item['signal'],
+                    'cp_signal': cp_signal,
+                    'cp_ce_signal': cp_ce_signal,
+                    'ce_close': ce_item['close'],
+                    'pe_close': pe_item['close'],
+                })
+
+    all_signals.sort(key=lambda x: (x['time'], x['strike']))
+    return {'status': 'success', 'last_time': last_data_time, 'data': all_signals}

@@ -1862,8 +1862,97 @@ def ezay_chart_signals():
         return jsonify({'status': 'success', 'last_time': last_data_time, 'data': all_signals})
 
     except Exception as e:
-        logger.error(f"Error fetching ezayChart signals: {str(e)}")
+        logger.error(f'Error fetching ezayChart signals: {str(e)}')
         return jsonify({'status': 'error', 'message': f'Error fetching signals: {str(e)}'}), 500
+
+
+# ---------------------------------------------------------------------------
+# Backtest endpoints — read parquet data from db/options_data/
+# ---------------------------------------------------------------------------
+
+@madhan_bp.route('/api/nifty/backtest_dates')
+def backtest_dates():
+    """Returns list of available backtest dates from parquet files."""
+    try:
+        from database.madhan_db import get_backtest_available_dates
+        dates = get_backtest_available_dates()
+        return jsonify({'status': 'success', 'data': dates})
+    except Exception as e:
+        logger.error(f'Error fetching backtest dates: {str(e)}')
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@madhan_bp.route('/api/nifty/backtest_strikes')
+def backtest_strikes():
+    """Returns strike list for a backtest date — 10 above/below Open ATM.
+    Query param: date=YYYY-MM-DD
+    Response format matches /api/strikes."""
+    try:
+        from database.madhan_db import get_backtest_strikes
+        date_str = request.args.get('date')
+        if not date_str:
+            return jsonify({'status': 'error', 'message': 'date parameter required (YYYY-MM-DD)'}), 400
+        try:
+            datetime.strptime(date_str, '%Y-%m-%d')
+        except ValueError:
+            return jsonify({'status': 'error', 'message': 'Invalid date format. Use YYYY-MM-DD'}), 400
+
+        result = get_backtest_strikes(date_str)
+        if result is None:
+            return jsonify({'status': 'error', 'message': f'No data available for {date_str}'}), 404
+        return jsonify(result)
+    except Exception as e:
+        logger.error(f'Error fetching backtest strikes: {str(e)}')
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@madhan_bp.route('/api/nifty/backtest_chart_data')
+def backtest_chart_data():
+    """Returns chart data for a specific strike from parquet — same format as /api/ezayChart_data.
+    Query params: date=YYYY-MM-DD, strike=XXXX"""
+    try:
+        from database.madhan_db import get_backtest_chart_data
+        date_str = request.args.get('date')
+        strike_str = request.args.get('strike')
+        if not date_str or not strike_str:
+            return jsonify({'status': 'error', 'message': 'date and strike parameters required'}), 400
+        try:
+            datetime.strptime(date_str, '%Y-%m-%d')
+            strike_price = int(strike_str)
+        except (ValueError, TypeError):
+            return jsonify({'status': 'error', 'message': 'Invalid date or strike format'}), 400
+
+        result = get_backtest_chart_data(date_str, strike_price)
+        if result is None:
+            return jsonify({'status': 'error', 'message': f'No data available for strike {strike_price} on {date_str}'}), 404
+        return jsonify({'status': 'success', 'data': result})
+    except Exception as e:
+        logger.error(f'Error fetching backtest chart data: {str(e)}')
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@madhan_bp.route('/api/nifty/backtest_signals')
+def backtest_signals():
+    """Returns all-strike signals for a backtest date — same format as /api/ezayChart_signals.
+    Query param: date=YYYY-MM-DD"""
+    try:
+        from database.madhan_db import get_backtest_signals
+        date_str = request.args.get('date')
+        if not date_str:
+            return jsonify({'status': 'error', 'message': 'date parameter required (YYYY-MM-DD)'}), 400
+        try:
+            datetime.strptime(date_str, '%Y-%m-%d')
+        except ValueError:
+            return jsonify({'status': 'error', 'message': 'Invalid date format. Use YYYY-MM-DD'}), 400
+
+        result = get_backtest_signals(date_str)
+        if result is None:
+            return jsonify({'status': 'error', 'message': f'No data available for {date_str}'}), 404
+        return jsonify(result)
+    except Exception as e:
+        logger.error(f'Error fetching backtest signals: {str(e)}')
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
 
 @madhan_bp.route('/api/strikes')
 @check_session_validity

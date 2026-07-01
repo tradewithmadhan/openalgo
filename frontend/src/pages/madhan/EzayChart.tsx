@@ -66,6 +66,15 @@ type AggCombined = {
   ce_extrinsic: number; pe_extrinsic: number; combined_extrinsic: number;
   cp_ce_signal?: boolean; combined_extrinsic_signal?: boolean; llp?: number;
 }
+type BacktestTrade = {
+  side: 'CE' | 'PE'
+  entryTime: number
+  entryPrice: number
+  exitTime: number
+  exitPrice: number
+  pnlPct: number
+  exitReason: 'target' | 'opposite' | 'eod'
+}
 function aggregateCandles<T extends AggCandle & Record<string, any>>(data: T[], intervalMin: number): T[] {
   if (intervalMin <= 1 || !data.length) return data
   const bucketSec = intervalMin * 60
@@ -128,6 +137,10 @@ export default function EzayChart() {
   const peMarkersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null)
   const cpCeMarkersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null)
   const combinedExtrinsicMarkersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null)
+  const ceTradeMarkersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null)
+  const peTradeMarkersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null)
+  const backtestTradesRef = useRef<BacktestTrade[]>([])
+  const backtestSummaryRef = useRef<{ total: number; wins: number; losses: number; winRate: number; totalPnl: number } | null>(null)
   const updaterRef = useRef<number | null>(null)
   const chartReadyRef = useRef(false)
   const rawDataRef = useRef<OptionDataResponse['data'] | null>(null)
