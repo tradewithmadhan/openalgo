@@ -73,7 +73,27 @@ type BacktestTrade = {
   exitTime: number
   exitPrice: number
   pnlPct: number
+  pnlAmount: number
+  lotSize: number
   exitReason: 'target' | 'opposite' | 'eod'
+  firstSignal: 'CE' | 'PE' | ''
+}
+
+function getLotSize(unixTime: number): number {
+  const d = new Date(unixTime * 1000)
+  // Jan 2026 – Present: 65
+  if (d >= new Date(2026, 0, 1)) return 65
+  // Nov 2024 – Dec 2025: 75
+  if (d >= new Date(2024, 10, 1)) return 75
+  // Apr 2024 – Oct 2024: 25
+  if (d >= new Date(2024, 3, 1)) return 25
+  // Oct 2015 – Mar 2024: 75
+  if (d >= new Date(2015, 9, 1)) return 75
+  // Oct 2014 – Sep 2015: 25
+  if (d >= new Date(2014, 9, 1)) return 25
+  // Feb 2007 – Sep 2014: 50
+  if (d >= new Date(2007, 1, 1)) return 50
+  return 50
 }
 function aggregateCandles<T extends AggCandle & Record<string, any>>(data: T[], intervalMin: number): T[] {
   if (intervalMin <= 1 || !data.length) return data
@@ -140,7 +160,8 @@ export default function EzayChart() {
   const ceTradeMarkersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null)
   const peTradeMarkersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null)
   const backtestTradesRef = useRef<BacktestTrade[]>([])
-  const backtestSummaryRef = useRef<{ total: number; wins: number; losses: number; winRate: number; totalPnl: number } | null>(null)
+  const backtestSummaryRef = useRef<{ total: number; wins: number; losses: number; winRate: number; totalPnl: number; totalPnlAmount: number } | null>(null)
+  const firstSignalTimeRef = useRef(0)
   const updaterRef = useRef<number | null>(null)
   const chartReadyRef = useRef(false)
   const rawDataRef = useRef<OptionDataResponse['data'] | null>(null)
@@ -176,6 +197,7 @@ export default function EzayChart() {
   const [backtestDate, setBacktestDate] = useState('')
   const isBacktestRef = useRef(false)
   const backtestDateRef = useRef('')
+  const [backtestSummary, setBacktestSummary] = useState<{ total: number; wins: number; losses: number; winRate: number; totalPnl: number; totalPnlAmount: number } | null>(null)
 
   const currentAtmStrike = liveSpot > 0 ? Math.round(liveSpot / 50) * 50 : null
 
@@ -237,6 +259,10 @@ export default function EzayChart() {
     peMarkersRef.current = null
     cpCeMarkersRef.current = null
     combinedExtrinsicMarkersRef.current = null
+    ceTradeMarkersRef.current = null
+    peTradeMarkersRef.current = null
+    backtestTradesRef.current = []
+    backtestSummaryRef.current = null
   }, [])
 
   const createAllSeries = useCallback(() => {
@@ -323,6 +349,8 @@ export default function EzayChart() {
     peMarkersRef.current = createSeriesMarkers(peSeriesRef.current, [])
     cpCeMarkersRef.current = createSeriesMarkers(combinedSeriesRef.current, [])
     combinedExtrinsicMarkersRef.current = createSeriesMarkers(combinedExtrinsicRef.current, [])
+    ceTradeMarkersRef.current = createSeriesMarkers(ceSeriesRef.current, [])
+    peTradeMarkersRef.current = createSeriesMarkers(peSeriesRef.current, [])
   }, [removeAllSeries])
 
   const applyData = useCallback(() => {
@@ -448,7 +476,227 @@ export default function EzayChart() {
         }))
       : []
     combinedExtrinsicMarkersRef.current?.setMarkers(ceMarkers2)
+
+    // Render backtest trade markers
+    const btTrades = backtestTradesRef.current
+    if (btTrades.length > 0) {
+      const ceTradeMarkers: Array<{ time: Time; position: 'aboveBar' | 'belowBar'; color: string; shape: 'arrowUp' | 'arrowDown' | 'circle'; text: string }> = []
+      const peTradeMarkers: Array<{ time: Time; position: 'aboveBar' | 'belowBar'; color: string; shape: 'arrowUp' | 'arrowDown' | 'circle'; text: string }> = []
+      for (const trade of btTrades) {
+        if (trade.side === 'CE') {
+          ceTradeMarkers.push({ time: trade.entryTime as Time, position: 'aboveBar', color: '#00e676', shape: 'arrowUp', text: `E ${trade.entryPrice.toFixed(0)}` })
+          ceTradeMarkers.push({ time: trade.exitTime as Time, position: 'belowBar', color: trade.pnlPct >= 0 ? '#00e676' : '#ff1744', shape: 'arrowDown', text: `${trade.pnlPct >= 0 ? '+' : ''}${trade.pnlPct.toFixed(1)}%` })
+        } else {
+          peTradeMarkers.push({ time: trade.entryTime as Time, position: 'aboveBar', color: '#e040fb', shape: 'arrowUp', text: `E ${trade.entryPrice.toFixed(0)}` })
+          peTradeMarkers.push({ time: trade.exitTime as Time, position: 'belowBar', color: trade.pnlPct >= 0 ? '#00e676' : '#ff1744', shape: 'arrowUp', text: `${trade.pnlPct >= 0 ? '+' : ''}${trade.pnlPct.toFixed(1)}%` })
+        }
+      }
+      ceTradeMarkersRef.current?.setMarkers(ceTradeMarkers)
+      peTradeMarkersRef.current?.setMarkers(peTradeMarkers)
+    } else {
+      ceTradeMarkersRef.current?.setMarkers([])
+      peTradeMarkersRef.current?.setMarkers([])
+    }
   }, [])
+
+  const runBacktest = useCallback(() => {
+    const d = rawDataRef.current
+    if (!d || !d.ce_data || !d.pe_data || !d.combined_data) return
+
+    const ceData = d.ce_data
+    const peData = d.pe_data
+    const combinedData = d.combined_data
+
+    // Build time-indexed lookups
+    const peByTime = new Map<number, typeof peData[0]>()
+    for (const p of peData) peByTime.set(p.time, p)
+    const ceByTime = new Map<number, typeof ceData[0]>()
+    for (const c of ceData) ceByTime.set(c.time, c)
+
+    // Build PE close map for HC filter on entry
+    const peCloseMap = new Map<number, number>()
+    for (const p of peData) peCloseMap.set(p.time, p.close)
+
+    // Find the day's first CE or PE signal (with HC filter)
+    let firstSignalTime = 0
+    let firstSignalType: 'CE' | 'PE' | '' = ''
+    for (const comb of combinedData) {
+      const ce = ceByTime.get(comb.time)
+      const pe = peByTime.get(comb.time)
+      if (!ce || !pe) continue
+      if (ce.extrinsic_signal && ce.close > pe.close) {
+        firstSignalTime = comb.time
+        firstSignalType = 'CE'
+        break
+      }
+      if (pe.extrinsic_signal && pe.close > ce.close) {
+        firstSignalTime = comb.time
+        firstSignalType = 'PE'
+        break
+      }
+    }
+
+    const trades: BacktestTrade[] = []
+    // State: 'idle' | 'pending' | 'in_position'
+    let state: 'idle' | 'pending' | 'in_position' = 'idle'
+    let side: 'CE' | 'PE' = 'CE'
+    let pendingEntryPrice = 0
+    let entryTime = 0
+    let entryPrice = 0
+    let targetHit = false
+
+    for (const comb of combinedData) {
+      const t = comb.time
+      const ce = ceByTime.get(t)
+      const pe = peByTime.get(t)
+      if (!ce || !pe) continue
+      if (targetHit) continue
+
+      if (state === 'in_position') {
+        // Check exit conditions
+        let exitPrice = 0
+        let exitReason: 'target' | 'opposite' | 'eod' = 'eod'
+
+        if (side === 'CE') {
+          // Target: CE high >= combined_extrinsic → exit at CE close
+          if (ce.high >= comb.combined_extrinsic) {
+            exitPrice = ce.close
+            exitReason = 'target'
+          }
+          // Opposite signal (PE extrinsic_signal, no HC filter for exit)
+          else if (pe.extrinsic_signal) {
+            exitPrice = ce.close
+            exitReason = 'opposite'
+          }
+        } else {
+          // PE position
+          // Target: PE high >= combined_extrinsic → exit at PE close
+          if (pe.high >= comb.combined_extrinsic) {
+            exitPrice = pe.close
+            exitReason = 'target'
+          }
+          // Opposite signal (CE extrinsic_signal, no HC filter for exit)
+          else if (ce.extrinsic_signal) {
+            exitPrice = pe.close
+            exitReason = 'opposite'
+          }
+        }
+
+        if (exitPrice > 0) {
+          const pnlPct = ((exitPrice - entryPrice) / entryPrice) * 100
+          const lot = getLotSize(t)
+          const pnlAmount = (exitPrice - entryPrice) * lot
+          trades.push({ side, entryTime, entryPrice, exitTime: t, exitPrice, pnlPct, pnlAmount, lotSize: lot, exitReason, firstSignal: firstSignalType })
+          state = 'idle'
+          if (exitReason === 'target') targetHit = true
+        }
+      } else if (state === 'pending') {
+        // Check if the pending entry price is hit by high
+        const currentHigh = side === 'CE' ? ce.high : pe.high
+        if (currentHigh >= pendingEntryPrice) {
+          // Fill the entry
+          state = 'in_position'
+          entryTime = t
+          entryPrice = pendingEntryPrice
+        } else {
+          // Cancel pending if opposite signal fires (no HC filter for cancel)
+          const oppositeSignal = side === 'CE' ? pe.extrinsic_signal : ce.extrinsic_signal
+          if (oppositeSignal) {
+            state = 'idle'
+          }
+        }
+      }
+
+      if (state === 'idle' && !targetHit) {
+        // Check for new signal — CE signal + HC filter (ce_close > pe_close)
+        if (ce.extrinsic_signal) {
+          const peClose = peCloseMap.get(t) ?? 0
+          if (ce.close > peClose) {
+            state = 'pending'
+            side = 'CE'
+            pendingEntryPrice = ce.high + 1
+          }
+        }
+        // PE signal + HC filter (pe_close > ce_close)
+        if (state === 'idle' && pe.extrinsic_signal) {
+          const ceClose = ce.close
+          if (pe.close > ceClose) {
+            state = 'pending'
+            side = 'PE'
+            pendingEntryPrice = pe.high + 1
+          }
+        }
+      }
+    }
+
+    // EOD exit if still in position
+    if (state === 'in_position' && combinedData.length > 0) {
+      const last = combinedData[combinedData.length - 1]
+      const lastCe = ceByTime.get(last.time)
+      const lastPe = peByTime.get(last.time)
+      const lastPrice = side === 'CE' ? (lastCe?.close ?? entryPrice) : (lastPe?.close ?? entryPrice)
+      const pnlPct = ((lastPrice - entryPrice) / entryPrice) * 100
+      const lot = getLotSize(last.time)
+      const pnlAmount = (lastPrice - entryPrice) * lot
+      trades.push({ side, entryTime, entryPrice, exitTime: last.time, exitPrice: lastPrice, pnlPct, pnlAmount, lotSize: lot, exitReason: 'eod', firstSignal: firstSignalType })
+    }
+
+    backtestTradesRef.current = trades
+    firstSignalTimeRef.current = firstSignalTime
+
+    // Compute summary
+    if (trades.length > 0) {
+      const wins = trades.filter((t) => t.pnlPct > 0).length
+      const losses = trades.length - wins
+      const totalPnl = trades.reduce((sum, t) => sum + t.pnlPct, 0)
+      const totalPnlAmount = trades.reduce((sum, t) => sum + t.pnlAmount, 0)
+      const summary = { total: trades.length, wins, losses, winRate: (wins / trades.length) * 100, totalPnl, totalPnlAmount }
+      backtestSummaryRef.current = summary
+      setBacktestSummary(summary)
+    } else {
+      backtestSummaryRef.current = null
+      setBacktestSummary(null)
+    }
+
+    // Re-render to show trade markers
+    applyData()
+  }, [applyData])
+
+  const saveBacktest = useCallback(() => {
+    const trades = backtestTradesRef.current
+    if (trades.length === 0 || !backtestDateRef.current || !strikeNumRef.current) return
+    const date = backtestDateRef.current
+    const strike = strikeNumRef.current
+    const fmt = (ts: number) => {
+      const d = new Date(ts * 1000)
+      return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`
+    }
+    const rows = [
+      ['Strategy', 'Date', 'Strike', 'Side', 'Symbol', 'Qty', 'Entry Price', 'Entry Time', 'Exit Price', 'Exit Time', 'PnL%', 'PnL', 'Reason', '1st Signal Time', '1st Signal Strike', '1st Signal'].join(','),
+    ]
+    for (let i = 0; i < trades.length; i++) {
+      const t = trades[i]
+      const reasonMap: Record<string, string> = { target: 'TGT', opposite: 'OPP', eod: 'EOD' }
+      const symbol = t.side === 'CE' ? ceSymbol : peSymbol
+      rows.push([
+        'CE-PE', date, strike, t.side, symbol, t.lotSize,
+        t.entryPrice.toFixed(0), fmt(t.entryTime),
+        t.exitPrice.toFixed(0), fmt(t.exitTime),
+        `${t.pnlPct.toFixed(1)}%`, t.pnlAmount.toFixed(0),
+        reasonMap[t.exitReason] || t.exitReason,
+        t.firstSignal ? fmt(firstSignalTimeRef.current) : '',
+        t.firstSignal ? strike : '',
+        t.firstSignal,
+      ].join(','))
+    }
+    const blob = new Blob([rows.join('\n')], { type: 'text/csv' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${date}_strike${strike}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+  }, [ceSymbol, peSymbol])
 
   const loadData = useCallback(async () => {
     if (!selectedStrike) return
@@ -633,6 +881,15 @@ export default function EzayChart() {
     const el = strikeListRef.current.querySelector(`[data-strike="${selectedStrike}"]`)
     if (el) el.scrollIntoView({ block: 'center', behavior: 'smooth' })
   }, [selectedStrike, strikes])
+
+  // Clear backtest results on strike change
+  useEffect(() => {
+    backtestTradesRef.current = []
+    backtestSummaryRef.current = null
+    setBacktestSummary(null)
+    ceTradeMarkersRef.current?.setMarkers([])
+    peTradeMarkersRef.current?.setMarkers([])
+  }, [selectedStrike])
 
   useEffect(() => {
     // Skip WS processing in backtest mode — no live data
@@ -909,6 +1166,9 @@ export default function EzayChart() {
                 if (!newBacktest) {
                   setBacktestDate('')
                   backtestDateRef.current = ''
+                  backtestTradesRef.current = []
+                  backtestSummaryRef.current = null
+                  setBacktestSummary(null)
                 }
                 loadStrikes()
               }}
@@ -922,11 +1182,36 @@ export default function EzayChart() {
                 onChange={(e) => {
                   setBacktestDate(e.target.value)
                   backtestDateRef.current = e.target.value
+                  backtestTradesRef.current = []
+                  backtestSummaryRef.current = null
+                  setBacktestSummary(null)
                   loadStrikes()
                 }}
                 className="h-6 px-1 text-[10px] rounded border"
                 style={{ backgroundColor: t.panelDarker, color: t.text, borderColor: t.border }}
               />
+            )}
+            {isBacktest && backtestDate && (
+              <>
+                <Button
+                  size="sm"
+                  variant="default"
+                  className="h-6 px-2 text-[10px] font-medium bg-green-600 hover:bg-green-700 text-white"
+                  onClick={runBacktest}
+                >
+                  Run
+                </Button>
+                {backtestSummary && (
+                  <Button
+                    size="sm"
+                    variant="default"
+                    className="h-6 px-2 text-[10px] font-medium bg-blue-600 hover:bg-blue-700 text-white"
+                    onClick={saveBacktest}
+                  >
+                    Save
+                  </Button>
+                )}
+              </>
             )}
           </div>
           <div className="h-4 w-px" style={{ backgroundColor: t.border }} />
@@ -1029,6 +1314,47 @@ export default function EzayChart() {
         </div>
         <div className="flex-1 min-h-0 min-w-0 relative" style={{ backgroundColor: t.panelDarker }}>
           <div ref={chartContainerRef} className="absolute inset-0" />
+          {backtestSummary && (
+            <div className="absolute top-2 left-2 z-10 rounded-md px-3 py-2 text-[10px] font-mono max-h-[60%] overflow-y-auto" style={{ backgroundColor: 'rgba(0,0,0,0.85)', color: '#d1d4dc', minWidth: 280, scrollbarWidth: 'thin' }}>
+              <div className="font-semibold mb-1 text-[12px] text-white">Backtest Results</div>
+              <div className="mb-1">Trades: {backtestSummary.total} | Wins: {backtestSummary.wins} | Loss: {backtestSummary.losses}</div>
+              <div className="mb-1">Win Rate: {backtestSummary.winRate.toFixed(1)}%</div>
+              <div className="mb-2">PnL: <span className={backtestSummary.totalPnl >= 0 ? 'text-green-400' : 'text-red-400'}>{backtestSummary.totalPnl >= 0 ? '+' : ''}{backtestSummary.totalPnl.toFixed(1)}%</span> <span className={backtestSummary.totalPnlAmount >= 0 ? 'text-green-400' : 'text-red-400'}>({backtestSummary.totalPnlAmount >= 0 ? '+' : ''}{backtestSummary.totalPnlAmount.toFixed(0)})</span></div>
+              <div style={{ borderTop: '1px solid rgba(255,255,255,0.2)' }} className="pt-1">
+                <table className="w-full">
+                  <thead>
+                    <tr className="text-[9px] text-gray-400">
+                      <th className="text-left">#</th>
+                      <th className="text-left">Side</th>
+                      <th className="text-right">Entry</th>
+                      <th className="text-right">Exit</th>
+                      <th className="text-right">PnL%</th>
+                      <th className="text-right">PnL</th>
+                      <th className="text-left">Reason</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {backtestTradesRef.current.map((trade, i) => {
+                      const entryDate = new Date(trade.entryTime * 1000)
+                      const exitDate = new Date(trade.exitTime * 1000)
+                      const fmt = (d: Date) => `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`
+                      return (
+                        <tr key={i} className="text-[9px]">
+                          <td className="text-left">{i + 1}</td>
+                          <td className={trade.side === 'CE' ? 'text-green-400' : 'text-purple-400'}>{trade.side}</td>
+                          <td className="text-right">{trade.entryPrice.toFixed(0)} <span className="text-gray-500">{fmt(entryDate)}</span></td>
+                          <td className="text-right">{trade.exitPrice.toFixed(0)} <span className="text-gray-500">{fmt(exitDate)}</span></td>
+                          <td className={trade.pnlPct >= 0 ? 'text-right text-green-400' : 'text-right text-red-400'}>{trade.pnlPct >= 0 ? '+' : ''}{trade.pnlPct.toFixed(1)}%</td>
+                          <td className={trade.pnlAmount >= 0 ? 'text-right text-green-400' : 'text-right text-red-400'}>{trade.pnlAmount >= 0 ? '+' : ''}{trade.pnlAmount.toFixed(0)}</td>
+                          <td className="text-left text-gray-500">{trade.exitReason === 'eod' ? 'EOD' : trade.exitReason === 'target' ? 'TGT' : 'OPP'}</td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
           {showRealtime && <RealtimeTable onClose={() => setShowRealtime(false)} />}
         </div>
         {showEzaySignals && <EzaySignals className="shrink-0" style={{ width: 320 }} backtestDate={isBacktest ? backtestDate : undefined} />}
