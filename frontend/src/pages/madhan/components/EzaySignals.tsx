@@ -73,19 +73,18 @@ export default function EzaySignals({ className, style }: EzaySignalsProps) {
   const hasAnyFilter = ceFilter || peFilter || cpFilter || hcFilter
 
   const filtered = data.filter((row) => {
-    // Signal type filters (OR logic)
+    // Signal type filters (OR logic) — HC alone doesn't select signal types
+    const typeActive = ceFilter || peFilter || cpFilter
     const signalMatch = !hasAnyFilter ||
       (ceFilter && row.ce_signal) ||
       (peFilter && row.pe_signal) ||
-      (cpFilter && row.cp_signal) ||
-      hcFilter
+      (cpFilter && row.cp_signal)
     if (!signalMatch) return false
-    // HC filter: CE signal needs ce_close > pe_close, PE signal needs pe_close > ce_close
-    if (hcFilter) {
+    // HC filter: only applies when signal type filters are also active
+    if (hcFilter && typeActive) {
       if (row.ce_signal && !(row.ce_close > row.pe_close)) return false
       if (row.pe_signal && !(row.pe_close > row.ce_close)) return false
-      // CP and CP_CE pass through (no close filter needed)
-      if (!row.ce_signal && !row.pe_signal && !row.cp_signal && !row.cp_ce_signal) return false
+      // CP passes through (no close filter needed)
     }
     return true
   })

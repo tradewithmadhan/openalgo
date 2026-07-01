@@ -50,6 +50,7 @@ type OptionDataResponse = {
       combined_volume?: number
       cp_ce_signal?: boolean
       combined_extrinsic_signal?: boolean
+      llp?: number
     }>
     llp: number
     strike: number
@@ -63,7 +64,7 @@ type AggCandle = { time: number; open: number; high: number; low: number; close:
 type AggCombined = {
   time: number; combined_premium: number; ce_intrinsic: number; pe_intrinsic: number;
   ce_extrinsic: number; pe_extrinsic: number; combined_extrinsic: number;
-  cp_ce_signal?: boolean; combined_extrinsic_signal?: boolean;
+  cp_ce_signal?: boolean; combined_extrinsic_signal?: boolean; llp?: number;
 }
 function aggregateCandles<T extends AggCandle & Record<string, any>>(data: T[], intervalMin: number): T[] {
   if (intervalMin <= 1 || !data.length) return data
@@ -314,6 +315,13 @@ export default function EzayChart() {
       ceData = aggregateCandles(ceData, intervalMin)
       peData = aggregateCandles(peData, intervalMin)
       combinedData = aggregateCombined(combinedData, intervalMin)
+      // Recompute running llp after aggregation
+      let runningLlp: number | null = null
+      for (const item of combinedData) {
+        const cp = item.combined_premium
+        if (runningLlp === null || cp < runningLlp) runningLlp = cp
+        item.llp = runningLlp
+      }
     }
 
     if (ceSeriesRef.current) {
@@ -336,7 +344,7 @@ export default function EzayChart() {
       combinedSeriesRef.current.setData(combinedData.map((item) => ({ time: item.time, value: item.combined_premium })))
     }
     if (llpSeriesRef.current && d.llp != null) {
-      llpSeriesRef.current.setData(combinedData.map((item) => ({ time: item.time, value: d.llp! })))
+      llpSeriesRef.current.setData(combinedData.map((item) => ({ time: item.time, value: item.llp ?? 0 })))
     }
     if (ceIntrinsicRef.current) {
       ceIntrinsicRef.current.setData(combinedData.map((item) => ({ time: item.time, value: item.ce_intrinsic })))

@@ -1631,7 +1631,6 @@ def ezay_chart_data():
             
             common_timestamps = set(ce_dict.keys()) & set(pe_dict.keys())
             
-            combined_premium_values = []
             sorted_timestamps = sorted(common_timestamps)
             
             for i, timestamp in enumerate(sorted_timestamps):
@@ -1643,8 +1642,6 @@ def ezay_chart_data():
                 combined_premium = ce_item['close'] + pe_item['close']
                 combined_extrinsic = ce_item['extrinsic'] + pe_item['extrinsic']
                 
-                combined_premium_values.append(combined_premium)
-                
                 # Signal detection for Combined_Extrinsic pattern
                 # Combined Extrinsic Signal: 
                 # CE: (previous ce low < previous Combined_Extrinsic AND current ce close > current Combined_Extrinsic) 
@@ -1652,12 +1649,10 @@ def ezay_chart_data():
                 # PE: (previous pe low < previous Combined_Extrinsic AND current pe close > current Combined_Extrinsic) 
                 #     OR (current pe low < current Combined_Extrinsic AND current pe close > current Combined_Extrinsic)
                 combined_extrinsic_signal = False
-                if i > 0:  # Need previous candle
+                if i > 0:
                     prev_timestamp = sorted_timestamps[i-1]
                     prev_ce_item = ce_dict[prev_timestamp]
                     prev_pe_item = pe_dict[prev_timestamp]
-                    
-                    # Calculate previous combined extrinsic
                     prev_combined_extrinsic = prev_ce_item['extrinsic'] + prev_pe_item['extrinsic']
                     
                     # CE Conditions (CE close must be greater than PE close)
@@ -1674,7 +1669,7 @@ def ezay_chart_data():
                         if not prev_had_signal:
                             combined_extrinsic_signal = True
                 
-                # CP_CE Signal detection: Combined Premium ≈ Combined Extrinsic (within 5%)
+                # CP_CE Signal detection: Combined Premium ≈ Combined Extrinsic (within 1%)
                 cp_ce_signal = False
                 if (ce_item.get('extrinsic_signal', False) or pe_item.get('extrinsic_signal', False)) and combined_extrinsic > 0:
                     tolerance = combined_extrinsic * 0.01
@@ -1702,12 +1697,13 @@ def ezay_chart_data():
                 
                 combined_data.append(combined_item)
         
-        # Calculate LLP (Lowest Low of combined_premium)
-        llp = round(min(combined_premium_values), 2) if combined_premium_values else 0
-        
-        # Add LLP to each combined data point
+        # Add running LLP (lowest low of combined_premium) to each data point
+        running_llp = None
         for item in combined_data:
-            item['llp'] = llp
+            cp = item['combined_premium']
+            if running_llp is None or cp < running_llp:
+                running_llp = cp
+            item['llp'] = round(running_llp, 2)
         
         return jsonify({
             'status': 'success',
@@ -1718,7 +1714,7 @@ def ezay_chart_data():
                 'ce_data': formatted_ce_data,
                 'pe_data': formatted_pe_data,
                 'combined_data': combined_data,
-                'llp': llp,
+                'llp': running_llp if running_llp is not None else 0,
                 'timezone': 'Asia/Kolkata'
             }
         })
