@@ -43,6 +43,8 @@ export default function EzaySignals({ className, style, backtestDate }: EzaySign
     try {
       setLoading(true)
       setError('')
+      setData([])
+      setLastTime(0)
       // Use backtest endpoint when backtestDate is provided
       const url = backtestDate
         ? `/madhan/api/nifty/backtest_signals?date=${backtestDate}&_=${Date.now()}`
