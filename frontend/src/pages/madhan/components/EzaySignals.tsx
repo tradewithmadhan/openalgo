@@ -107,6 +107,22 @@ export default function EzaySignals({ className, style, backtestDate }: EzaySign
 
   const sortedTimes = Array.from(grouped.keys()).sort((a, b) => b - a)
 
+  // Find the single first CE or PE signal of the day (whichever comes first)
+  let firstSignalTime = Infinity
+  let firstSignalType: 'CE' | 'PE' | '' = ''
+  // Find the first CP signal of the day
+  let firstCpTime = Infinity
+
+  for (const row of filtered) {
+    if (!firstSignalType && (row.ce_signal || row.pe_signal) && row.time < firstSignalTime) {
+      firstSignalTime = row.time
+      firstSignalType = row.ce_signal ? 'CE' : 'PE'
+    }
+    if (row.cp_signal && row.time < firstCpTime) {
+      firstCpTime = row.time
+    }
+  }
+
   const signalDot = (active: boolean, color: string) => (
     <span
       className="inline-block w-2 h-2 rounded-full"
@@ -179,13 +195,18 @@ export default function EzaySignals({ className, style, backtestDate }: EzaySign
           return (
             <div key={ts}>
               {rows.map((row, idx) => {
+                const isFirstSignal = (row.ce_signal || row.pe_signal) && row.time === firstSignalTime
+                const isFirstCp = !!row.cp_signal && row.time === firstCpTime
                 const strikeBg = row.ce_signal ? 'rgba(0,200,81,0.2)'
                   : row.pe_signal ? 'rgba(255,68,68,0.2)'
                   : row.cp_signal === 'CE' ? 'rgba(0,200,81,0.4)'
                   : row.cp_signal === 'PE' ? 'rgba(255,68,68,0.4)'
                   : undefined
+                const rowBg = isFirstSignal ? (firstSignalType === 'CE' ? 'rgba(0,200,81,0.25)' : 'rgba(255,68,68,0.25)')
+                  : isFirstCp ? 'rgba(255,214,0,0.2)'
+                  : undefined
                 return (
-                  <div key={row.strike} className="grid grid-cols-[50px_50px_1fr_1fr_1fr_1fr] gap-0 px-2 py-0.5 items-center" style={{ borderTop: idx === 0 ? `1px solid ${t.border}` : undefined }}>
+                  <div key={row.strike} className="grid grid-cols-[50px_50px_1fr_1fr_1fr_1fr] gap-0 px-2 py-0.5 items-center" style={{ borderTop: idx === 0 ? `1px solid ${t.border}` : undefined, backgroundColor: rowBg }}>
                     {idx === 0 ? <span className="text-[11px] font-mono font-bold" style={{ color: t.text }}>{formatTime(ts)}</span> : <span />}
                     <span className="text-[11px] font-mono font-bold text-right px-1 py-0 rounded" style={{ color: t.text, backgroundColor: strikeBg }}>{row.strike}</span>
                     <div className="flex justify-center">{signalDot(row.ce_signal, '#00C851')}</div>
