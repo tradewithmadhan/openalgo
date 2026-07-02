@@ -1356,7 +1356,7 @@ export default function EzayChart() {
         <div className="flex-1 min-h-0 min-w-0 relative" style={{ backgroundColor: t.panelDarker }}>
           <div ref={chartContainerRef} className="absolute inset-0" />
           {backtestSummary && (
-            <div className="absolute top-2 left-2 z-10 rounded-md px-3 py-2 text-[10px] font-mono max-h-[60%] overflow-y-auto" style={{ backgroundColor: 'rgba(0,0,0,0.85)', color: '#d1d4dc', minWidth: 280, scrollbarWidth: 'thin' }}>
+            <div className="absolute top-2 left-2 z-10 rounded-md px-3 py-2 text-[10px] font-mono max-h-[60%] overflow-y-auto" style={{ backgroundColor: 'rgba(0,0,0,0.85)', color: '#d1d4dc', minWidth: 360, scrollbarWidth: 'thin' }}>
               <div className="font-semibold mb-1 text-[12px] text-white">Backtest Results</div>
               <div className="mb-1">Trades: {backtestSummary.total} | Wins: {backtestSummary.wins} | Loss: {backtestSummary.losses}</div>
               <div className="mb-1">Win Rate: {backtestSummary.winRate.toFixed(1)}%</div>
@@ -1365,14 +1365,16 @@ export default function EzayChart() {
                 <table className="w-full">
                   <thead>
                     <tr className="text-[9px] text-gray-400">
-                      <th className="text-left">#</th>
-                      <th className="text-left">Side</th>
-                      <th className="text-right">Entry</th>
-                      <th className="text-right">Exit</th>
-                      <th className="text-right">MaxRunup%</th>
-                      <th className="text-right">PnL%</th>
-                      <th className="text-right">PnL</th>
-                      <th className="text-left">Reason</th>
+                      <th className="text-left px-0.5">#</th>
+                      <th className="text-left px-0.5">Side</th>
+                      <th className="text-right px-0.5">Entry</th>
+                      <th className="text-center px-0.5">Time</th>
+                      <th className="text-right px-0.5">Exit</th>
+                      <th className="text-center px-0.5">Time</th>
+                      <th className="text-right px-0.5">Runup%</th>
+                      <th className="text-right px-0.5">PnL%</th>
+                      <th className="text-right px-0.5">PnL</th>
+                      <th className="text-left px-1">Reason</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1382,14 +1384,16 @@ export default function EzayChart() {
                       const fmt = (d: Date) => `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`
                       return (
                         <tr key={i} className="text-[9px]">
-                          <td className="text-left">{i + 1}</td>
-                          <td className={trade.side === 'CE' ? 'text-green-400' : 'text-purple-400'}>{trade.side}</td>
-                          <td className="text-right">{trade.entryPrice.toFixed(0)} <span className="text-gray-500">{fmt(entryDate)}</span></td>
-                          <td className="text-right">{trade.exitPrice.toFixed(0)} <span className="text-gray-500">{fmt(exitDate)}</span></td>
-                          <td className="text-right text-blue-400">{trade.maxRunupPct.toFixed(1)}%</td>
-                          <td className={trade.pnlPct >= 0 ? 'text-right text-green-400' : 'text-right text-red-400'}>{trade.pnlPct >= 0 ? '+' : ''}{trade.pnlPct.toFixed(1)}%</td>
-                          <td className={trade.pnlAmount >= 0 ? 'text-right text-green-400' : 'text-right text-red-400'}>{trade.pnlAmount >= 0 ? '+' : ''}{trade.pnlAmount.toFixed(0)}</td>
-                          <td className="text-left text-gray-500">{trade.exitReason === 'eod' ? 'EOD' : trade.exitReason === 'target' ? 'TGT' : 'OPP'}</td>
+                          <td className="text-left px-0.5">{i + 1}</td>
+                          <td className={`text-left px-0.5 ${trade.side === 'CE' ? 'text-green-400' : 'text-purple-400'}`}>{trade.side}</td>
+                          <td className="text-right px-0.5 font-mono">{trade.entryPrice.toFixed(0)}</td>
+                          <td className="text-center px-0.5 text-gray-500 font-mono">{fmt(entryDate)}</td>
+                          <td className="text-right px-0.5 font-mono">{trade.exitPrice.toFixed(0)}</td>
+                          <td className="text-center px-0.5 text-gray-500 font-mono">{fmt(exitDate)}</td>
+                          <td className="text-right px-0.5 text-blue-400">{trade.maxRunupPct.toFixed(1)}%</td>
+                          <td className={`text-right px-0.5 ${trade.pnlPct >= 0 ? 'text-green-400' : 'text-red-400'}`}>{trade.pnlPct >= 0 ? '+' : ''}{trade.pnlPct.toFixed(1)}%</td>
+                          <td className={`text-right px-0.5 ${trade.pnlAmount >= 0 ? 'text-green-400' : 'text-red-400'}`}>{trade.pnlAmount >= 0 ? '+' : ''}{trade.pnlAmount.toFixed(0)}</td>
+                          <td className="text-left px-1 text-gray-500">{trade.exitReason === 'eod' ? 'EOD' : trade.exitReason === 'target' ? 'TGT' : 'OPP'}</td>
                         </tr>
                       )
                     })}
