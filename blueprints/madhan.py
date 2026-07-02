@@ -1610,7 +1610,6 @@ def ezay_chart_data():
                     'volume': item['volume'],
                     'intrinsic': round(intrinsic, 2),
                     'extrinsic': round(extrinsic, 2),
-                    'spot_close': round(spot_close, 2),
                     'extrinsic_signal': extrinsic_signal
                 }
                 
@@ -1687,7 +1686,7 @@ def ezay_chart_data():
                     'pe_intrinsic': round(pe_item['intrinsic'], 2),
                     'ce_extrinsic': round(ce_item['extrinsic'], 2),
                     'pe_extrinsic': round(pe_item['extrinsic'], 2),
-                    'spot_close': round(ce_item['spot_close'], 2),
+                    'spot_close': round(spot_lookup.get(timestamp, 0), 2),
                     'combined_volume': combined_volume,
                     'combined_extrinsic_signal': combined_extrinsic_signal,
                     'ce_extrinsic_signal': ce_item.get('extrinsic_signal', False),

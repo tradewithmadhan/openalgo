@@ -47,6 +47,7 @@ type OptionDataResponse = {
       ce_extrinsic: number
       pe_extrinsic: number
       combined_extrinsic: number
+      spot_close?: number
       combined_volume?: number
       cp_ce_signal?: boolean
       combined_extrinsic_signal?: boolean

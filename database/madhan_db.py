@@ -938,7 +938,6 @@ def _format_backtest_chart_enhanced(rows: list[dict], option_type: str, strike_p
             'volume': item['volume'],
             'intrinsic': round(intrinsic, 2),
             'extrinsic': round(extrinsic, 2),
-            'spot_close': round(spot_close, 2),
             'extrinsic_signal': extrinsic_signal,
         })
 
@@ -1043,7 +1042,7 @@ def get_backtest_chart_data(date_str: str, strike_price: int) -> dict | None:
                 'pe_intrinsic': round(pe_item['intrinsic'], 2),
                 'ce_extrinsic': round(ce_item['extrinsic'], 2),
                 'pe_extrinsic': round(pe_item['extrinsic'], 2),
-                'spot_close': round(ce_item['spot_close'], 2),
+                'spot_close': round(spot_lookup.get(ts, 0), 2),
                 'combined_volume': combined_volume,
                 'combined_extrinsic_signal': combined_extrinsic_signal,
                 'ce_extrinsic_signal': ce_item.get('extrinsic_signal', False),
