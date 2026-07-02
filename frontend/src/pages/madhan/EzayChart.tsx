@@ -170,7 +170,7 @@ export default function EzayChart() {
   const chartTypeRef = useRef<'candlestick' | 'line'>('candlestick')
   const intervalRef = useRef('1m')
   const showSignalsRef = useRef(true)
-  const showHCRef = useRef(true)
+  const showHCRef = useRef(false)
 
   const [chartType, setChartType] = useState<'candlestick' | 'line'>('candlestick')
   const [interval, setInterval] = useState('1m')
@@ -182,7 +182,7 @@ export default function EzayChart() {
   const [showExtrinsic, setShowExtrinsic] = useState(true)
   const [showCombinedAll, setShowCombinedAll] = useState(true)
   const [showSignals, setShowSignals] = useState(true)
-  const [showHC, setShowHC] = useState(true)
+  const [showHC, setShowHC] = useState(false)
   const [chartInfo, setChartInfo] = useState('')
   const [atmStrike, setAtmStrike] = useState<number | null>(null)
   const [strikePanelOpen, setStrikePanelOpen] = useState(true)
