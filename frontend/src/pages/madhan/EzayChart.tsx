@@ -599,6 +599,35 @@ export default function EzayChart() {
           state = 'in_position'
           entryTime = t
           entryPrice = pendingEntryPrice
+
+          // Immediately check exit conditions on the fill candle
+          let exitPrice = 0
+          let exitReason: 'target' | 'opposite' | 'eod' = 'eod'
+          if (side === 'CE') {
+            if (ce.high >= comb.combined_extrinsic) {
+              exitPrice = ce.close
+              exitReason = 'target'
+            } else if (pe.extrinsic_signal) {
+              exitPrice = ce.close
+              exitReason = 'opposite'
+            }
+          } else {
+            if (pe.high >= comb.combined_extrinsic) {
+              exitPrice = pe.close
+              exitReason = 'target'
+            } else if (ce.extrinsic_signal) {
+              exitPrice = pe.close
+              exitReason = 'opposite'
+            }
+          }
+          if (exitPrice > 0) {
+            const pnlPct = ((exitPrice - entryPrice) / entryPrice) * 100
+            const lot = getLotSize(t)
+            const pnlAmount = (exitPrice - entryPrice) * lot
+            trades.push({ side, entryTime, entryPrice, exitTime: t, exitPrice, pnlPct, pnlAmount, lotSize: lot, exitReason, firstSignal: firstSignalType })
+            state = 'idle'
+            if (exitReason === 'target') targetHit = true
+          }
         } else {
           // Cancel pending if opposite signal fires (no HC filter for cancel)
           const oppositeSignal = side === 'CE' ? pe.extrinsic_signal : ce.extrinsic_signal
