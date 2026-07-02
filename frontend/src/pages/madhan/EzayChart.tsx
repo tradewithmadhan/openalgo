@@ -78,6 +78,7 @@ type BacktestTrade = {
   lotSize: number
   exitReason: 'target' | 'opposite' | 'eod'
   firstSignal: 'CE' | 'PE' | ''
+  maxRunupPct: number
 }
 
 function getLotSize(unixTime: number): number {
@@ -545,6 +546,7 @@ export default function EzayChart() {
     let entryTime = 0
     let entryPrice = 0
     let targetHit = false
+    let maxHigh = 0
 
     for (const comb of combinedData) {
       const t = comb.time
@@ -554,6 +556,10 @@ export default function EzayChart() {
       if (targetHit) continue
 
       if (state === 'in_position') {
+        // Track max high of the option being held
+        const optHigh = side === 'CE' ? ce.high : pe.high
+        if (optHigh > maxHigh) maxHigh = optHigh
+
         // Check exit conditions
         let exitPrice = 0
         let exitReason: 'target' | 'opposite' | 'eod' = 'eod'
@@ -587,7 +593,8 @@ export default function EzayChart() {
           const pnlPct = ((exitPrice - entryPrice) / entryPrice) * 100
           const lot = getLotSize(t)
           const pnlAmount = (exitPrice - entryPrice) * lot
-          trades.push({ side, entryTime, entryPrice, exitTime: t, exitPrice, pnlPct, pnlAmount, lotSize: lot, exitReason, firstSignal: firstSignalType })
+          const maxRunupPct = entryPrice > 0 ? ((maxHigh - entryPrice) / entryPrice) * 100 : 0
+          trades.push({ side, entryTime, entryPrice, exitTime: t, exitPrice, pnlPct, pnlAmount, lotSize: lot, exitReason, firstSignal: firstSignalType, maxRunupPct })
           state = 'idle'
           if (exitReason === 'target') targetHit = true
         }
@@ -595,10 +602,11 @@ export default function EzayChart() {
         // Check if the pending entry price is hit by high
         const currentHigh = side === 'CE' ? ce.high : pe.high
         if (currentHigh >= pendingEntryPrice) {
-          // Fill the entry
-          state = 'in_position'
-          entryTime = t
-          entryPrice = pendingEntryPrice
+        // Fill the entry
+        state = 'in_position'
+        entryTime = t
+        entryPrice = pendingEntryPrice
+        maxHigh = currentHigh
 
           // Immediately check exit conditions on the fill candle
           let exitPrice = 0
@@ -624,7 +632,8 @@ export default function EzayChart() {
             const pnlPct = ((exitPrice - entryPrice) / entryPrice) * 100
             const lot = getLotSize(t)
             const pnlAmount = (exitPrice - entryPrice) * lot
-            trades.push({ side, entryTime, entryPrice, exitTime: t, exitPrice, pnlPct, pnlAmount, lotSize: lot, exitReason, firstSignal: firstSignalType })
+            const maxRunupPct = entryPrice > 0 ? ((maxHigh - entryPrice) / entryPrice) * 100 : 0
+            trades.push({ side, entryTime, entryPrice, exitTime: t, exitPrice, pnlPct, pnlAmount, lotSize: lot, exitReason, firstSignal: firstSignalType, maxRunupPct })
             state = 'idle'
             if (exitReason === 'target') targetHit = true
           }
@@ -668,7 +677,8 @@ export default function EzayChart() {
       const pnlPct = ((lastPrice - entryPrice) / entryPrice) * 100
       const lot = getLotSize(last.time)
       const pnlAmount = (lastPrice - entryPrice) * lot
-      trades.push({ side, entryTime, entryPrice, exitTime: last.time, exitPrice: lastPrice, pnlPct, pnlAmount, lotSize: lot, exitReason: 'eod', firstSignal: firstSignalType })
+      const maxRunupPct = entryPrice > 0 ? ((maxHigh - entryPrice) / entryPrice) * 100 : 0
+      trades.push({ side, entryTime, entryPrice, exitTime: last.time, exitPrice: lastPrice, pnlPct, pnlAmount, lotSize: lot, exitReason: 'eod', firstSignal: firstSignalType, maxRunupPct })
     }
 
     backtestTradesRef.current = trades
@@ -702,7 +712,7 @@ export default function EzayChart() {
       return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`
     }
     const rows = [
-      ['Strategy', 'Date', 'Strike', 'Side', 'Symbol', 'Qty', 'Entry Price', 'Entry Time', 'Exit Price', 'Exit Time', 'PnL%', 'PnL', 'Reason', '1st Signal Time', '1st Signal Strike', '1st Signal'].join(','),
+      ['Strategy', 'Date', 'Strike', 'Side', 'Symbol', 'Qty', 'Entry Price', 'Entry Time', 'Exit Price', 'Exit Time', 'PnL%', 'PnL', 'Max Runup%', 'Reason', '1st Signal Time', '1st Signal Strike', '1st Signal'].join(','),
     ]
     for (let i = 0; i < trades.length; i++) {
       const t = trades[i]
@@ -713,6 +723,7 @@ export default function EzayChart() {
         t.entryPrice.toFixed(0), fmt(t.entryTime),
         t.exitPrice.toFixed(0), fmt(t.exitTime),
         `${t.pnlPct.toFixed(1)}%`, t.pnlAmount.toFixed(0),
+        `${t.maxRunupPct.toFixed(1)}%`,
         reasonMap[t.exitReason] || t.exitReason,
         t.firstSignal ? fmt(firstSignalTimeRef.current) : '',
         t.firstSignal ? strike : '',
@@ -1358,6 +1369,7 @@ export default function EzayChart() {
                       <th className="text-left">Side</th>
                       <th className="text-right">Entry</th>
                       <th className="text-right">Exit</th>
+                      <th className="text-right">MaxRunup%</th>
                       <th className="text-right">PnL%</th>
                       <th className="text-right">PnL</th>
                       <th className="text-left">Reason</th>
@@ -1374,6 +1386,7 @@ export default function EzayChart() {
                           <td className={trade.side === 'CE' ? 'text-green-400' : 'text-purple-400'}>{trade.side}</td>
                           <td className="text-right">{trade.entryPrice.toFixed(0)} <span className="text-gray-500">{fmt(entryDate)}</span></td>
                           <td className="text-right">{trade.exitPrice.toFixed(0)} <span className="text-gray-500">{fmt(exitDate)}</span></td>
+                          <td className="text-right text-blue-400">{trade.maxRunupPct.toFixed(1)}%</td>
                           <td className={trade.pnlPct >= 0 ? 'text-right text-green-400' : 'text-right text-red-400'}>{trade.pnlPct >= 0 ? '+' : ''}{trade.pnlPct.toFixed(1)}%</td>
                           <td className={trade.pnlAmount >= 0 ? 'text-right text-green-400' : 'text-right text-red-400'}>{trade.pnlAmount >= 0 ? '+' : ''}{trade.pnlAmount.toFixed(0)}</td>
                           <td className="text-left text-gray-500">{trade.exitReason === 'eod' ? 'EOD' : trade.exitReason === 'target' ? 'TGT' : 'OPP'}</td>
