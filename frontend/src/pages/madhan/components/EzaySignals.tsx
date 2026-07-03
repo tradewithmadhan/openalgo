@@ -14,10 +14,17 @@ export type SignalRow = {
   pe_close: number
 }
 
+export type FirstSignalInfo = {
+  time: number
+  type: 'CE' | 'PE' | ''
+  strike: number
+}
+
 type EzaySignalsProps = {
   className?: string
   style?: React.CSSProperties
   backtestDate?: string
+  onFirstSignal?: (data: FirstSignalInfo) => void
 }
 
 const formatTime = (ts: number) => {
@@ -25,7 +32,7 @@ const formatTime = (ts: number) => {
   return d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' })
 }
 
-export default function EzaySignals({ className, style, backtestDate }: EzaySignalsProps) {
+export default function EzaySignals({ className, style, backtestDate, onFirstSignal }: EzaySignalsProps) {
   const { mode: themeMode } = useThemeStore()
   const t = chartTheme[themeMode]
   const [data, setData] = useState<SignalRow[]>([])
@@ -107,26 +114,36 @@ export default function EzaySignals({ className, style, backtestDate }: EzaySign
 
   const sortedTimes = Array.from(grouped.keys()).sort((a, b) => b - a)
 
-  // Find the single first CE or PE signal of the day (whichever comes first)
-  let firstSignalTime = Infinity
-  let firstSignalType: 'CE' | 'PE' | '' = ''
-  let firstSignalStrike = 0
+  // Find the single first CE or PE signal of the day (whichever comes first) — with HC filter
+  const firstSignalInfo = (() => {
+    let time = Infinity
+    let type: 'CE' | 'PE' | '' = ''
+    let strike = 0
+    for (const row of filtered) {
+      if (!type && row.time < time) {
+        if (row.ce_signal && row.ce_close > row.pe_close) {
+          time = row.time
+          type = 'CE'
+          strike = row.strike
+        } else if (row.pe_signal && row.pe_close > row.ce_close) {
+          time = row.time
+          type = 'PE'
+          strike = row.strike
+        }
+      }
+    }
+    return { time: time === Infinity ? 0 : time, type, strike }
+  })()
+
+  const firstSignalTime = firstSignalInfo.time
+  const firstSignalType = firstSignalInfo.type
+  const firstSignalStrike = firstSignalInfo.strike
+
   // Find the first CP signal of the day
   let firstCpTime = Infinity
   let firstCpStrike = 0
 
   for (const row of filtered) {
-    if (!firstSignalType && row.time < firstSignalTime) {
-      if (row.ce_signal && row.ce_close > row.pe_close) {
-        firstSignalTime = row.time
-        firstSignalType = 'CE'
-        firstSignalStrike = row.strike
-      } else if (row.pe_signal && row.pe_close > row.ce_close) {
-        firstSignalTime = row.time
-        firstSignalType = 'PE'
-        firstSignalStrike = row.strike
-      }
-    }
     if (row.cp_signal && row.time < firstCpTime) {
       firstCpTime = row.time
       firstCpStrike = row.strike
@@ -139,6 +156,12 @@ export default function EzaySignals({ className, style, backtestDate }: EzaySign
       style={{ backgroundColor: active ? color : 'transparent', border: `1px solid ${active ? color : t.border}` }}
     />
   )
+
+  useEffect(() => {
+    if (onFirstSignal) {
+      onFirstSignal(firstSignalInfo)
+    }
+  }, [firstSignalInfo.time, firstSignalInfo.type, firstSignalInfo.strike, onFirstSignal])
 
   return (
     <div

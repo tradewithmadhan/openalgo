@@ -32,7 +32,7 @@ import { useProfileMenuItems } from '@/hooks/useProfileMenuItems'
 import { cn } from '@/lib/utils'
 import { chartTheme } from './chartTheme'
 import RealtimeTable from './RealtimeTable'
-import EzaySignals from './components/EzaySignals'
+import EzaySignals, { type FirstSignalInfo } from './components/EzaySignals'
 
 type OptionDataResponse = {
   status: string
@@ -164,6 +164,8 @@ export default function EzayChart() {
   const backtestTradesRef = useRef<BacktestTrade[]>([])
   const backtestSummaryRef = useRef<{ total: number; wins: number; losses: number; winRate: number; totalPnl: number; totalPnlAmount: number } | null>(null)
   const firstSignalTimeRef = useRef(0)
+  const firstSignalStrikeRef = useRef(0)
+  const firstSignalTypeRef = useRef<'CE' | 'PE' | ''>('')
   const updaterRef = useRef<number | null>(null)
   const chartReadyRef = useRef(false)
   const rawDataRef = useRef<OptionDataResponse['data'] | null>(null)
@@ -231,8 +233,17 @@ export default function EzayChart() {
     backtestTradesRef.current = []
     backtestSummaryRef.current = null
     setBacktestSummary(null)
+    firstSignalTimeRef.current = 0
+    firstSignalStrikeRef.current = 0
+    firstSignalTypeRef.current = ''
     loadStrikes()
   }
+
+  const handleFirstSignal = useCallback((info: FirstSignalInfo) => {
+    firstSignalTimeRef.current = info.time
+    firstSignalTypeRef.current = info.type
+    firstSignalStrikeRef.current = info.strike
+  }, [])
 
   const wsSymbols = useMemo(() => {
     // Don't subscribe to WS in backtest mode
@@ -534,24 +545,8 @@ export default function EzayChart() {
     const peCloseMap = new Map<number, number>()
     for (const p of peData) peCloseMap.set(p.time, p.close)
 
-    // Find the day's first CE or PE signal (with HC filter)
-    let firstSignalTime = 0
-    let firstSignalType: 'CE' | 'PE' | '' = ''
-    for (const comb of combinedData) {
-      const ce = ceByTime.get(comb.time)
-      const pe = peByTime.get(comb.time)
-      if (!ce || !pe) continue
-      if (ce.extrinsic_signal && ce.close > pe.close) {
-        firstSignalTime = comb.time
-        firstSignalType = 'CE'
-        break
-      }
-      if (pe.extrinsic_signal && pe.close > ce.close) {
-        firstSignalTime = comb.time
-        firstSignalType = 'PE'
-        break
-      }
-    }
+    // Use first signal data from EzaySignals (all strikes consolidated, with HC filter)
+    let firstSignalType = firstSignalTypeRef.current
 
     const trades: BacktestTrade[] = []
     // State: 'idle' | 'pending' | 'in_position'
@@ -697,7 +692,6 @@ export default function EzayChart() {
     }
 
     backtestTradesRef.current = trades
-    firstSignalTimeRef.current = firstSignalTime
 
     // Compute summary
     if (trades.length > 0) {
@@ -741,7 +735,7 @@ export default function EzayChart() {
         `${t.maxRunupPct.toFixed(1)}%`,
         reasonMap[t.exitReason] || t.exitReason,
         t.firstSignal ? fmt(firstSignalTimeRef.current) : '',
-        t.firstSignal ? strike : '',
+        t.firstSignal ? firstSignalStrikeRef.current : '',
         t.firstSignal,
       ].join(','))
     }
@@ -1225,10 +1219,14 @@ export default function EzayChart() {
                   backtestTradesRef.current = []
                   backtestSummaryRef.current = null
                   setBacktestSummary(null)
+                  firstSignalTimeRef.current = 0
+                  firstSignalStrikeRef.current = 0
+                  firstSignalTypeRef.current = ''
                 } else {
                   const today = todayStr()
                   setBacktestDate(today)
                   backtestDateRef.current = today
+                  setShowEzaySignals(true)
                 }
                 loadStrikes()
               }}
@@ -1255,6 +1253,9 @@ export default function EzayChart() {
                     backtestTradesRef.current = []
                     backtestSummaryRef.current = null
                     setBacktestSummary(null)
+                    firstSignalTimeRef.current = 0
+                    firstSignalStrikeRef.current = 0
+                    firstSignalTypeRef.current = ''
                     loadStrikes()
                   }}
                   className="h-6 px-1 text-[10px] rounded border"
@@ -1443,7 +1444,7 @@ export default function EzayChart() {
           )}
           {showRealtime && <RealtimeTable onClose={() => setShowRealtime(false)} />}
         </div>
-        {showEzaySignals && <EzaySignals className="shrink-0" style={{ width: 320 }} backtestDate={isBacktest ? backtestDate : undefined} />}
+        {showEzaySignals && <EzaySignals className="shrink-0" style={{ width: 320 }} backtestDate={isBacktest ? backtestDate : undefined} onFirstSignal={handleFirstSignal} />}
       </div>
     </div>
   )
