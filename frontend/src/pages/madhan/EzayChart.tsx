@@ -219,6 +219,21 @@ export default function EzayChart() {
     return 1
   }
 
+  const todayStr = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' })
+
+  const shiftBacktestDate = (days: number) => {
+    const cur = backtestDateRef.current || todayStr()
+    const d = new Date(cur + 'T00:00:00')
+    d.setDate(d.getDate() + days)
+    const next = d.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' })
+    setBacktestDate(next)
+    backtestDateRef.current = next
+    backtestTradesRef.current = []
+    backtestSummaryRef.current = null
+    setBacktestSummary(null)
+    loadStrikes()
+  }
+
   const wsSymbols = useMemo(() => {
     // Don't subscribe to WS in backtest mode
     if (isBacktest) return []
@@ -1210,6 +1225,10 @@ export default function EzayChart() {
                   backtestTradesRef.current = []
                   backtestSummaryRef.current = null
                   setBacktestSummary(null)
+                } else {
+                  const today = todayStr()
+                  setBacktestDate(today)
+                  backtestDateRef.current = today
                 }
                 loadStrikes()
               }}
@@ -1217,20 +1236,40 @@ export default function EzayChart() {
               {isBacktest ? 'Backtest' : 'Live'}
             </Button>
             {isBacktest && (
-              <input
-                type="date"
-                value={backtestDate}
-                onChange={(e) => {
-                  setBacktestDate(e.target.value)
-                  backtestDateRef.current = e.target.value
-                  backtestTradesRef.current = []
-                  backtestSummaryRef.current = null
-                  setBacktestSummary(null)
-                  loadStrikes()
-                }}
-                className="h-6 px-1 text-[10px] rounded border"
-                style={{ backgroundColor: t.panelDarker, color: t.text, borderColor: t.border }}
-              />
+              <>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-6 w-6 p-0"
+                  style={{ color: t.textSecondary }}
+                  onClick={() => shiftBacktestDate(-1)}
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+                <input
+                  type="date"
+                  value={backtestDate}
+                  onChange={(e) => {
+                    setBacktestDate(e.target.value)
+                    backtestDateRef.current = e.target.value
+                    backtestTradesRef.current = []
+                    backtestSummaryRef.current = null
+                    setBacktestSummary(null)
+                    loadStrikes()
+                  }}
+                  className="h-6 px-1 text-[10px] rounded border"
+                  style={{ backgroundColor: t.panelDarker, color: t.text, borderColor: t.border }}
+                />
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-6 w-6 p-0"
+                  style={{ color: t.textSecondary }}
+                  onClick={() => shiftBacktestDate(1)}
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              </>
             )}
             {isBacktest && backtestDate && (
               <>

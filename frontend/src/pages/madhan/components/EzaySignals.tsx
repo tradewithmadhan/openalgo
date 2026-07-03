@@ -110,16 +110,26 @@ export default function EzaySignals({ className, style, backtestDate }: EzaySign
   // Find the single first CE or PE signal of the day (whichever comes first)
   let firstSignalTime = Infinity
   let firstSignalType: 'CE' | 'PE' | '' = ''
+  let firstSignalStrike = 0
   // Find the first CP signal of the day
   let firstCpTime = Infinity
+  let firstCpStrike = 0
 
   for (const row of filtered) {
-    if (!firstSignalType && (row.ce_signal || row.pe_signal) && row.time < firstSignalTime) {
-      firstSignalTime = row.time
-      firstSignalType = row.ce_signal ? 'CE' : 'PE'
+    if (!firstSignalType && row.time < firstSignalTime) {
+      if (row.ce_signal && row.ce_close > row.pe_close) {
+        firstSignalTime = row.time
+        firstSignalType = 'CE'
+        firstSignalStrike = row.strike
+      } else if (row.pe_signal && row.pe_close > row.ce_close) {
+        firstSignalTime = row.time
+        firstSignalType = 'PE'
+        firstSignalStrike = row.strike
+      }
     }
     if (row.cp_signal && row.time < firstCpTime) {
       firstCpTime = row.time
+      firstCpStrike = row.strike
     }
   }
 
@@ -195,8 +205,8 @@ export default function EzaySignals({ className, style, backtestDate }: EzaySign
           return (
             <div key={ts}>
               {rows.map((row, idx) => {
-                const isFirstSignal = (row.ce_signal || row.pe_signal) && row.time === firstSignalTime
-                const isFirstCp = !!row.cp_signal && row.time === firstCpTime
+                const isFirstSignal = row.time === firstSignalTime && row.strike === firstSignalStrike && !!firstSignalType
+                const isFirstCp = !!row.cp_signal && row.time === firstCpTime && row.strike === firstCpStrike
                 const strikeBg = row.ce_signal ? 'rgba(0,200,81,0.2)'
                   : row.pe_signal ? 'rgba(255,68,68,0.2)'
                   : row.cp_signal === 'CE' ? 'rgba(0,200,81,0.4)'
