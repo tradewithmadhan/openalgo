@@ -72,6 +72,7 @@ type AggCombined = {
 }
 type BacktestTrade = {
   strategy: string
+  method?: string
   date: string
   strike: number
   symbol: string
@@ -86,6 +87,24 @@ type BacktestTrade = {
   lotSize: number
   exitReason: 'target' | 'opposite' | 'eod'
   maxRunupPct: number
+}
+
+type RangeDayResult = {
+  date: string
+  ce_pe_strike: number
+  cp_strike: number
+  trades: Record<string, BacktestTrade[]>
+  summary: Record<string, { total: number; wins: number; losses: number; winRate: number; totalPnl: number; totalPnlAmount: number } | null>
+}
+
+type RangeResponse = {
+  status?: string
+  from_date: string
+  to_date: string
+  total_days: number
+  days_with_signals: Record<string, number>
+  strategies: Record<string, { trades: BacktestTrade[]; summary: { total: number; wins: number; losses: number; winRate: number; totalPnl: number; totalPnlAmount: number } | null }>
+  per_day: RangeDayResult[]
 }
 
 function aggregateCandles<T extends AggCandle & Record<string, any>>(data: T[], intervalMin: number): T[] {
@@ -197,6 +216,13 @@ export default function EzayChart() {
   const isBacktestRef = useRef(false)
   const backtestDateRef = useRef('')
   const [backtestSummary, setBacktestSummary] = useState<{ total: number; wins: number; losses: number; winRate: number; totalPnl: number; totalPnlAmount: number } | null>(null)
+
+  const [rangeMode, setRangeMode] = useState(false)
+  const [rangeFrom, setRangeFrom] = useState('')
+  const [rangeTo, setRangeTo] = useState('')
+  const [rangeResults, setRangeResults] = useState<RangeResponse | null>(null)
+  const [rangeLoading, setRangeLoading] = useState(false)
+  const [rangeVisibleStrategies, setRangeVisibleStrategies] = useState<Set<string>>(new Set(['CE-PE', 'CP']))
 
   const currentAtmStrike = liveSpot > 0 ? Math.round(liveSpot / 50) * 50 : null
 
@@ -563,6 +589,56 @@ export default function EzayChart() {
     a.click()
     URL.revokeObjectURL(url)
   }, [])
+
+  const fetchRangeBacktest = useCallback(async () => {
+    if (!rangeFrom || !rangeTo) return
+    setRangeLoading(true)
+    setRangeResults(null)
+    try {
+      const res = await fetch(`/madhan/api/nifty/backtest_range?from=${rangeFrom}&to=${rangeTo}&_=${Date.now()}`)
+      const json: RangeResponse = await res.json()
+      if (json.status === 'error' || !json.strategies) return
+      setRangeResults(json)
+      const allStrats = Object.keys(json.strategies)
+      setRangeVisibleStrategies(new Set(allStrats))
+    } catch (err) {
+      console.error('Error fetching range backtest:', err)
+    } finally {
+      setRangeLoading(false)
+    }
+  }, [rangeFrom, rangeTo])
+
+  const saveRangeBacktest = useCallback(() => {
+    if (!rangeResults) return
+    const fmt = (ts: number) => {
+      const d = new Date(ts * 1000)
+      return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`
+    }
+    const rows = [
+      ['Strategy', 'Method', 'Date', 'Strike', 'Side', 'Symbol', 'Qty', 'Entry Price', 'Entry Time', 'Exit Price', 'Exit Time', 'PnL%', 'PnL', 'Max Runup%', 'Reason'].join(','),
+    ]
+    for (const strat of Object.keys(rangeResults.strategies)) {
+      if (!rangeVisibleStrategies.has(strat)) continue
+      for (const t of rangeResults.strategies[strat].trades) {
+        const reasonMap: Record<string, string> = { target: 'TGT', opposite: 'OPP', eod: 'EOD' }
+        rows.push([
+          t.strategy, t.method || '', t.date, t.strike, t.side, t.symbol, t.lotSize,
+          t.entryPrice.toFixed(0), fmt(t.entryTime),
+          t.exitPrice.toFixed(0), fmt(t.exitTime),
+          `${t.pnlPct.toFixed(1)}%`, t.pnlAmount.toFixed(0),
+          `${t.maxRunupPct.toFixed(1)}%`,
+          reasonMap[t.exitReason] || t.exitReason,
+        ].join(','))
+      }
+    }
+    const blob = new Blob([rows.join('\n')], { type: 'text/csv' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `backtest_${rangeResults.from_date}_to_${rangeResults.to_date}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+  }, [rangeResults, rangeVisibleStrategies])
 
   const loadData = useCallback(async () => {
     if (!selectedStrike) return
@@ -1105,6 +1181,10 @@ export default function EzayChart() {
                   firstSignalTimeRef.current = 0
                   firstSignalStrikeRef.current = 0
                   firstSignalTypeRef.current = ''
+                  setRangeMode(false)
+                  setRangeFrom('')
+                  setRangeTo('')
+                  setRangeResults(null)
                 } else {
                   const today = todayStr()
                   setBacktestDate(today)
@@ -1119,70 +1199,47 @@ export default function EzayChart() {
             </Button>
             {isBacktest && (
               <>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  className="h-6 w-6 p-0"
-                  style={{ color: t.textSecondary }}
-                  onClick={() => shiftBacktestDate(-1)}
-                >
-                  <ChevronLeft className="h-4 w-4" />
-                </Button>
-                <input
-                  type="date"
-                  value={backtestDate}
-                  onChange={(e) => {
-                    setBacktestDate(e.target.value)
-                    backtestDateRef.current = e.target.value
-                    backtestTradesRef.current = []
-                    backtestSummaryRef.current = null
-                    setBacktestSummary(null)
-                    firstSignalTimeRef.current = 0
-                    firstSignalStrikeRef.current = 0
-                    firstSignalTypeRef.current = ''
-                    pendingAutoSelectRef.current = true
-                    loadStrikes()
-                  }}
-                  className="h-6 px-1 text-[10px] rounded border"
-                  style={{ backgroundColor: t.panelDarker, color: t.text, borderColor: t.border }}
-                />
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  className="h-6 w-6 p-0"
-                  style={{ color: t.textSecondary }}
-                  onClick={() => shiftBacktestDate(1)}
-                >
-                  <ChevronRight className="h-4 w-4" />
-                </Button>
-              </>
-            )}
-            {isBacktest && backtestDate && (
-              <>
-                {availableStrategies.map((s) => (
-                  <div key={s} className="flex items-center gap-1">
-                    <Checkbox
-                      checked={visibleStrategies.has(s)}
-                      onCheckedChange={(v) => {
-                        setVisibleStrategies((prev) => {
-                          const next = new Set(prev)
-                          if (v) next.add(s); else next.delete(s)
-                          return next
-                        })
-                      }}
-                    />
-                    <Label className="text-[10px] font-medium" style={{ color: t.textSecondary }}>{s}</Label>
-                  </div>
-                ))}
-                {backtestSummary && (
-                  <Button
-                    size="sm"
-                    variant="default"
-                    className="h-6 px-2 text-[10px] font-medium bg-blue-600 hover:bg-blue-700 text-white"
-                    onClick={saveBacktest}
-                  >
-                    Save
-                  </Button>
+                <div className="flex items-center rounded border overflow-hidden" style={{ borderColor: t.border }}>
+                  <Button size="sm" variant="ghost" className="h-6 px-2 text-[10px] rounded-none" style={{ backgroundColor: !rangeMode ? 'rgba(255,255,255,0.15)' : undefined, color: t.text }} onClick={() => { setRangeMode(false); setRangeResults(null) }}>Single</Button>
+                  <Button size="sm" variant="ghost" className="h-6 px-2 text-[10px] rounded-none" style={{ backgroundColor: rangeMode ? 'rgba(255,255,255,0.15)' : undefined, color: t.text }} onClick={() => setRangeMode(true)}>Range</Button>
+                </div>
+                {!rangeMode ? (
+                  <>
+                    <Button size="sm" variant="ghost" className="h-6 w-6 p-0" style={{ color: t.textSecondary }} onClick={() => shiftBacktestDate(-1)}>
+                      <ChevronLeft className="h-4 w-4" />
+                    </Button>
+                    <input type="date" value={backtestDate} onChange={(e) => { setBacktestDate(e.target.value); backtestDateRef.current = e.target.value; backtestTradesRef.current = []; backtestSummaryRef.current = null; setBacktestSummary(null); firstSignalTimeRef.current = 0; firstSignalStrikeRef.current = 0; firstSignalTypeRef.current = ''; pendingAutoSelectRef.current = true; loadStrikes() }} className="h-6 px-1 text-[10px] rounded border" style={{ backgroundColor: t.panelDarker, color: t.text, borderColor: t.border }} />
+                    <Button size="sm" variant="ghost" className="h-6 w-6 p-0" style={{ color: t.textSecondary }} onClick={() => shiftBacktestDate(1)}>
+                      <ChevronRight className="h-4 w-4" />
+                    </Button>
+                    {availableStrategies.map((s) => (
+                      <div key={s} className="flex items-center gap-1">
+                        <Checkbox checked={visibleStrategies.has(s)} onCheckedChange={(v) => { setVisibleStrategies((prev) => { const next = new Set(prev); if (v) next.add(s); else next.delete(s); return next }) }} />
+                        <Label className="text-[10px] font-medium" style={{ color: t.textSecondary }}>{s}</Label>
+                      </div>
+                    ))}
+                    {backtestSummary && (
+                      <Button size="sm" variant="default" className="h-6 px-2 text-[10px] font-medium bg-blue-600 hover:bg-blue-700 text-white" onClick={saveBacktest}>Save</Button>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <input type="date" value={rangeFrom} onChange={(e) => setRangeFrom(e.target.value)} className="h-6 px-1 text-[10px] rounded border" style={{ backgroundColor: t.panelDarker, color: t.text, borderColor: t.border }} />
+                    <span className="text-[10px]" style={{ color: t.textSecondary }}>to</span>
+                    <input type="date" value={rangeTo} onChange={(e) => setRangeTo(e.target.value)} className="h-6 px-1 text-[10px] rounded border" style={{ backgroundColor: t.panelDarker, color: t.text, borderColor: t.border }} />
+                    <Button size="sm" variant="default" className="h-6 px-2 text-[10px] font-medium bg-green-600 hover:bg-green-700 text-white" onClick={fetchRangeBacktest} disabled={rangeLoading || !rangeFrom || !rangeTo}>
+                      {rangeLoading ? 'Running...' : 'Run'}
+                    </Button>
+                    {Object.keys(rangeResults?.strategies || {}).map((s) => (
+                      <div key={s} className="flex items-center gap-1">
+                        <Checkbox checked={rangeVisibleStrategies.has(s)} onCheckedChange={(v) => { setRangeVisibleStrategies((prev) => { const next = new Set(prev); if (v) next.add(s); else next.delete(s); return next }) }} />
+                        <Label className="text-[10px] font-medium" style={{ color: t.textSecondary }}>{s}</Label>
+                      </div>
+                    ))}
+                    {rangeResults && (
+                      <Button size="sm" variant="default" className="h-6 px-2 text-[10px] font-medium bg-blue-600 hover:bg-blue-700 text-white" onClick={saveRangeBacktest}>Save</Button>
+                    )}
+                  </>
                 )}
               </>
             )}
@@ -1225,7 +1282,7 @@ export default function EzayChart() {
         <div
           className="shrink-0 flex flex-col overflow-hidden border-r transition-[width] duration-150"
           style={{
-            width: strikePanelOpen ? 72 : 24,
+            width: strikePanelOpen && !rangeMode ? 72 : 24,
             backgroundColor: t.panelDarker,
             borderColor: t.border,
           }}
@@ -1236,9 +1293,9 @@ export default function EzayChart() {
             style={{ color: t.textSecondary }}
             title={strikePanelOpen ? 'Collapse strike list' : 'Expand strike list'}
           >
-            {strikePanelOpen ? <ChevronLeft className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+            {strikePanelOpen && !rangeMode ? <ChevronLeft className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
           </button>
-          {strikePanelOpen && (
+          {strikePanelOpen && !rangeMode && (
             <>
               <div className="px-1 py-1 text-center shrink-0" style={{ borderBottom: `1px solid ${t.border}` }}>
                 <span className="text-[10px] font-semibold" style={{ color: t.textSecondary }}>STRIKES</span>
@@ -1329,6 +1386,56 @@ export default function EzayChart() {
                           <td className={`text-right px-0.5 ${trade.pnlPct >= 0 ? 'text-green-400' : 'text-red-400'}`}>{trade.pnlPct >= 0 ? '+' : ''}{trade.pnlPct.toFixed(1)}%</td>
                           <td className={`text-right px-0.5 ${trade.pnlAmount >= 0 ? 'text-green-400' : 'text-red-400'}`}>{trade.pnlAmount >= 0 ? '+' : ''}{trade.pnlAmount.toFixed(0)}</td>
                           <td className="text-left px-1 text-gray-500">{trade.exitReason === 'eod' ? 'EOD' : trade.exitReason === 'target' ? 'TGT' : 'OPP'}</td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+          {rangeResults && (
+            <div className="absolute top-2 left-2 z-10 rounded-md px-3 py-2 text-[10px] font-mono max-h-[80%] overflow-y-auto" style={{ backgroundColor: 'rgba(0,0,0,0.88)', color: '#d1d4dc', minWidth: 420, scrollbarWidth: 'thin' }}>
+              <div className="font-semibold mb-1 text-[12px] text-white">Range Backtest: {rangeResults.from_date} to {rangeResults.to_date}</div>
+              <div className="mb-1">Total Days: {rangeResults.total_days}</div>
+              {Object.entries(rangeResults.strategies).map(([strat, data]) => (
+                rangeVisibleStrategies.has(strat) && data.summary && (
+                  <div key={strat} className="mb-2 p-1.5 rounded" style={{ backgroundColor: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)' }}>
+                    <div className="font-semibold text-[11px] text-white mb-0.5">{strat} ({rangeResults.days_with_signals[strat] || 0} days with signals)</div>
+                    <div>Trades: {data.summary.total} | Wins: {data.summary.wins} | Loss: {data.summary.losses}</div>
+                    <div>Win Rate: {data.summary.winRate.toFixed(1)}%</div>
+                    <div>PnL: <span className={data.summary.totalPnl >= 0 ? 'text-green-400' : 'text-red-400'}>{data.summary.totalPnl >= 0 ? '+' : ''}{data.summary.totalPnl.toFixed(1)}%</span> <span className={data.summary.totalPnlAmount >= 0 ? 'text-green-400' : 'text-red-400'}>({data.summary.totalPnlAmount >= 0 ? '+' : ''}{data.summary.totalPnlAmount.toFixed(0)})</span></div>
+                  </div>
+                )
+              ))}
+              <div style={{ borderTop: '1px solid rgba(255,255,255,0.2)' }} className="pt-1 mt-1">
+                <div className="font-semibold text-[11px] text-white mb-0.5">Per-Day Breakdown</div>
+                <table className="w-full">
+                  <thead>
+                    <tr className="text-[9px] text-gray-400">
+                      <th className="text-left px-0.5">Date</th>
+                      <th className="text-right px-0.5">CE-PE</th>
+                      <th className="text-right px-0.5">CP</th>
+                      <th className="text-right px-0.5">Trades</th>
+                      <th className="text-right px-0.5">PnL%</th>
+                      <th className="text-right px-0.5">PnL</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rangeResults.per_day.map((day) => {
+                      const cePeTrades = day.trades['CE-PE'] || []
+                      const cpTrades = day.trades['CP'] || []
+                      const totalTrades = cePeTrades.length + cpTrades.length
+                      const totalPnl = [...cePeTrades, ...cpTrades].reduce((s, t) => s + t.pnlPct, 0)
+                      const totalPnlAmt = [...cePeTrades, ...cpTrades].reduce((s, t) => s + t.pnlAmount, 0)
+                      return (
+                        <tr key={day.date} className="text-[9px]">
+                          <td className="text-left px-0.5">{day.date.slice(5)}</td>
+                          <td className="text-right px-0.5 font-mono" style={{ color: day.ce_pe_strike ? t.textSecondary : '#555' }}>{day.ce_pe_strike || '-'}</td>
+                          <td className="text-right px-0.5 font-mono" style={{ color: day.cp_strike ? t.textSecondary : '#555' }}>{day.cp_strike || '-'}</td>
+                          <td className="text-right px-0.5">{totalTrades || '-'}</td>
+                          <td className={`text-right px-0.5 ${totalPnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>{totalTrades ? `${totalPnl >= 0 ? '+' : ''}${totalPnl.toFixed(1)}%` : '-'}</td>
+                          <td className={`text-right px-0.5 ${totalPnlAmt >= 0 ? 'text-green-400' : 'text-red-400'}`}>{totalTrades ? `${totalPnlAmt >= 0 ? '+' : ''}${totalPnlAmt.toFixed(0)}` : '-'}</td>
                         </tr>
                       )
                     })}

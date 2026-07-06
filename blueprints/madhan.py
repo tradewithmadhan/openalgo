@@ -2004,6 +2004,34 @@ def backtest_signals():
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
 
+@madhan_bp.route('/api/nifty/backtest_range')
+def backtest_range():
+    """Run multi-day backtest across a date range.
+    Query params: from=YYYY-MM-DD, to=YYYY-MM-DD
+    Runs all strategies in STRATEGY_REGISTRY with dynamic strikes from signals."""
+    try:
+        from database.madhan_db import get_backtest_range
+        from_date = request.args.get('from')
+        to_date = request.args.get('to')
+        if not from_date or not to_date:
+            return jsonify({'status': 'error', 'message': 'from and to parameters required (YYYY-MM-DD)'}), 400
+        try:
+            datetime.strptime(from_date, '%Y-%m-%d')
+            datetime.strptime(to_date, '%Y-%m-%d')
+        except ValueError:
+            return jsonify({'status': 'error', 'message': 'Invalid date format. Use YYYY-MM-DD'}), 400
+        if from_date > to_date:
+            return jsonify({'status': 'error', 'message': 'from date must be before to date'}), 400
+
+        result = get_backtest_range(from_date, to_date)
+        if result is None:
+            return jsonify({'status': 'error', 'message': f'No data available for range {from_date} to {to_date}'}), 404
+        return jsonify(result)
+    except Exception as e:
+        logger.error(f'Error running backtest range: {str(e)}')
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
 @madhan_bp.route('/api/strikes')
 @check_session_validity
 def get_strikes():

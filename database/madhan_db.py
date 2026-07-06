@@ -724,8 +724,21 @@ import pytz as _pytz
 # Parquet data directory (relative to project root)
 _BACKTEST_DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'db', 'options_data')
 
-# Available backtest strategies — add new strategy names here
-STRATEGIES = ['CE-PE', 'CP']
+# Strategy registry — add new strategies here.
+# Each strategy maps to a signal_key from get_backtest_signals().
+STRATEGY_REGISTRY = {
+    'CE-PE': {
+        'signal_key': 'ce_pe_hc',
+        'description': 'CE/PE extrinsic signal with HC filter',
+    },
+    'CP': {
+        'signal_key': 'cp_open',
+        'description': 'Combined extrinsic signal with IR filter',
+    },
+}
+
+# Derived from registry — backward compatible
+STRATEGIES = list(STRATEGY_REGISTRY.keys())
 
 
 def get_lot_size(unix_ts: int) -> int:
@@ -790,6 +803,11 @@ def get_backtest_day_data(date_str: str) -> dict | None:
         return None
 
     df = pd.read_parquet(path)
+
+    # Safety: skip parquet files missing required columns
+    required_cols = {'name', 'instrument_type', 'strike', 'expiry', 'date'}
+    if not required_cols.issubset(df.columns):
+        return None
 
     # --- NIFTY 50 SPOT data (instrument_type='SPOT', name='NIFTY 50') ---
     spot = df[(df['name'] == 'NIFTY 50') & (df['instrument_type'] == 'SPOT')].copy()
@@ -1495,3 +1513,106 @@ def get_backtest_signals(date_str: str) -> dict | None:
                 signals['cp_open'] = {'time': row['time'], 'strike': row['strike']}
 
     return {'status': 'success', 'last_time': last_data_time, 'data': all_signals, 'signals': signals}
+
+
+def get_backtest_range(from_date: str, to_date: str) -> dict | None:
+    """Run multi-day backtest across a date range.
+
+    For each trading day:
+    1. Calls get_backtest_signals() once to get signal strikes for all strategies.
+    2. For each strategy in STRATEGY_REGISTRY, extracts the strike from its signal_key.
+    3. Calls get_backtest_chart_data() with that strike to get trades.
+    4. Injects 'method' field (= signal_key) into each trade.
+
+    Returns aggregated results per strategy and per day.
+    """
+    available = get_backtest_available_dates()
+    if not available:
+        return None
+
+    dates_in_range = [d for d in available if from_date <= d <= to_date]
+    if not dates_in_range:
+        return None
+
+    all_strategy_trades: dict[str, list[dict]] = {s: [] for s in STRATEGY_REGISTRY}
+    per_day: list[dict] = []
+
+    for date_str in dates_in_range:
+        try:
+            signals_result = get_backtest_signals(date_str)
+        except Exception:
+            signals_result = None
+        if signals_result is None:
+            per_day.append({
+                'date': date_str,
+                'ce_pe_strike': 0, 'cp_strike': 0,
+                'trades': {'CE-PE': [], 'CP': []},
+                'summary': {'CE-PE': None, 'CP': None},
+            })
+            continue
+
+        sig = signals_result.get('signals', {})
+        day_result = {'date': date_str, 'trades': {}, 'summary': {}}
+        day_strike_map: dict[str, int] = {}
+
+        for strat_name, strat_config in STRATEGY_REGISTRY.items():
+            signal_key = strat_config['signal_key']
+            strike = sig.get(signal_key, {}).get('strike', 0)
+            day_strike_map[f'{strat_name.lower().replace("-", "_")}_strike'] = strike
+
+            if strike <= 0:
+                day_result['trades'][strat_name] = []
+                day_result['summary'][strat_name] = None
+                continue
+
+            try:
+                chart = get_backtest_chart_data(date_str, strike)
+            except Exception:
+                chart = None
+            if chart is None:
+                day_result['trades'][strat_name] = []
+                day_result['summary'][strat_name] = None
+                continue
+
+            trades = chart.get('trades', {}).get(strat_name, [])
+            for t in trades:
+                t['method'] = signal_key
+            day_result['trades'][strat_name] = trades
+            day_result['summary'][strat_name] = chart.get('summary', {}).get(strat_name)
+            all_strategy_trades[strat_name].extend(trades)
+
+        day_result.update(day_strike_map)
+        per_day.append(day_result)
+
+    # Aggregate per-strategy summaries
+    strategy_summaries: dict[str, dict | None] = {}
+    for strat_name in STRATEGY_REGISTRY:
+        trades = all_strategy_trades[strat_name]
+        if not trades:
+            strategy_summaries[strat_name] = None
+            continue
+        wins = sum(1 for t in trades if t['pnlPct'] > 0)
+        strategy_summaries[strat_name] = {
+            'total': len(trades),
+            'wins': wins,
+            'losses': len(trades) - wins,
+            'winRate': round((wins / len(trades)) * 100, 1),
+            'totalPnl': round(sum(t['pnlPct'] for t in trades), 2),
+            'totalPnlAmount': round(sum(t['pnlAmount'] for t in trades), 2),
+        }
+
+    return {
+        'from_date': from_date,
+        'to_date': to_date,
+        'total_days': len(dates_in_range),
+        'days_with_signals': {
+            s: sum(1 for d in per_day if d['trades'].get(s)) for s in STRATEGY_REGISTRY
+        },
+        'strategies': {
+            s: {
+                'trades': all_strategy_trades[s],
+                'summary': strategy_summaries[s],
+            } for s in STRATEGY_REGISTRY
+        },
+        'per_day': per_day,
+    }
