@@ -724,6 +724,28 @@ import pytz as _pytz
 # Parquet data directory (relative to project root)
 _BACKTEST_DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'db', 'options_data')
 
+# Available backtest strategies — add new strategy names here
+STRATEGIES = ['CE-PE', 'CP']
+
+
+def get_lot_size(unix_ts: int) -> int:
+    """Returns historical lot size based on date. Matches live system values."""
+    IST = _pytz.timezone('Asia/Kolkata')
+    dt = datetime.fromtimestamp(unix_ts, tz=IST).date()
+    if dt >= date(2026, 1, 1):
+        return 65
+    if dt >= date(2024, 11, 1):
+        return 75
+    if dt >= date(2024, 4, 1):
+        return 25
+    if dt >= date(2015, 10, 1):
+        return 75
+    if dt >= date(2014, 10, 1):
+        return 25
+    if dt >= date(2007, 2, 1):
+        return 50
+    return 50
+
 
 def _parquet_path(date_str: str) -> str:
     """Returns the expected parquet file path for a given date string (YYYY-MM-DD)."""
@@ -944,6 +966,202 @@ def _format_backtest_chart_enhanced(rows: list[dict], option_type: str, strike_p
     return enhanced
 
 
+def _run_backtest_trades(
+    strategy: str,
+    ce_data: list[dict],
+    pe_data: list[dict],
+    combined_data: list[dict],
+    date_str: str,
+    expiry_str: str,
+    ce_symbol: str,
+    pe_symbol: str,
+    strike_price: int,
+) -> tuple[list[dict], dict | None]:
+    """Run backtest trade simulation for a single strategy.
+
+    Returns (trades_list, summary_dict).
+    Each trade: { strategy, date, strike, symbol, expiry, side, entryTime, entryPrice,
+                  exitTime, exitPrice, pnlPct, pnlAmount, lotSize, exitReason, maxRunupPct }
+    """
+    ce_by_time = {item['time']: item for item in ce_data}
+    pe_by_time = {item['time']: item for item in pe_data}
+    pe_close_map = {item['time']: item['close'] for item in pe_data}
+
+    trades: list[dict] = []
+    state = 'idle'  # idle | pending | in_position
+    side = 'CE'
+    pending_entry_price = 0
+    entry_time = 0
+    entry_price = 0
+    target_hit = False
+    max_high = 0
+
+    def _emit_trade(t, entry_t, entry_p, exit_t, exit_p, reason):
+        pnl_pct = ((exit_p - entry_p) / entry_p) * 100 if entry_p > 0 else 0
+        lot = get_lot_size(t)
+        pnl_amount = (exit_p - entry_p) * lot
+        max_runup = ((max_high - entry_p) / entry_p) * 100 if entry_p > 0 else 0
+        symbol = ce_symbol if side == 'CE' else pe_symbol
+        trades.append({
+            'strategy': strategy,
+            'date': date_str,
+            'strike': strike_price,
+            'symbol': symbol,
+            'expiry': expiry_str,
+            'side': side,
+            'entryTime': entry_t,
+            'entryPrice': entry_p,
+            'exitTime': t,
+            'exitPrice': exit_p,
+            'pnlPct': round(pnl_pct, 2),
+            'pnlAmount': round(pnl_amount, 2),
+            'lotSize': lot,
+            'exitReason': reason,
+            'maxRunupPct': round(max_runup, 2),
+        })
+
+    for comb in combined_data:
+        t = comb['time']
+        ce = ce_by_time.get(t)
+        pe = pe_by_time.get(t)
+        if not ce or not pe:
+            continue
+        if target_hit:
+            continue
+
+        if state == 'in_position':
+            opt_high = ce['high'] if side == 'CE' else pe['high']
+            if opt_high > max_high:
+                max_high = opt_high
+
+            exit_price = 0
+            exit_reason = 'eod'
+
+            if strategy == 'CE-PE':
+                if side == 'CE' and ce['high'] >= comb['combined_extrinsic']:
+                    exit_price = ce['close']
+                    exit_reason = 'target'
+                elif side == 'PE' and pe['high'] >= comb['combined_extrinsic']:
+                    exit_price = pe['close']
+                    exit_reason = 'target'
+                elif side == 'CE' and pe.get('extrinsic_signal'):
+                    exit_price = ce['close']
+                    exit_reason = 'opposite'
+                elif side == 'PE' and ce.get('extrinsic_signal'):
+                    exit_price = pe['close']
+                    exit_reason = 'opposite'
+
+            elif strategy == 'CP':
+                opt_close = ce['close'] if side == 'CE' else pe['close']
+                llp_val = comb.get('llp', 0)
+                if opt_high >= llp_val and llp_val > 0:
+                    exit_price = opt_close
+                    exit_reason = 'target'
+                elif opt_close < comb['combined_extrinsic']:
+                    exit_price = opt_close
+                    exit_reason = 'opposite'
+
+            if exit_price > 0:
+                _emit_trade(t, entry_time, entry_price, t, exit_price, exit_reason)
+                state = 'idle'
+                if exit_reason == 'target':
+                    target_hit = True
+
+        elif state == 'pending':
+            current_high = ce['high'] if side == 'CE' else pe['high']
+            if current_high >= pending_entry_price:
+                state = 'in_position'
+                entry_time = t
+                entry_price = pending_entry_price
+                max_high = current_high
+
+                # Fill-candle exit check
+                exit_price = 0
+                exit_reason = 'eod'
+
+                if strategy == 'CE-PE':
+                    if side == 'CE' and ce['high'] >= comb['combined_extrinsic']:
+                        exit_price = ce['close']
+                        exit_reason = 'target'
+                    elif side == 'PE' and pe['high'] >= comb['combined_extrinsic']:
+                        exit_price = pe['close']
+                        exit_reason = 'target'
+                    elif side == 'CE' and pe.get('extrinsic_signal'):
+                        exit_price = ce['close']
+                        exit_reason = 'opposite'
+                    elif side == 'PE' and ce.get('extrinsic_signal'):
+                        exit_price = pe['close']
+                        exit_reason = 'opposite'
+
+                elif strategy == 'CP':
+                    opt_close = ce['close'] if side == 'CE' else pe['close']
+                    llp_val = comb.get('llp', 0)
+                    if current_high >= llp_val and llp_val > 0:
+                        exit_price = opt_close
+                        exit_reason = 'target'
+                    elif opt_close < comb['combined_extrinsic']:
+                        exit_price = opt_close
+                        exit_reason = 'opposite'
+
+                if exit_price > 0:
+                    _emit_trade(t, entry_time, entry_price, t, exit_price, exit_reason)
+                    state = 'idle'
+                    if exit_reason == 'target':
+                        target_hit = True
+            else:
+                same_side = ce.get('extrinsic_signal') if side == 'CE' else pe.get('extrinsic_signal')
+                if same_side:
+                    pending_entry_price = current_high + 1
+                opposite = pe.get('extrinsic_signal') if side == 'CE' else ce.get('extrinsic_signal')
+                if opposite:
+                    state = 'idle'
+
+        if state == 'idle' and not target_hit:
+            if strategy == 'CE-PE':
+                if ce.get('extrinsic_signal') and ce['close'] > pe_close_map.get(t, 0):
+                    state = 'pending'
+                    side = 'CE'
+                    pending_entry_price = ce['high'] + 1
+                elif pe.get('extrinsic_signal') and pe['close'] > ce['close']:
+                    state = 'pending'
+                    side = 'PE'
+                    pending_entry_price = pe['high'] + 1
+            elif strategy == 'CP':
+                if comb.get('combined_extrinsic_signal'):
+                    if ce['close'] > pe['close']:
+                        state = 'pending'
+                        side = 'CE'
+                        pending_entry_price = ce['high'] + 1
+                    elif pe['close'] > ce['close']:
+                        state = 'pending'
+                        side = 'PE'
+                        pending_entry_price = pe['high'] + 1
+
+    # EOD exit if still in position
+    if state == 'in_position' and combined_data:
+        last = combined_data[-1]
+        last_t = last['time']
+        last_ce = ce_by_time.get(last_t)
+        last_pe = pe_by_time.get(last_t)
+        last_price = (last_ce['close'] if side == 'CE' else (last_pe['close'] if last_pe else entry_price)) or entry_price
+        _emit_trade(last_t, entry_time, entry_price, last_t, last_price, 'eod')
+
+    # Summary
+    summary = None
+    if trades:
+        wins = sum(1 for tr in trades if tr['pnlPct'] > 0)
+        summary = {
+            'total': len(trades),
+            'wins': wins,
+            'losses': len(trades) - wins,
+            'winRate': round((wins / len(trades)) * 100, 1),
+            'totalPnl': round(sum(tr['pnlPct'] for tr in trades), 2),
+            'totalPnlAmount': round(sum(tr['pnlAmount'] for tr in trades), 2),
+        }
+
+    return trades, summary
+
+
 def get_backtest_chart_data(date_str: str, strike_price: int) -> dict | None:
     """Returns chart data for a specific strike from parquet — same format as /api/ezayChart_data.
 
@@ -1057,6 +1275,19 @@ def get_backtest_chart_data(date_str: str, strike_price: int) -> dict | None:
             running_llp = cp
         item['llp'] = round(running_llp, 2)
 
+    expiry_str_fmt = day['expiry'].strftime('%Y-%m-%d') if day.get('expiry') else ''
+
+    all_trades = {}
+    all_summaries = {}
+    for strat in STRATEGIES:
+        trades, summ = _run_backtest_trades(
+            strat, formatted_ce, formatted_pe, combined_data,
+            date_str, expiry_str_fmt, ce_symbol or '', pe_symbol or '', strike_price,
+        )
+        all_trades[strat] = trades
+        if summ:
+            all_summaries[strat] = summ
+
     return {
         'strike': strike_price,
         'ce_symbol': ce_symbol,
@@ -1066,6 +1297,9 @@ def get_backtest_chart_data(date_str: str, strike_price: int) -> dict | None:
         'combined_data': combined_data,
         'llp': round(running_llp, 2) if running_llp is not None else 0,
         'timezone': 'Asia/Kolkata',
+        'trades': all_trades,
+        'summary': all_summaries,
+        'strategies': STRATEGIES,
     }
 
 
