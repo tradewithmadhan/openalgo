@@ -1750,6 +1750,7 @@ def ezay_chart_signals():
 
         all_signals = []
         last_data_time = 0
+        first_candle_per_strike = {}
 
         for strike_price, symbols in sorted(strikes_map.items()):
             ce_symbol = symbols['ce']
@@ -1798,7 +1799,7 @@ def ezay_chart_signals():
                             if not prev_had:
                                 extrinsic_signal = True
 
-                    result.append({'time': ist_ts, 'close': item['close'], 'low': item['low'],
+                    result.append({'time': ist_ts, 'open': item['open'], 'close': item['close'], 'low': item['low'],
                                    'extrinsic': round(extrinsic, 2), 'signal': extrinsic_signal})
                 return result
 
@@ -1817,6 +1818,16 @@ def ezay_chart_signals():
                 pe_item = pe_dict[ts]
                 combined_premium = ce_item['close'] + pe_item['close']
                 combined_extrinsic = ce_item['extrinsic'] + pe_item['extrinsic']
+
+                # Track first candle data for IR and cp_open
+                if i == 0:
+                    first_candle_per_strike[strike_price] = {
+                        'ce_open': ce_item['open'],
+                        'ce_close': ce_item['close'],
+                        'pe_open': pe_item['open'],
+                        'pe_close': pe_item['close'],
+                        'combined_ext': combined_extrinsic,
+                    }
 
                 # CP (Combined Extrinsic) signal
                 cp_signal = False
@@ -1858,7 +1869,47 @@ def ezay_chart_signals():
 
         all_signals.sort(key=lambda x: (x['time'], x['strike']))
 
-        return jsonify({'status': 'success', 'last_time': last_data_time, 'data': all_signals})
+        # Compute first-signal summaries
+        signals = {
+            'ce_pe': {'time': 0, 'type': '', 'strike': 0},
+            'ce_pe_hc': {'time': 0, 'type': '', 'strike': 0},
+            'cp': {'time': 0, 'strike': 0},
+            'cp_open': {'time': 0, 'strike': 0},
+            'ir': [],
+        }
+
+        # IR: all strikes where day's 1st candle open+close < combined_ext for both CE and PE
+        for strike, fc in first_candle_per_strike.items():
+            if (fc['ce_open'] < fc['combined_ext'] and fc['ce_close'] < fc['combined_ext'] and
+                    fc['pe_open'] < fc['combined_ext'] and fc['pe_close'] < fc['combined_ext']):
+                signals['ir'].append(strike)
+        signals['ir'].sort()
+
+        for row in all_signals:
+            # ce_pe: first CE or PE signal (no HC)
+            if signals['ce_pe']['time'] == 0 and (row['ce_signal'] or row['pe_signal']):
+                signals['ce_pe'] = {
+                    'time': row['time'],
+                    'type': 'CE' if row['ce_signal'] else 'PE',
+                    'strike': row['strike'],
+                }
+            # ce_pe_hc: first CE/PE signal with HC filter
+            if signals['ce_pe_hc']['time'] == 0:
+                if row['ce_signal'] and row['ce_close'] > row['pe_close']:
+                    signals['ce_pe_hc'] = {'time': row['time'], 'type': 'CE', 'strike': row['strike']}
+                elif row['pe_signal'] and row['pe_close'] > row['ce_close']:
+                    signals['ce_pe_hc'] = {'time': row['time'], 'type': 'PE', 'strike': row['strike']}
+            # cp: first CP signal
+            if signals['cp']['time'] == 0 and row['cp_signal']:
+                signals['cp'] = {'time': row['time'], 'strike': row['strike']}
+            # cp_open: first CP signal where 1st candle open+close < combined_ext for both CE and PE
+            if signals['cp_open']['time'] == 0 and row['cp_signal']:
+                fc = first_candle_per_strike.get(row['strike'])
+                if fc and (fc['ce_open'] < fc['combined_ext'] and fc['ce_close'] < fc['combined_ext'] and
+                           fc['pe_open'] < fc['combined_ext'] and fc['pe_close'] < fc['combined_ext']):
+                    signals['cp_open'] = {'time': row['time'], 'strike': row['strike']}
+
+        return jsonify({'status': 'success', 'last_time': last_data_time, 'data': all_signals, 'signals': signals})
 
     except Exception as e:
         logger.error(f'Error fetching ezayChart signals: {str(e)}')

@@ -1087,6 +1087,7 @@ def get_backtest_signals(date_str: str) -> dict | None:
     strikes = [open_atm + (i * 50) for i in range(-10, 11)]
     all_signals = []
     last_data_time = 0
+    first_candle_per_strike = {}
 
     for strike_price in strikes:
         # Find CE and PE for this strike
@@ -1149,6 +1150,7 @@ def get_backtest_signals(date_str: str) -> dict | None:
 
                 result.append({
                     'time': ist_ts,
+                    'open': item['open'],
                     'close': item['close'],
                     'low': item['low'],
                     'extrinsic': round(extrinsic, 2),
@@ -1171,6 +1173,16 @@ def get_backtest_signals(date_str: str) -> dict | None:
             pe_item = pe_dict[ts]
             combined_premium = ce_item['close'] + pe_item['close']
             combined_extrinsic = ce_item['extrinsic'] + pe_item['extrinsic']
+
+            # Track first candle data for IR and cp_open
+            if i == 0:
+                first_candle_per_strike[strike_price] = {
+                    'ce_open': ce_item['open'],
+                    'ce_close': ce_item['close'],
+                    'pe_open': pe_item['open'],
+                    'pe_close': pe_item['close'],
+                    'combined_ext': combined_extrinsic,
+                }
 
             # CP (Combined Extrinsic) signal — mirrors blueprints/madhan.py:1822-1838
             cp_signal = False
@@ -1211,4 +1223,41 @@ def get_backtest_signals(date_str: str) -> dict | None:
                 })
 
     all_signals.sort(key=lambda x: (x['time'], x['strike']))
-    return {'status': 'success', 'last_time': last_data_time, 'data': all_signals}
+
+    # Compute first-signal summaries
+    signals = {
+        'ce_pe': {'time': 0, 'type': '', 'strike': 0},
+        'ce_pe_hc': {'time': 0, 'type': '', 'strike': 0},
+        'cp': {'time': 0, 'strike': 0},
+        'cp_open': {'time': 0, 'strike': 0},
+        'ir': [],
+    }
+
+    # IR: all strikes where day's 1st candle open+close < combined_ext for both CE and PE
+    for strike, fc in first_candle_per_strike.items():
+        if (fc['ce_open'] < fc['combined_ext'] and fc['ce_close'] < fc['combined_ext'] and
+                fc['pe_open'] < fc['combined_ext'] and fc['pe_close'] < fc['combined_ext']):
+            signals['ir'].append(strike)
+    signals['ir'].sort()
+
+    for row in all_signals:
+        if signals['ce_pe']['time'] == 0 and (row['ce_signal'] or row['pe_signal']):
+            signals['ce_pe'] = {
+                'time': row['time'],
+                'type': 'CE' if row['ce_signal'] else 'PE',
+                'strike': row['strike'],
+            }
+        if signals['ce_pe_hc']['time'] == 0:
+            if row['ce_signal'] and row['ce_close'] > row['pe_close']:
+                signals['ce_pe_hc'] = {'time': row['time'], 'type': 'CE', 'strike': row['strike']}
+            elif row['pe_signal'] and row['pe_close'] > row['ce_close']:
+                signals['ce_pe_hc'] = {'time': row['time'], 'type': 'PE', 'strike': row['strike']}
+        if signals['cp']['time'] == 0 and row['cp_signal']:
+            signals['cp'] = {'time': row['time'], 'strike': row['strike']}
+        if signals['cp_open']['time'] == 0 and row['cp_signal']:
+            fc = first_candle_per_strike.get(row['strike'])
+            if fc and (fc['ce_open'] < fc['combined_ext'] and fc['ce_close'] < fc['combined_ext'] and
+                       fc['pe_open'] < fc['combined_ext'] and fc['pe_close'] < fc['combined_ext']):
+                signals['cp_open'] = {'time': row['time'], 'strike': row['strike']}
+
+    return {'status': 'success', 'last_time': last_data_time, 'data': all_signals, 'signals': signals}

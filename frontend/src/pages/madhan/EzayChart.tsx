@@ -32,7 +32,7 @@ import { useProfileMenuItems } from '@/hooks/useProfileMenuItems'
 import { cn } from '@/lib/utils'
 import { chartTheme } from './chartTheme'
 import RealtimeTable from './RealtimeTable'
-import EzaySignals, { type FirstSignalInfo } from './components/EzaySignals'
+import EzaySignals, { type FirstSignalInfo, type BackendSignals } from './components/EzaySignals'
 
 type OptionDataResponse = {
   status: string
@@ -166,6 +166,7 @@ export default function EzayChart() {
   const firstSignalTimeRef = useRef(0)
   const firstSignalStrikeRef = useRef(0)
   const firstSignalTypeRef = useRef<'CE' | 'PE' | ''>('')
+  const pendingAutoSelectRef = useRef(false)
   const updaterRef = useRef<number | null>(null)
   const chartReadyRef = useRef(false)
   const rawDataRef = useRef<OptionDataResponse['data'] | null>(null)
@@ -191,6 +192,7 @@ export default function EzayChart() {
   const [strikePanelOpen, setStrikePanelOpen] = useState(true)
   const [showRealtime, setShowRealtime] = useState(false)
   const [showEzaySignals, setShowEzaySignals] = useState(false)
+  const [irStrikes, setIrStrikes] = useState<number[]>([])
   const [semiTransparent, setSemiTransparent] = useState(true)
   const semiTransparentRef = useRef(true)
   const [ceSymbol, setCeSymbol] = useState('')
@@ -236,6 +238,8 @@ export default function EzayChart() {
     firstSignalTimeRef.current = 0
     firstSignalStrikeRef.current = 0
     firstSignalTypeRef.current = ''
+    setIrStrikes([])
+    pendingAutoSelectRef.current = true
     loadStrikes()
   }
 
@@ -243,6 +247,14 @@ export default function EzayChart() {
     firstSignalTimeRef.current = info.time
     firstSignalTypeRef.current = info.type
     firstSignalStrikeRef.current = info.strike
+    if (pendingAutoSelectRef.current && info.strike > 0) {
+      pendingAutoSelectRef.current = false
+      setSelectedStrike(String(info.strike))
+    }
+  }, [])
+
+  const handleSignals = useCallback((signals: BackendSignals) => {
+    setIrStrikes(signals.ir)
   }, [])
 
   const wsSymbols = useMemo(() => {
@@ -648,6 +660,11 @@ export default function EzayChart() {
             if (exitReason === 'target') targetHit = true
           }
         } else {
+          // Same-side signal while pending → update entry price to new candle high + 1
+          const sameSideSignal = side === 'CE' ? ce.extrinsic_signal : pe.extrinsic_signal
+          if (sameSideSignal) {
+            pendingEntryPrice = currentHigh + 1
+          }
           // Cancel pending if opposite signal fires (no HC filter for cancel)
           const oppositeSignal = side === 'CE' ? pe.extrinsic_signal : ce.extrinsic_signal
           if (oppositeSignal) {
@@ -1226,6 +1243,7 @@ export default function EzayChart() {
                   const today = todayStr()
                   setBacktestDate(today)
                   backtestDateRef.current = today
+                  pendingAutoSelectRef.current = true
                   setShowEzaySignals(true)
                 }
                 loadStrikes()
@@ -1256,6 +1274,7 @@ export default function EzayChart() {
                     firstSignalTimeRef.current = 0
                     firstSignalStrikeRef.current = 0
                     firstSignalTypeRef.current = ''
+                    pendingAutoSelectRef.current = true
                     loadStrikes()
                   }}
                   className="h-6 px-1 text-[10px] rounded border"
@@ -1383,6 +1402,7 @@ export default function EzayChart() {
                         borderBottom: `1px solid ${t.border}`,
                       }}
                     >
+                      {irStrikes.includes(s) && <span className="mr-0.5 text-[8px] font-bold px-0.5 rounded" style={{ color: '#06b6d4', backgroundColor: 'rgba(6,182,212,0.15)' }}>IR</span>}
                       {s}
                       {isCurrentAtm && <span className="ml-1 text-[9px] font-bold" style={{ color: '#eab308' }}>C-ATM</span>}
                       {isOpen && !isCurrentAtm && <span className="ml-1 text-[9px] font-bold" style={{ color: themeMode === 'dark' ? '#2962ff' : '#2563eb' }}>Open</span>}
@@ -1444,7 +1464,7 @@ export default function EzayChart() {
           )}
           {showRealtime && <RealtimeTable onClose={() => setShowRealtime(false)} />}
         </div>
-        {showEzaySignals && <EzaySignals className="shrink-0" style={{ width: 320 }} backtestDate={isBacktest ? backtestDate : undefined} onFirstSignal={handleFirstSignal} />}
+        {showEzaySignals && <EzaySignals className="shrink-0" style={{ width: 320 }} backtestDate={isBacktest ? backtestDate : undefined} onFirstSignal={handleFirstSignal} onSignals={handleSignals} />}
       </div>
     </div>
   )

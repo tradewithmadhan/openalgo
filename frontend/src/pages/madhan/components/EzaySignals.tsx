@@ -20,11 +20,20 @@ export type FirstSignalInfo = {
   strike: number
 }
 
+export type BackendSignals = {
+  ce_pe: FirstSignalInfo
+  ce_pe_hc: FirstSignalInfo
+  cp: { time: number; strike: number }
+  cp_open: { time: number; strike: number }
+  ir: number[]
+}
+
 type EzaySignalsProps = {
   className?: string
   style?: React.CSSProperties
   backtestDate?: string
   onFirstSignal?: (data: FirstSignalInfo) => void
+  onSignals?: (data: BackendSignals) => void
 }
 
 const formatTime = (ts: number) => {
@@ -32,10 +41,11 @@ const formatTime = (ts: number) => {
   return d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' })
 }
 
-export default function EzaySignals({ className, style, backtestDate, onFirstSignal }: EzaySignalsProps) {
+export default function EzaySignals({ className, style, backtestDate, onFirstSignal, onSignals }: EzaySignalsProps) {
   const { mode: themeMode } = useThemeStore()
   const t = chartTheme[themeMode]
   const [data, setData] = useState<SignalRow[]>([])
+  const [signals, setSignals] = useState<BackendSignals>({ ce_pe: { time: 0, type: '', strike: 0 }, ce_pe_hc: { time: 0, type: '', strike: 0 }, cp: { time: 0, strike: 0 }, cp_open: { time: 0, strike: 0 }, ir: [] })
   const [lastTime, setLastTime] = useState<number>(0)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -51,6 +61,7 @@ export default function EzaySignals({ className, style, backtestDate, onFirstSig
       setLoading(true)
       setError('')
       setData([])
+      setSignals({ ce_pe: { time: 0, type: '', strike: 0 }, ce_pe_hc: { time: 0, type: '', strike: 0 }, cp: { time: 0, strike: 0 }, cp_open: { time: 0, strike: 0 }, ir: [] })
       setLastTime(0)
       // Use backtest endpoint when backtestDate is provided
       const url = backtestDate
@@ -60,6 +71,7 @@ export default function EzaySignals({ className, style, backtestDate, onFirstSig
       const json = await res.json()
       if (json.status === 'success' && json.data) {
         setData(json.data)
+        setSignals(json.signals || { ce_pe: { time: 0, type: '', strike: 0 }, ce_pe_hc: { time: 0, type: '', strike: 0 }, cp: { time: 0, strike: 0 }, cp_open: { time: 0, strike: 0 }, ir: [] })
         setLastTime(json.last_time || 0)
       } else {
         setError(json.message || 'Failed to load signals')
@@ -114,42 +126,6 @@ export default function EzaySignals({ className, style, backtestDate, onFirstSig
 
   const sortedTimes = Array.from(grouped.keys()).sort((a, b) => b - a)
 
-  // Find the single first CE or PE signal of the day (whichever comes first) — with HC filter
-  const firstSignalInfo = (() => {
-    let time = Infinity
-    let type: 'CE' | 'PE' | '' = ''
-    let strike = 0
-    for (const row of filtered) {
-      if (!type && row.time < time) {
-        if (row.ce_signal && row.ce_close > row.pe_close) {
-          time = row.time
-          type = 'CE'
-          strike = row.strike
-        } else if (row.pe_signal && row.pe_close > row.ce_close) {
-          time = row.time
-          type = 'PE'
-          strike = row.strike
-        }
-      }
-    }
-    return { time: time === Infinity ? 0 : time, type, strike }
-  })()
-
-  const firstSignalTime = firstSignalInfo.time
-  const firstSignalType = firstSignalInfo.type
-  const firstSignalStrike = firstSignalInfo.strike
-
-  // Find the first CP signal of the day
-  let firstCpTime = Infinity
-  let firstCpStrike = 0
-
-  for (const row of filtered) {
-    if (row.cp_signal && row.time < firstCpTime) {
-      firstCpTime = row.time
-      firstCpStrike = row.strike
-    }
-  }
-
   const signalDot = (active: boolean, color: string) => (
     <span
       className="inline-block w-2 h-2 rounded-full"
@@ -159,9 +135,15 @@ export default function EzaySignals({ className, style, backtestDate, onFirstSig
 
   useEffect(() => {
     if (onFirstSignal) {
-      onFirstSignal(firstSignalInfo)
+      onFirstSignal(signals.ce_pe_hc)
     }
-  }, [firstSignalInfo.time, firstSignalInfo.type, firstSignalInfo.strike, onFirstSignal])
+  }, [signals.ce_pe_hc.time, signals.ce_pe_hc.type, signals.ce_pe_hc.strike, onFirstSignal])
+
+  useEffect(() => {
+    if (onSignals) {
+      onSignals(signals)
+    }
+  }, [signals, onSignals])
 
   return (
     <div
@@ -228,14 +210,14 @@ export default function EzaySignals({ className, style, backtestDate, onFirstSig
           return (
             <div key={ts}>
               {rows.map((row, idx) => {
-                const isFirstSignal = row.time === firstSignalTime && row.strike === firstSignalStrike && !!firstSignalType
-                const isFirstCp = !!row.cp_signal && row.time === firstCpTime && row.strike === firstCpStrike
+                const isFirstSignal = row.time === signals.ce_pe_hc.time && row.strike === signals.ce_pe_hc.strike && !!signals.ce_pe_hc.type
+                const isFirstCp = !!row.cp_signal && row.time === signals.cp_open.time && row.strike === signals.cp_open.strike
                 const strikeBg = row.ce_signal ? 'rgba(0,200,81,0.2)'
                   : row.pe_signal ? 'rgba(255,68,68,0.2)'
                   : row.cp_signal === 'CE' ? 'rgba(0,200,81,0.4)'
                   : row.cp_signal === 'PE' ? 'rgba(255,68,68,0.4)'
                   : undefined
-                const rowBg = isFirstSignal ? (firstSignalType === 'CE' ? 'rgba(0,200,81,0.25)' : 'rgba(255,68,68,0.25)')
+                const rowBg = isFirstSignal ? (signals.ce_pe_hc.type === 'CE' ? 'rgba(0,200,81,0.25)' : 'rgba(255,68,68,0.25)')
                   : isFirstCp ? 'rgba(255,214,0,0.2)'
                   : undefined
                 return (
@@ -258,14 +240,19 @@ export default function EzaySignals({ className, style, backtestDate, onFirstSig
         })}
       </div>
 
-      <div className="shrink-0 px-2 py-1 text-[9px] flex items-center justify-between" style={{ borderTop: `1px solid ${t.border}`, color: t.textMuted }}>
-        <span>{filtered.length} signals</span>
+      <div className="shrink-0 px-2 py-1 text-[9px] flex items-center justify-between" style={{ borderTop: `1px solid ${t.border}`, color: t.textSecondary }}>
+        <span className="font-bold">{filtered.length} signals</span>
+        {signals.ir.length > 0 && (
+          <span className="font-bold" style={{ color: t.textSecondary }} title="IR strikes (1st candle open+close < combined ext)">
+            IR: {signals.ir[0]} to {signals.ir[signals.ir.length - 1]}
+          </span>
+        )}
         {lastTime > 0 && (
-          <span title="Last candle time used for calculation">
+          <span className="font-bold" style={{ color: t.textSecondary }} title="Last candle time used for calculation">
             Last: {formatTime(lastTime)}
           </span>
         )}
-        <button onClick={fetchData} className="hover:underline" style={{ color: t.textSecondary }}>Refresh</button>
+        <button onClick={fetchData} className="font-bold hover:underline" style={{ color: t.textSecondary }}>Refresh</button>
       </div>
     </div>
   )
