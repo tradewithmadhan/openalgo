@@ -849,6 +849,9 @@ export default function EzayChart() {
 
     loadStrikes()
 
+    // Start NiftyFetcher on page open
+    fetch('/madhan/api/nifty/start', { method: 'POST' }).catch(() => {})
+
     return () => {
       if (updaterRef.current) window.clearInterval(updaterRef.current)
       resizeObserver.disconnect()

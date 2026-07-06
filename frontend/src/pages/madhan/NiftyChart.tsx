@@ -543,6 +543,9 @@ export default function NiftyChart() {
     })
     resizeObserver.observe(chartContainerRef.current)
 
+    // Start NiftyFetcher on page open
+    fetch('/madhan/api/nifty/start', { method: 'POST' }).catch(() => {})
+
     return () => {
       if (updaterRef.current) window.clearInterval(updaterRef.current)
       if (timeoutRef.current) window.clearTimeout(timeoutRef.current)
