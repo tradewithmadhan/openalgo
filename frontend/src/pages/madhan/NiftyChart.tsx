@@ -2,12 +2,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import {
   AreaSeries,
+  BaselineSeries,
   CandlestickSeries,
   ColorType,
   CrosshairMode,
   createChart,
   HistogramSeries,
   LineSeries,
+  LineStyle,
   LineType,
   type IChartApi,
   type ISeriesApi,
@@ -156,6 +158,14 @@ export default function NiftyChart() {
   const [prevOhlcActive, setPrevOhlcActive] = useState(false)
   const [sqrtActive, setSqrtActive] = useState(false)
   const [coiHistoryActive, setCoiHistoryActive] = useState(false)
+  const [writersViewActive, setWritersViewActive] = useState(true)
+  const coiTrendPaneRef = useRef<any>(null)
+  const coiCandleSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null)
+  const oiCandleSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null)
+  const coiLineSeriesRef = useRef<ISeriesApi<'Baseline'> | null>(null)
+  const oiLineSeriesRef = useRef<ISeriesApi<'Line'> | null>(null)
+  const coiTrendDataRef = useRef<{ timestamps: number[]; coi_percent: number[]; oi_trend_percent: number[] } | null>(null)
+  const writersViewActiveRef = useRef(true)
   const [oiX, setOiX] = useState(100)
   const [coiX, setCoiX] = useState(80)
   const [oiShowStrike, setOiShowStrike] = useState(false)
@@ -562,6 +572,12 @@ export default function NiftyChart() {
       }
       indicatorSeriesRef.current.clear()
       sqrtPrimitiveRef.current = null
+      coiLineSeriesRef.current = null
+      oiLineSeriesRef.current = null
+      coiCandleSeriesRef.current = null
+      oiCandleSeriesRef.current = null
+      coiTrendPaneRef.current = null
+      coiTrendDataRef.current = null
       chart.remove()
       chartRef.current = null
       setChartReady(false)
@@ -658,6 +674,80 @@ export default function NiftyChart() {
       }
     }
     return aggregated
+  }
+
+  type CoiTrendCandle = { time: number; open: number; high: number; low: number; close: number }
+
+  const aggregateCoiTrendCandles = (
+    data: { timestamps: number[]; coi_percent: number[]; oi_trend_percent: number[] },
+    selectedInterval: string
+  ): { coiCandles: CoiTrendCandle[]; oiCandles: CoiTrendCandle[] } => {
+    const coiCandles: CoiTrendCandle[] = []
+    const oiCandles: CoiTrendCandle[] = []
+    if (!data.timestamps.length) return { coiCandles, oiCandles }
+
+    const intervalSec = getIntervalSeconds(selectedInterval)
+    const IST_OFFSET_SEC = 5 * 3600 + 30 * 60
+    const istDateKey = (ts: number) => {
+      return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(ts))
+    }
+    const istMidnightTs = (ts: number) => {
+      const [y, m, d] = istDateKey(ts).split('-').map(Number)
+      return Math.floor(Date.UTC(y, m - 1, d) / 1000) - IST_OFFSET_SEC
+    }
+
+    const groups = new Map<string, Array<{ time: number; coi: number; oi: number }>>()
+    for (let i = 0; i < data.timestamps.length; i++) {
+      const tsSec = data.timestamps[i] > 1e10 ? Math.floor(data.timestamps[i] / 1000) : data.timestamps[i]
+      const key = istDateKey(tsSec * 1000)
+      const arr = groups.get(key)
+      const entry = { time: tsSec, coi: data.coi_percent[i] || 0, oi: data.oi_trend_percent[i] || 0 }
+      if (arr) arr.push(entry)
+      else groups.set(key, [entry])
+    }
+
+    for (const key of Array.from(groups.keys()).sort()) {
+      const dayData = groups.get(key) || []
+      if (!dayData.length) continue
+      const dayStartTs = istMidnightTs(dayData[0].time * 1000)
+      const coiBuckets = new Map<number, CoiTrendCandle>()
+      const oiBuckets = new Map<number, CoiTrendCandle>()
+
+      for (const pt of dayData) {
+        const offset = pt.time - dayStartTs
+        const bucketOffset = Math.floor(offset / intervalSec) * intervalSec
+        const bucketTs = dayStartTs + bucketOffset
+
+        const coiExisting = coiBuckets.get(bucketTs)
+        if (coiExisting) {
+          coiExisting.close = pt.coi
+          if (pt.coi > coiExisting.high) coiExisting.high = pt.coi
+          if (pt.coi < coiExisting.low) coiExisting.low = pt.coi
+        } else {
+          coiBuckets.set(bucketTs, { time: bucketTs, open: pt.coi, high: pt.coi, low: pt.coi, close: pt.coi })
+        }
+
+        const oiExisting = oiBuckets.get(bucketTs)
+        if (oiExisting) {
+          oiExisting.close = pt.oi
+          if (pt.oi > oiExisting.high) oiExisting.high = pt.oi
+          if (pt.oi < oiExisting.low) oiExisting.low = pt.oi
+        } else {
+          oiBuckets.set(bucketTs, { time: bucketTs, open: pt.oi, high: pt.oi, low: pt.oi, close: pt.oi })
+        }
+      }
+
+      for (const bk of Array.from(coiBuckets.keys()).sort((a, b) => a - b)) {
+        const coiCandle = coiBuckets.get(bk)!
+        const oiCandle = oiBuckets.get(bk)!
+        if (Number.isFinite(coiCandle.time) && Number.isFinite(coiCandle.open) && Number.isFinite(coiCandle.close)) {
+          coiCandles.push(coiCandle)
+          oiCandles.push(oiCandle)
+        }
+      }
+    }
+
+    return { coiCandles, oiCandles }
   }
 
   const toSeriesData = (plot: unknown, bars: Bar[], preserveWhitespace = false) => {
@@ -1146,6 +1236,196 @@ export default function NiftyChart() {
     repaintOverlay()
   }
 
+  const toggleWritersView = () => {
+    const next = !writersViewActive
+    setWritersViewActive(next)
+    writersViewActiveRef.current = next
+    const mode = next ? 'option2' : 'option1'
+    fetch(`/madhan/api/nifty/coi-trend?strike_selection_mode=${mode}&_=${Date.now()}`)
+      .then((r) => r.json())
+      .then((json) => {
+        if (json?.status === 'success' && json?.data) {
+          coiTrendDataRef.current = json.data
+          plotCoiTrend()
+        }
+      })
+      .catch((e) => console.error('[COI-TREND] fetch error:', e))
+  }
+
+  const createCoiTrendPane = () => {
+    if (!chartRef.current) return
+    const chartAny = chartRef.current as any
+    if (coiTrendPaneRef.current) return
+
+    const pane = chartAny.addPane()
+    if (pane && typeof pane.setHeight === 'function') pane.setHeight(120)
+    coiTrendPaneRef.current = pane
+
+    const coiLine = pane.addSeries(BaselineSeries, {
+      baseValue: { type: 'price', price: 0 },
+      topLineColor: '#22c55e',
+      bottomLineColor: '#ef4444',
+      topFillColor1: 'transparent',
+      topFillColor2: 'transparent',
+      bottomFillColor1: 'transparent',
+      bottomFillColor2: 'transparent',
+      lineWidth: 2,
+      title: 'COI %',
+      priceScaleId: 'right',
+      priceLineVisible: true,
+      lastValueVisible: true,
+    })
+    coiLine.createPriceLine({
+      price: 0,
+      color: 'rgba(255, 255, 255, 0.3)',
+      lineWidth: 1,
+      lineStyle: LineStyle.Dashed,
+      axisLabelVisible: false,
+      title: '',
+    })
+
+    const oiLine = pane.addSeries(LineSeries, {
+      color: '#FF6D00',
+      lineWidth: 2,
+      lineStyle: LineStyle.Dashed,
+      title: 'OI Trend %',
+      priceScaleId: 'right',
+      priceLineVisible: true,
+      lastValueVisible: true,
+    })
+    oiLine.createPriceLine({
+      price: 0,
+      color: 'rgba(255, 255, 255, 0.3)',
+      lineWidth: 1,
+      lineStyle: LineStyle.Dashed,
+      axisLabelVisible: false,
+      title: '',
+    })
+
+    const coiCandle = pane.addSeries(CandlestickSeries, {
+      upColor: '#26a69a',
+      downColor: '#ef5350',
+      borderVisible: false,
+      wickUpColor: '#26a69a',
+      wickDownColor: '#ef5350',
+      title: 'COI %',
+      priceScaleId: 'right',
+      priceLineVisible: true,
+      lastValueVisible: true,
+      visible: false,
+    })
+    coiCandle.createPriceLine({
+      price: 0,
+      color: 'rgba(255, 255, 255, 0.3)',
+      lineWidth: 1,
+      lineStyle: LineStyle.Dashed,
+      axisLabelVisible: false,
+      title: '',
+    })
+
+    const oiCandle = pane.addSeries(CandlestickSeries, {
+      upColor: '#FF6D00',
+      downColor: '#FF8C00',
+      borderVisible: false,
+      wickUpColor: '#FF6D00',
+      wickDownColor: '#FF8C00',
+      title: 'OI Trend %',
+      priceScaleId: 'right',
+      priceLineVisible: true,
+      lastValueVisible: true,
+      visible: false,
+    })
+    oiCandle.createPriceLine({
+      price: 0,
+      color: 'rgba(255, 255, 255, 0.3)',
+      lineWidth: 1,
+      lineStyle: LineStyle.Dashed,
+      axisLabelVisible: false,
+      title: '',
+    })
+
+    coiLineSeriesRef.current = coiLine
+    oiLineSeriesRef.current = oiLine
+    coiCandleSeriesRef.current = coiCandle
+    oiCandleSeriesRef.current = oiCandle
+  }
+
+  const plotCoiTrend = () => {
+    const data = coiTrendDataRef.current
+    if (!data || !data.timestamps.length) return
+
+    const isLineMode = getIntervalSeconds(interval) <= 60
+
+    if (isLineMode) {
+      if (coiLineSeriesRef.current) {
+        const coiData = data.timestamps
+          .map((ts, i) => {
+            const timeNum = ts > 1e10 ? ts / 1000 : ts
+            const val = data.coi_percent[i]
+            if (!Number.isFinite(timeNum) || !Number.isFinite(val)) return null
+            return { time: timeNum as Time, value: val }
+          })
+          .filter((p): p is { time: Time; value: number } => p !== null)
+          .sort((a, b) => (a.time as number) - (b.time as number))
+        try { coiLineSeriesRef.current.setData(coiData as any) } catch {}
+        coiLineSeriesRef.current.applyOptions({ visible: true })
+      }
+      if (oiLineSeriesRef.current) {
+        const oiData = data.timestamps
+          .map((ts, i) => {
+            const timeNum = ts > 1e10 ? ts / 1000 : ts
+            const val = data.oi_trend_percent[i]
+            if (!Number.isFinite(timeNum) || !Number.isFinite(val)) return null
+            return { time: timeNum as Time, value: val }
+          })
+          .filter((p): p is { time: Time; value: number } => p !== null)
+          .sort((a, b) => (a.time as number) - (b.time as number))
+        try { oiLineSeriesRef.current.setData(oiData as any) } catch {}
+        oiLineSeriesRef.current.applyOptions({ visible: true })
+      }
+      if (coiCandleSeriesRef.current) {
+        coiCandleSeriesRef.current.applyOptions({ visible: false })
+        try { coiCandleSeriesRef.current.setData([]) } catch {}
+      }
+      if (oiCandleSeriesRef.current) {
+        oiCandleSeriesRef.current.applyOptions({ visible: false })
+        try { oiCandleSeriesRef.current.setData([]) } catch {}
+      }
+    } else {
+      const { coiCandles, oiCandles } = aggregateCoiTrendCandles(data, interval)
+      if (coiLineSeriesRef.current) {
+        coiLineSeriesRef.current.applyOptions({ visible: false })
+        try { coiLineSeriesRef.current.setData([]) } catch {}
+      }
+      if (oiLineSeriesRef.current) {
+        oiLineSeriesRef.current.applyOptions({ visible: false })
+        try { oiLineSeriesRef.current.setData([]) } catch {}
+      }
+      if (coiCandleSeriesRef.current && coiCandles.length) {
+        try { coiCandleSeriesRef.current.setData(coiCandles as any) } catch {}
+        coiCandleSeriesRef.current.applyOptions({ visible: true })
+      }
+      if (oiCandleSeriesRef.current && oiCandles.length) {
+        try { oiCandleSeriesRef.current.setData(oiCandles as any) } catch {}
+        oiCandleSeriesRef.current.applyOptions({ visible: true })
+      }
+    }
+  }
+
+  const fetchCoiTrend = async () => {
+    try {
+      const mode = writersViewActiveRef.current ? 'option2' : 'option1'
+      const res = await fetch(`/madhan/api/nifty/coi-trend?strike_selection_mode=${mode}&_=${Date.now()}`)
+      const json = await res.json()
+      if (json?.status === 'success' && json?.data) {
+        coiTrendDataRef.current = json.data
+        plotCoiTrend()
+      }
+    } catch (e) {
+      console.error('[COI-TREND] fetch error:', e)
+    }
+  }
+
   const fetchOptionCombinedVolume = async () => {
     if (!optionVolumeRef.current) return
     const res = await fetch(
@@ -1360,6 +1640,7 @@ export default function NiftyChart() {
     }
     await Promise.all([fetchOiProfiles(), fetchOptionCombinedVolume()])
     fetchCoiHistory()
+    fetchCoiTrend()
   }
 
   const repaintOverlay = () => {
@@ -1414,7 +1695,9 @@ export default function NiftyChart() {
   }, [interval, updateIndicatorSeries])
 
   useEffect(() => {
-    void refreshChartData()
+    void refreshChartData().then(() => {
+      if (chartRef.current) chartRef.current.timeScale().scrollToRealTime()
+    })
     if (updaterRef.current) window.clearInterval(updaterRef.current)
     if (timeoutRef.current) window.clearTimeout(timeoutRef.current)
     const msToNextMinute = (60 - new Date().getSeconds()) * 1000
@@ -1427,6 +1710,12 @@ export default function NiftyChart() {
       if (timeoutRef.current) window.clearTimeout(timeoutRef.current)
     }
   }, [interval])
+
+  useEffect(() => {
+    if (!chartReady || coiTrendPaneRef.current) return
+    createCoiTrendPane()
+    fetchCoiTrend()
+  }, [chartReady])
 
   const fetchNiftyStatus = useCallback(async () => {
     try {
@@ -2307,6 +2596,7 @@ export default function NiftyChart() {
             </div>
           </div>
           <Button variant={coiHistoryActive ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={toggleCoiHistory}>COI Hist</Button>
+          <Button variant={writersViewActive ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={toggleWritersView}>Writers View</Button>
           <div className="flex items-center gap-1.5 ml-auto">
             {niftyStatus && (
               <div className="flex items-center gap-1" title={niftyStatus}>
