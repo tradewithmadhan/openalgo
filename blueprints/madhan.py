@@ -716,6 +716,9 @@ def start_nifty_fetch():
     if nifty_fetcher.is_running:
         return jsonify({'status': 'info', 'message': 'Fetcher is already running.'})
 
+    if nifty_fetcher.status in ("Stopped (Market Closed)", "Stopped (Weekend)"):
+        return jsonify({'status': 'info', 'message': f'{nifty_fetcher.status}. Data already available.'})
+
     nifty_fetcher.start(api_key)
     return jsonify({'status': 'success', 'message': 'Nifty data fetching process started.'})
 

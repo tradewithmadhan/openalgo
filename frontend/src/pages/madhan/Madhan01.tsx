@@ -165,7 +165,8 @@ export default function Madhan01() {
         headers: { Accept: 'application/json' },
       })
       const data = await response.json()
-      if (response.ok && data.status === 'success') {
+      if (response.ok && (data.status === 'success' || data.status === 'info')) {
+        toast.success(data.message || 'Fetcher started successfully')
         await fetchStatus()
       } else {
         setError(data.message || 'Failed to start fetcher')
@@ -188,7 +189,7 @@ export default function Madhan01() {
       })
       const data = await response.json()
       if (response.ok && data.status === 'success') {
-        toast.success('Fetcher stopped successfully')
+        toast.success(data.message || 'Fetcher stopped successfully')
         await fetchStatus()
       } else {
         const msg = data.message || 'Failed to stop fetcher'
