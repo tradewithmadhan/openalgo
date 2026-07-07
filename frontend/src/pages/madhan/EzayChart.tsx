@@ -67,7 +67,7 @@ type OptionDataResponse = {
 type AggCandle = { time: number; open: number; high: number; low: number; close: number }
 type AggCombined = {
   time: number; combined_premium: number; ce_intrinsic: number; pe_intrinsic: number;
-  ce_extrinsic: number; pe_extrinsic: number; combined_extrinsic: number;
+  ce_extrinsic: number; pe_extrinsic: number; combined_extrinsic: number; combined_volume?: number;
   cp_ce_signal?: boolean; combined_extrinsic_signal?: boolean; llp?: number;
 }
 type BacktestTrade = {
@@ -118,6 +118,7 @@ function aggregateCandles<T extends AggCandle & Record<string, any>>(data: T[], 
       if (c.high > existing.high) existing.high = c.high
       if (c.low < existing.low) existing.low = c.low
       existing.close = c.close
+      if ('volume' in c && typeof c.volume === 'number') (existing as any).volume = ((existing as any).volume || 0) + c.volume
       if ('extrinsic_signal' in c && c.extrinsic_signal) (existing as any).extrinsic_signal = true
       if ('cp_ce_signal' in c && c.cp_ce_signal) (existing as any).cp_ce_signal = true
       if ('combined_extrinsic_signal' in c && c.combined_extrinsic_signal) (existing as any).combined_extrinsic_signal = true
@@ -142,6 +143,7 @@ function aggregateCombined(data: AggCombined[], intervalMin: number): AggCombine
       existing.ce_extrinsic = c.ce_extrinsic
       existing.pe_extrinsic = c.pe_extrinsic
       existing.combined_extrinsic = c.combined_extrinsic
+      existing.combined_volume = (existing.combined_volume || 0) + (c.combined_volume || 0)
       if (c.cp_ce_signal) existing.cp_ce_signal = true
       if (c.combined_extrinsic_signal) existing.combined_extrinsic_signal = true
     } else {
@@ -437,60 +439,69 @@ export default function EzayChart() {
       }
     }
 
-    // In live mode, exclude current bucket from API data so setData() replaces
-    // only completed candles with real broker OHLC. WS keeps building the live candle.
+    // In live mode, include ALL API data (including current bucket) so aggregated
+    // candles load correctly when switching timeframes. Seed currentOhlcRef so
+    // WS update() continues from the API's OHLC instead of starting fresh.
     const liveBucket = !isBacktestRef.current ? Math.floor(Date.now() / 1000 / (intervalMin * 60)) * (intervalMin * 60) : 0
-    const isLive = !isBacktestRef.current && liveBucket > 0
-
-    const filterCe = isLive ? ceData.filter((item) => item.time < liveBucket) : ceData
-    const filterPe = isLive ? peData.filter((item) => item.time < liveBucket) : peData
-    const filterCombined = isLive ? combinedData.filter((item) => item.time < liveBucket) : combinedData
 
     if (ceSeriesRef.current) {
       if (ct === 'candlestick') {
-        ceSeriesRef.current.setData(filterCe)
+        ceSeriesRef.current.setData(ceData)
       } else {
-        ceSeriesRef.current.setData(filterCe.map((item) => ({ time: item.time, value: item.close })))
+        ceSeriesRef.current.setData(ceData.map((item) => ({ time: item.time, value: item.close })))
       }
     }
 
     if (peSeriesRef.current) {
       if (ct === 'candlestick') {
-        peSeriesRef.current.setData(filterPe)
+        peSeriesRef.current.setData(peData)
       } else {
-        peSeriesRef.current.setData(filterPe.map((item) => ({ time: item.time, value: item.close })))
+        peSeriesRef.current.setData(peData.map((item) => ({ time: item.time, value: item.close })))
       }
     }
 
     if (combinedSeriesRef.current) {
-      combinedSeriesRef.current.setData(filterCombined.map((item) => ({ time: item.time, value: item.combined_premium })))
+      combinedSeriesRef.current.setData(combinedData.map((item) => ({ time: item.time, value: item.combined_premium })))
     }
     if (llpSeriesRef.current && d.llp != null) {
-      llpSeriesRef.current.setData(filterCombined.map((item) => ({ time: item.time, value: item.llp ?? 0 })))
+      llpSeriesRef.current.setData(combinedData.map((item) => ({ time: item.time, value: item.llp ?? 0 })))
     }
     if (ceIntrinsicRef.current) {
-      ceIntrinsicRef.current.setData(filterCombined.map((item) => ({ time: item.time, value: item.ce_intrinsic })))
+      ceIntrinsicRef.current.setData(combinedData.map((item) => ({ time: item.time, value: item.ce_intrinsic })))
     }
     if (peIntrinsicRef.current) {
-      peIntrinsicRef.current.setData(filterCombined.map((item) => ({ time: item.time, value: item.pe_intrinsic })))
+      peIntrinsicRef.current.setData(combinedData.map((item) => ({ time: item.time, value: item.pe_intrinsic })))
     }
     if (ceExtrinsicRef.current) {
-      ceExtrinsicRef.current.setData(filterCombined.map((item) => ({ time: item.time, value: item.ce_extrinsic })))
+      ceExtrinsicRef.current.setData(combinedData.map((item) => ({ time: item.time, value: item.ce_extrinsic })))
     }
     if (peExtrinsicRef.current) {
-      peExtrinsicRef.current.setData(filterCombined.map((item) => ({ time: item.time, value: item.pe_extrinsic })))
+      peExtrinsicRef.current.setData(combinedData.map((item) => ({ time: item.time, value: item.pe_extrinsic })))
     }
     if (combinedExtrinsicRef.current) {
-      combinedExtrinsicRef.current.setData(filterCombined.map((item) => ({ time: item.time, value: item.combined_extrinsic })))
+      combinedExtrinsicRef.current.setData(combinedData.map((item) => ({ time: item.time, value: item.combined_extrinsic })))
     }
 
     if (volumeRef.current) {
       const dark = document.documentElement.classList.contains('dark')
-      volumeRef.current.setData(filterCombined.map((item) => ({
+      volumeRef.current.setData(combinedData.map((item) => ({
         time: item.time,
         value: item.combined_volume || 0,
         color: dark ? 'rgba(38,166,154,0.5)' : 'rgba(38,166,154,0.6)',
       })))
+    }
+
+    // Seed currentOhlcRef from the last API candle so WS update() continues
+    // from real OHLC instead of creating a new candle from scratch
+    if (!isBacktestRef.current && liveBucket > 0) {
+      const lastCe = ceData.length > 0 ? ceData[ceData.length - 1] : null
+      const lastPe = peData.length > 0 ? peData[peData.length - 1] : null
+      if (lastCe && lastCe.time === liveBucket) {
+        currentOhlcRef.current.set('ce', { time: lastCe.time, open: lastCe.open, high: lastCe.high, low: lastCe.low, close: lastCe.close })
+      }
+      if (lastPe && lastPe.time === liveBucket) {
+        currentOhlcRef.current.set('pe', { time: lastPe.time, open: lastPe.open, high: lastPe.high, low: lastPe.low, close: lastPe.close })
+      }
     }
 
     // Build PE close lookup for HC filter
