@@ -418,6 +418,7 @@ export default function EzayChart() {
     const ct = chartTypeRef.current
     const intervalMin = getIntervalMinutes(intervalRef.current)
     const signals = showSignalsRef.current
+    currentOhlcRef.current.clear()
 
     let ceData = d.ce_data || []
     let peData = d.pe_data || []
@@ -436,47 +437,56 @@ export default function EzayChart() {
       }
     }
 
+    // In live mode, exclude current bucket from API data so setData() replaces
+    // only completed candles with real broker OHLC. WS keeps building the live candle.
+    const liveBucket = !isBacktestRef.current ? Math.floor(Date.now() / 1000 / (intervalMin * 60)) * (intervalMin * 60) : 0
+    const isLive = !isBacktestRef.current && liveBucket > 0
+
+    const filterCe = isLive ? ceData.filter((item) => item.time < liveBucket) : ceData
+    const filterPe = isLive ? peData.filter((item) => item.time < liveBucket) : peData
+    const filterCombined = isLive ? combinedData.filter((item) => item.time < liveBucket) : combinedData
+
     if (ceSeriesRef.current) {
       if (ct === 'candlestick') {
-        ceSeriesRef.current.setData(ceData)
+        ceSeriesRef.current.setData(filterCe)
       } else {
-        ceSeriesRef.current.setData(ceData.map((item) => ({ time: item.time, value: item.close })))
+        ceSeriesRef.current.setData(filterCe.map((item) => ({ time: item.time, value: item.close })))
       }
     }
 
     if (peSeriesRef.current) {
       if (ct === 'candlestick') {
-        peSeriesRef.current.setData(peData)
+        peSeriesRef.current.setData(filterPe)
       } else {
-        peSeriesRef.current.setData(peData.map((item) => ({ time: item.time, value: item.close })))
+        peSeriesRef.current.setData(filterPe.map((item) => ({ time: item.time, value: item.close })))
       }
     }
 
     if (combinedSeriesRef.current) {
-      combinedSeriesRef.current.setData(combinedData.map((item) => ({ time: item.time, value: item.combined_premium })))
+      combinedSeriesRef.current.setData(filterCombined.map((item) => ({ time: item.time, value: item.combined_premium })))
     }
     if (llpSeriesRef.current && d.llp != null) {
-      llpSeriesRef.current.setData(combinedData.map((item) => ({ time: item.time, value: item.llp ?? 0 })))
+      llpSeriesRef.current.setData(filterCombined.map((item) => ({ time: item.time, value: item.llp ?? 0 })))
     }
     if (ceIntrinsicRef.current) {
-      ceIntrinsicRef.current.setData(combinedData.map((item) => ({ time: item.time, value: item.ce_intrinsic })))
+      ceIntrinsicRef.current.setData(filterCombined.map((item) => ({ time: item.time, value: item.ce_intrinsic })))
     }
     if (peIntrinsicRef.current) {
-      peIntrinsicRef.current.setData(combinedData.map((item) => ({ time: item.time, value: item.pe_intrinsic })))
+      peIntrinsicRef.current.setData(filterCombined.map((item) => ({ time: item.time, value: item.pe_intrinsic })))
     }
     if (ceExtrinsicRef.current) {
-      ceExtrinsicRef.current.setData(combinedData.map((item) => ({ time: item.time, value: item.ce_extrinsic })))
+      ceExtrinsicRef.current.setData(filterCombined.map((item) => ({ time: item.time, value: item.ce_extrinsic })))
     }
     if (peExtrinsicRef.current) {
-      peExtrinsicRef.current.setData(combinedData.map((item) => ({ time: item.time, value: item.pe_extrinsic })))
+      peExtrinsicRef.current.setData(filterCombined.map((item) => ({ time: item.time, value: item.pe_extrinsic })))
     }
     if (combinedExtrinsicRef.current) {
-      combinedExtrinsicRef.current.setData(combinedData.map((item) => ({ time: item.time, value: item.combined_extrinsic })))
+      combinedExtrinsicRef.current.setData(filterCombined.map((item) => ({ time: item.time, value: item.combined_extrinsic })))
     }
 
     if (volumeRef.current) {
       const dark = document.documentElement.classList.contains('dark')
-      volumeRef.current.setData(combinedData.map((item) => ({
+      volumeRef.current.setData(filterCombined.map((item) => ({
         time: item.time,
         value: item.combined_volume || 0,
         color: dark ? 'rgba(38,166,154,0.5)' : 'rgba(38,166,154,0.6)',
@@ -854,13 +864,15 @@ export default function EzayChart() {
     if (el) el.scrollIntoView({ block: 'center', behavior: 'smooth' })
   }, [selectedStrike, strikes])
 
-  // Clear backtest results on strike change
+  // Clear backtest results and volume baselines on strike change
   useEffect(() => {
     backtestTradesRef.current = []
     backtestSummaryRef.current = null
     setBacktestSummary(null)
     ceTradeMarkersRef.current?.setMarkers([])
     peTradeMarkersRef.current?.setMarkers([])
+    lastDayVolRef.current.clear()
+    candleVolRef.current.clear()
   }, [selectedStrike])
 
   // Strategy visibility toggle — re-combine trades from cached response
@@ -930,7 +942,11 @@ export default function EzayChart() {
     const peVol = peEntry?.data?.volume || 0
 
     const tickVolDelta = (key: string, dayVol: number) => {
-      const prev = lastDayVolRef.current.get(key) ?? dayVol
+      const prev = lastDayVolRef.current.get(key)
+      if (prev === undefined) {
+        lastDayVolRef.current.set(key, dayVol)
+        return candleVolRef.current.get(`vol_${time}`) ?? 0
+      }
       const delta = Math.max(0, dayVol - prev)
       lastDayVolRef.current.set(key, dayVol)
       const volKey = `vol_${time}`
