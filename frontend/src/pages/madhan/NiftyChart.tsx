@@ -179,6 +179,7 @@ export default function NiftyChart() {
   const oiLineSeriesRef = useRef<ISeriesApi<'Line'> | null>(null)
   const coiTrendDataRef = useRef<{ timestamps: number[]; coi_percent: number[]; oi_trend_percent: number[] } | null>(null)
   const writersViewActiveRef = useRef(true)
+  const niftyRunningRef = useRef(false)
   const [cePeSignalsActive, setCePeSignalsActive] = useState(false)
   const [cpSignalsActive, setCpSignalsActive] = useState(false)
   const cePeSignalsActiveRef = useRef(false)
@@ -1832,7 +1833,9 @@ export default function NiftyChart() {
     const msToNextMinute = (60 - new Date().getSeconds()) * 1000
     timeoutRef.current = window.setTimeout(() => {
       void refreshChartData()
-      updaterRef.current = window.setInterval(() => void refreshChartData(), 60000)
+      updaterRef.current = window.setInterval(() => {
+        if (niftyRunningRef.current) void refreshChartData()
+      }, 60000)
     }, msToNextMinute)
     return () => {
       if (updaterRef.current) window.clearInterval(updaterRef.current)
@@ -1859,6 +1862,7 @@ export default function NiftyChart() {
       if (json?.status === 'success' && json?.message) {
         setNiftyStatus(json.message)
         setNiftyRunning(!!json.is_running)
+        niftyRunningRef.current = !!json.is_running
       }
     } catch {}
   }, [])
@@ -1868,6 +1872,14 @@ export default function NiftyChart() {
     const id = window.setInterval(fetchNiftyStatus, 60000)
     return () => window.clearInterval(id)
   }, [fetchNiftyStatus])
+
+  useEffect(() => {
+    if (niftyRunning) {
+      void refreshChartData().then(() => {
+        chartRef.current?.timeScale().scrollToRealTime()
+      })
+    }
+  }, [niftyRunning])
 
   useEffect(() => {
     const live = wsData.get('NSE_INDEX:NIFTY')
