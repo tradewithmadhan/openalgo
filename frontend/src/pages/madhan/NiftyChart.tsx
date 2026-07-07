@@ -7,12 +7,14 @@ import {
   ColorType,
   CrosshairMode,
   createChart,
+  createSeriesMarkers,
   HistogramSeries,
   LineSeries,
   LineStyle,
   LineType,
   type IChartApi,
   type ISeriesApi,
+  type ISeriesMarkersPluginApi,
   type Time,
 } from 'lightweight-charts'
 import { indicatorRegistry } from 'lightweight-charts-indicators'
@@ -76,6 +78,17 @@ type IndicatorInstance = {
   indicatorId: string
   visible: boolean
   plotVisibility: Record<string, boolean>
+}
+
+type SignalRow = {
+  time: number
+  strike: number
+  ce_signal: boolean
+  pe_signal: boolean
+  cp_signal: 'CE' | 'PE' | false
+  cp_ce_signal: boolean
+  ce_close: number
+  pe_close: number
 }
 
 type IndicatorSeriesBucket = {
@@ -166,6 +179,13 @@ export default function NiftyChart() {
   const oiLineSeriesRef = useRef<ISeriesApi<'Line'> | null>(null)
   const coiTrendDataRef = useRef<{ timestamps: number[]; coi_percent: number[]; oi_trend_percent: number[] } | null>(null)
   const writersViewActiveRef = useRef(true)
+  const [cePeSignalsActive, setCePeSignalsActive] = useState(false)
+  const [cpSignalsActive, setCpSignalsActive] = useState(false)
+  const cePeSignalsActiveRef = useRef(false)
+  const cpSignalsActiveRef = useRef(false)
+  const cePeMarkersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null)
+  const cpMarkersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null)
+  const rawSignalDataRef = useRef<SignalRow[]>([])
   const [oiX, setOiX] = useState(100)
   const [coiX, setCoiX] = useState(80)
   const [oiShowStrike, setOiShowStrike] = useState(false)
@@ -366,6 +386,8 @@ export default function NiftyChart() {
     prevHighRef.current = prevHigh
     prevLowRef.current = prevLow
     prevCloseRef.current = prevClose
+    cePeMarkersRef.current = createSeriesMarkers(candle, [])
+    cpMarkersRef.current = createSeriesMarkers(candle, [])
     setChartReady(true)
     const drawingManager = new DrawingManager()
     drawingManager.attach(chart, candle, chartContainerRef.current)
@@ -578,6 +600,9 @@ export default function NiftyChart() {
       oiCandleSeriesRef.current = null
       coiTrendPaneRef.current = null
       coiTrendDataRef.current = null
+      cePeMarkersRef.current = null
+      cpMarkersRef.current = null
+      rawSignalDataRef.current = []
       chart.remove()
       chartRef.current = null
       setChartReady(false)
@@ -1609,6 +1634,109 @@ export default function NiftyChart() {
     sqrtPrimitiveRef.current.setData(segments)
   }
 
+  const aggregateSignals = (signals: SignalRow[], selectedInterval: string): SignalRow[] => {
+    const intervalSec = getIntervalSeconds(selectedInterval)
+    if (intervalSec <= 60) return signals
+    const IST_OFFSET_SEC = 5 * 3600 + 30 * 60
+    const istDateKey = (ts: number) => {
+      const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(ts * 1000))
+      return parts
+    }
+    const istMidnightTs = (ts: number) => {
+      const [y, m, d] = istDateKey(ts).split('-').map(Number)
+      return Math.floor(Date.UTC(y, m - 1, d) / 1000) - IST_OFFSET_SEC
+    }
+    const bucketMap = new Map<number, { ce: boolean; pe: boolean; cp: 'CE' | 'PE' | false; cpCe: boolean; ts: number }>()
+    for (const sig of signals) {
+      const midnight = istMidnightTs(sig.time)
+      const offset = sig.time - midnight
+      const bucketOffset = Math.floor(offset / intervalSec) * intervalSec
+      const bucket = midnight + bucketOffset
+      const existing = bucketMap.get(bucket)
+      if (!existing) {
+        bucketMap.set(bucket, { ce: sig.ce_signal, pe: sig.pe_signal, cp: sig.cp_signal, cpCe: sig.cp_ce_signal, ts: sig.time })
+      } else {
+        existing.ts = sig.time
+        if (sig.ce_signal) { existing.ce = true; existing.pe = false }
+        if (sig.pe_signal) { existing.pe = true; existing.ce = false }
+        if (sig.cp_signal) existing.cp = sig.cp_signal
+        if (sig.cp_ce_signal) existing.cpCe = true
+      }
+    }
+    return Array.from(bucketMap.entries()).map(([, v]) => ({
+      time: v.ts, strike: 0, ce_signal: v.ce, pe_signal: v.pe,
+      cp_signal: v.cp, cp_ce_signal: v.cpCe, ce_close: 0, pe_close: 0,
+    })).sort((a, b) => a.time - b.time)
+  }
+
+  const updateSignalMarkers = () => {
+    const candleSeries = candleRef.current
+    if (!candleSeries) return
+    const agg = aggregateSignals(rawSignalDataRef.current, interval)
+    const candles = priceDataRef.current
+    if (!candles.length) { cePeMarkersRef.current?.setMarkers([]); cpMarkersRef.current?.setMarkers([]); return }
+
+    const candleTimes = new Set(candles.map((c) => c.time))
+    const snapToCandle = (sigTime: number): number | null => {
+      if (candleTimes.has(sigTime)) return sigTime
+      const intervalSec = getIntervalSeconds(interval)
+      const bucket = Math.floor(sigTime / intervalSec) * intervalSec
+      if (candleTimes.has(bucket)) return bucket
+      for (let offset = -intervalSec; offset <= intervalSec; offset += 60) {
+        if (candleTimes.has(bucket + offset)) return bucket + offset
+      }
+      return null
+    }
+
+    const cePeMarkers = cePeSignalsActiveRef.current
+      ? agg.filter((s) => s.ce_signal || s.pe_signal).flatMap((s) => {
+          const snapped = snapToCandle(s.time)
+          if (snapped === null) return []
+          return [{
+            time: snapped as Time,
+            position: (s.ce_signal ? 'belowBar' : 'aboveBar') as 'aboveBar' | 'belowBar',
+            color: s.ce_signal ? '#22c55e' : '#ef4444',
+            shape: (s.ce_signal ? 'arrowUp' : 'arrowDown') as 'arrowUp' | 'arrowDown',
+          }]
+        })
+      : []
+    cePeMarkersRef.current?.setMarkers(cePeMarkers)
+
+    const cpMarkers = cpSignalsActiveRef.current
+      ? agg.filter((s) => s.cp_signal).flatMap((s) => {
+          const snapped = snapToCandle(s.time)
+          if (snapped === null) return []
+          return [{
+            time: snapped as Time,
+            position: (s.cp_signal === 'CE' ? 'belowBar' : 'aboveBar') as 'aboveBar' | 'belowBar',
+            color: '#eab308',
+            shape: 'circle' as 'circle',
+          }]
+        })
+      : []
+    cpMarkersRef.current?.setMarkers(cpMarkers)
+  }
+
+  const fetchSignalData = async () => {
+    try {
+      const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' })
+      let res = await fetch(`/madhan/api/ezayChart_signals?_=${Date.now()}`)
+      let json = await res.json()
+      if (json?.status !== 'success' || !Array.isArray(json.data)) {
+        res = await fetch(`/madhan/api/nifty/backtest_signals?date=${today}&_=${Date.now()}`)
+        json = await res.json()
+      }
+      if (json?.status === 'success' && Array.isArray(json.data)) {
+        rawSignalDataRef.current = json.data as SignalRow[]
+      } else {
+        rawSignalDataRef.current = []
+      }
+    } catch {
+      rawSignalDataRef.current = []
+    }
+    updateSignalMarkers()
+  }
+
   const refreshChartData = async () => {
     if (!candleRef.current || !ema34Ref.current || !ema55Ref.current) return
     // Always pull 1-minute data and aggregate locally so the 09:08 pre-open
@@ -1641,6 +1769,7 @@ export default function NiftyChart() {
     await Promise.all([fetchOiProfiles(), fetchOptionCombinedVolume()])
     fetchCoiHistory()
     fetchCoiTrend()
+    fetchSignalData()
   }
 
   const repaintOverlay = () => {
@@ -1716,6 +1845,12 @@ export default function NiftyChart() {
     createCoiTrendPane()
     fetchCoiTrend()
   }, [chartReady])
+
+  useEffect(() => {
+    cePeSignalsActiveRef.current = cePeSignalsActive
+    cpSignalsActiveRef.current = cpSignalsActive
+    updateSignalMarkers()
+  }, [cePeSignalsActive, cpSignalsActive])
 
   const fetchNiftyStatus = useCallback(async () => {
     try {
@@ -2597,6 +2732,8 @@ export default function NiftyChart() {
           </div>
           <Button variant={coiHistoryActive ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={toggleCoiHistory}>COI Hist</Button>
           <Button variant={writersViewActive ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={toggleWritersView}>Writers View</Button>
+          <Button variant={cePeSignalsActive ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={() => setCePeSignalsActive((p) => !p)}>CE/PE</Button>
+          <Button variant={cpSignalsActive ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={() => setCpSignalsActive((p) => !p)}>CP</Button>
           <div className="flex items-center gap-1.5 ml-auto">
             {niftyStatus && (
               <div className="flex items-center gap-1" title={niftyStatus}>
