@@ -399,6 +399,87 @@ def get_option_data(end_ts: int = None):
     finally:
         session.close()
 
+def get_consistent_current_option_data(end_ts: int = None):
+    """
+    Returns option data at the last timestamp where ALL tracked symbols are present.
+    This prevents partial/inconsistent data during incremental fetch when different
+    symbols may be at different timestamps.
+    """
+    session = SessionLocal()
+    try:
+        from sqlalchemy.orm import aliased
+
+        tracked_symbols = [r[0] for r in session.query(TrackedSymbol.symbol).all()]
+        if not tracked_symbols:
+            return []
+        
+        expected_count = len(tracked_symbols)
+        
+        today = get_valid_trading_day(exchange="NSE")
+        start_of_day = datetime.combine(today, time.min)
+        start_ts = int(start_of_day.timestamp())
+        
+        # Find the latest timestamp where all expected symbols have data
+        ts_filter = [OptionData.timestamp >= start_ts]
+        if end_ts:
+            ts_filter.append(OptionData.timestamp <= end_ts)
+        
+        latest_consistent_ts = (
+            session.query(OptionData.timestamp)
+            .filter(*ts_filter)
+            .group_by(OptionData.timestamp)
+            .having(func.count(func.distinct(OptionData.symbol)) >= expected_count)
+            .order_by(OptionData.timestamp.desc())
+            .limit(1)
+            .scalar()
+        )
+        
+        if not latest_consistent_ts:
+            # Fallback: return whatever is available (raw per-symbol latest)
+            logger.warning(f"No consistent timestamp found with all {expected_count} symbols. Falling back to raw data.")
+            return get_option_data(end_ts=end_ts)
+        
+        # Get all option data at the consistent timestamp, with day volume
+        vol_filter = [OptionData.timestamp >= start_ts]
+        if end_ts:
+            vol_filter.append(OptionData.timestamp <= end_ts)
+        
+        subq = (
+            select(
+                OptionData,
+                func.count(OptionData.id).over(
+                    partition_by=OptionData.symbol
+                ).label('candle_count'),
+                func.sum(case((and_(*vol_filter), OptionData.volume), else_=0)).over(
+                    partition_by=OptionData.symbol
+                ).label('total_day_volume')
+            ).filter(OptionData.timestamp == latest_consistent_ts)
+        ).subquery()
+        
+        option_data_alias = aliased(OptionData, subq)
+        results = session.query(option_data_alias, subq.c.candle_count, subq.c.total_day_volume).order_by(option_data_alias.symbol).all()
+        
+        return [
+            {
+                'timestamp': r.timestamp,
+                'symbol': r.symbol,
+                'open': r.open,
+                'high': r.high,
+                'low': r.low,
+                'close': r.close,
+                'volume': r.volume,
+                'day_volume': int(total_day_volume) if total_day_volume is not None else 0,
+                'oi': r.oi,
+                'candle_count': candle_count
+            }
+            for r, candle_count, total_day_volume in results
+        ]
+    except Exception as e:
+        logger.error(f"Error fetching consistent Option data: {e}")
+        return []
+    finally:
+        session.close()
+
 def get_previous_day_oi():
     """
     Retrieves previous day OI records from the database.

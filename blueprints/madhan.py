@@ -7,7 +7,7 @@ from collections import defaultdict
 from bisect import bisect_right
 from services.history_service import get_history
 from services.madhan.nifty_fetch_service import nifty_fetcher
-from database.madhan_db import get_nifty_data, get_option_data, get_nifty_data_count, get_previous_day_oi, get_nth_candle_oi_for_all_symbols, get_current_day_historical_data, get_current_day_instrument_data, get_coi_history, SessionLocal, NiftyData, get_tracked_symbols
+from database.madhan_db import get_nifty_data, get_option_data, get_consistent_current_option_data, get_nifty_data_count, get_previous_day_oi, get_nth_candle_oi_for_all_symbols, get_current_day_historical_data, get_current_day_instrument_data, get_coi_history, SessionLocal, NiftyData, get_tracked_symbols
 from database.auth_db import get_api_key_for_tradingview
 from blueprints.react_app import serve_react_app
 
@@ -141,7 +141,7 @@ def get_atp_ltp_data():
                 itm_put_symbol2 = symbol
         
         # Get current option data for LTP
-        option_data = get_option_data()
+        option_data = get_consistent_current_option_data()
         for option in option_data:
             symbol = option.get('symbol', '')
             ltp = option.get('close', 0)
@@ -808,7 +808,7 @@ def nifty_previous_day_oi():
     prev_day_data = get_previous_day_oi()
     
     # 1. Get current OI for session change calculation
-    current_option_data = get_option_data() # Fetches latest OI for options
+    current_option_data = get_consistent_current_option_data() # Fetches latest OI for all symbols at consistent timestamp
     latest_nifty_data = get_nifty_data(limit=1) # Fetches latest OI for Nifty
     current_oi_map = {item['symbol']: item.get('oi', 0) for item in current_option_data}
     if latest_nifty_data:
@@ -1384,7 +1384,7 @@ def oi_profile_data():
     prev_day_data = get_previous_day_oi()  # Returns list of {symbol, oi}
 
     # Current day's latest OI
-    current_data = get_option_data()  # Returns list of {symbol, oi}
+    current_data = get_consistent_current_option_data()  # Returns list of {symbol, oi} at consistent timestamp
 
     # 1. Build current OI map
     current_oi_map = {item['symbol']: item.get('oi', 0) for item in current_data}
@@ -2094,7 +2094,7 @@ def nifty_dash_data():
             end_ts = None
     
     # 1. Get option data (latest or at specific time) and previous day OI
-    current_option_data = get_option_data(end_ts=end_ts)
+    current_option_data = get_consistent_current_option_data(end_ts=end_ts)
     prev_day_data = get_previous_day_oi()
     prev_oi_map = {item['symbol']: item.get('oi', 0) for item in prev_day_data}
     
@@ -2301,6 +2301,10 @@ def nifty_dash_time_analysis():
     
     for ts in sorted_ts:
         if ts < market_start_ts: continue
+        
+        # Skip incomplete candles (not all option symbols present)
+        if ts in data_by_ts and len(data_by_ts[ts]) < len(tracked_symbols):
+            continue
         
         spot = nifty_by_ts.get(ts, 0)
         if spot > 0:
