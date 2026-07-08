@@ -125,6 +125,11 @@ class NiftyDataFetcher:
         if self.is_running:
             logger.warning("Nifty fetcher is already running.")
             return False
+        
+        # Wait for any lingering old thread to finish before clearing DB
+        if self.thread and self.thread.is_alive():
+            logger.info("Waiting for old fetcher thread to exit...")
+            self.thread.join(timeout=5)
             
         # Ensure state is loaded before starting
         self._load_state()
@@ -224,18 +229,16 @@ class NiftyDataFetcher:
             
             last_candle_timestamp = 0
             if today_df.empty:
-                logger.warning("No data for today found in initial fetch to determine Open ATM strike.")
-                if not df.empty:
-                    open_price = df['close'].iloc[-1]
-                    last_candle_timestamp = df['timestamp'].iloc[-1]
-                    logger.info(f"Falling back to last close price for Open ATM calculation: {open_price}")
-                else:
-                    logger.error("Cannot determine Open ATM strike, dataframe is empty.")
-                    return
-            else:
-                open_price = today_df['open'].iloc[0]
-                last_candle_timestamp = today_df['timestamp'].iloc[0]
-                logger.info(f"Today's open price for NIFTY is: {open_price}")
+                logger.warning("No data for today found. Deferring Open ATM calculation until market opens.")
+                self.open_atm_strike = 0
+                save_fetcher_state('open_atm_strike', 0)
+                # Still fetch and save expiry date for later symbol generation
+                self._fetch_and_save_expiry()
+                return
+
+            open_price = today_df['open'].iloc[0]
+            last_candle_timestamp = today_df['timestamp'].iloc[0]
+            logger.info(f"Today's open price for NIFTY is: {open_price}")
 
             # 2. Calculate Open ATM strike (rounded to nearest 50)
             self.open_atm_strike = round(open_price / 50) * 50
@@ -243,9 +246,29 @@ class NiftyDataFetcher:
             save_fetcher_state('open_atm_strike', self.open_atm_strike)
 
             # 3. Get the first expiry date for NIFTY options
+            self._fetch_and_save_expiry()
+            if not self.expiry_date:
+                return
+
+            # 4. Generate list of option symbols
+            self._generate_option_symbols()
+
+            # 5. Set last_update from the candle timestamp
+            if last_candle_timestamp > 0:
+                # Create a timezone-aware datetime object in IST
+                self.last_update = datetime.fromtimestamp(last_candle_timestamp, pytz.timezone('Asia/Kolkata'))
+                logger.info(f"Set last_update from Nifty open candle timestamp: {self.last_update}")
+
+        except Exception as e:
+            logger.exception(f"Error in _get_atm_strike_and_symbols: {e}")
+
+    def _fetch_and_save_expiry(self):
+        """Fetches and saves the expiry date for NIFTY options."""
+        try:
             success, expiry_data, _ = get_expiry_dates(symbol="NIFTY", exchange="NFO", instrumenttype="options", api_key=self.api_key)
             if not success or not expiry_data.get('data'):
                 logger.error(f"Could not fetch expiry dates: {expiry_data.get('message')}")
+                self.expiry_date = None
                 return
             
             current_date_dt = get_valid_trading_day(exchange="NSE")
@@ -258,31 +281,28 @@ class NiftyDataFetcher:
                 logger.info(f"Current date matches expiry, using next expiry: {self.expiry_date}")
             
             save_fetcher_state('expiry_date', self.expiry_date)
-            expiry_for_symbol = datetime.strptime(self.expiry_date, "%d-%b-%y").strftime("%d%b%y").upper()
-            logger.info(f"Selected expiry date: {self.expiry_date} ({expiry_for_symbol})")
-
-            # 4. Generate list of option symbols
-            symbols_to_track = []
-            # 21 strikes: ATM, 10 above (OTM calls/ITM puts), 10 below (ITM calls/OTM puts)
-            # This creates a "ring" of 42 symbols (21 CEs and 21 PEs) around the ATM.
-            for i in range(-10, 11):  # from -10 to +10, total 21 steps
-                strike = self.open_atm_strike + (i * 50)
-                symbols_to_track.append(f"NIFTY{expiry_for_symbol}{strike}CE")
-                symbols_to_track.append(f"NIFTY{expiry_for_symbol}{strike}PE")
-
-            # Sort and ensure uniqueness, though the loop logic should prevent duplicates.
-            self.option_symbols = sorted(list(set(symbols_to_track)))
-            save_tracked_symbols(self.option_symbols)
-            logger.info(f"Generated {len(self.option_symbols)} option symbols to track around Open ATM.")
-
-            # 5. Set last_update from the candle timestamp
-            if last_candle_timestamp > 0:
-                # Create a timezone-aware datetime object in IST
-                self.last_update = datetime.fromtimestamp(last_candle_timestamp, pytz.timezone('Asia/Kolkata'))
-                logger.info(f"Set last_update from Nifty open candle timestamp: {self.last_update}")
-
+            logger.info(f"Selected expiry date: {self.expiry_date}")
         except Exception as e:
-            logger.exception(f"Error in _get_atm_strike_and_symbols: {e}")
+            logger.exception(f"Error fetching expiry date: {e}")
+            self.expiry_date = None
+
+    def _generate_option_symbols(self):
+        """Generates option symbols based on current open_atm_strike and expiry_date."""
+        if not self.open_atm_strike or not self.expiry_date:
+            logger.warning("Cannot generate option symbols: open_atm_strike or expiry_date not set.")
+            return
+        
+        expiry_for_symbol = datetime.strptime(self.expiry_date, "%d-%b-%y").strftime("%d%b%y").upper()
+        
+        symbols_to_track = []
+        for i in range(-10, 11):
+            strike = self.open_atm_strike + (i * 50)
+            symbols_to_track.append(f"NIFTY{expiry_for_symbol}{strike}CE")
+            symbols_to_track.append(f"NIFTY{expiry_for_symbol}{strike}PE")
+
+        self.option_symbols = sorted(list(set(symbols_to_track)))
+        save_tracked_symbols(self.option_symbols)
+        logger.info(f"Generated {len(self.option_symbols)} option symbols to track around Open ATM {self.open_atm_strike}.")
 
     def _fetch_single_option_data(self, symbol, start_date_str, end_date_str):
         """Fetches data for a single option symbol."""
@@ -535,6 +555,19 @@ class NiftyDataFetcher:
                         last_close = df_nifty['close'].iloc[-1]
                         self.current_atm_strike = round(last_close / 50) * 50
                         save_fetcher_state('current_atm_strike', self.current_atm_strike)
+
+                        # If open_atm_strike is 0 (pre-market initial fetch), compute from first candle
+                        if self.open_atm_strike == 0:
+                            open_price = df_nifty['open'].iloc[0]
+                            self.open_atm_strike = round(open_price / 50) * 50
+                            save_fetcher_state('open_atm_strike', self.open_atm_strike)
+                            logger.info(f"Computed Open ATM from first candle: {self.open_atm_strike}")
+                            # Generate option symbols now that ATM is known
+                            self._generate_option_symbols()
+                            # Backfill historical option data for past 7 days
+                            backfill_start = (now - timedelta(days=7)).strftime('%Y-%m-%d')
+                            logger.info(f"Backfilling option data from {backfill_start} to {today_str}")
+                            self._fetch_and_store_options_data(backfill_start, today_str)
 
                         # Check for market close condition to stop the fetcher for the day
                         market_close_time = now.replace(hour=15, minute=30, second=0, microsecond=0)
