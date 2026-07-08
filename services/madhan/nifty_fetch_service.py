@@ -515,9 +515,9 @@ class NiftyDataFetcher:
             # increasing the chance of getting a complete, closed candle.
             now = datetime.now()
             
-            # Wait until 5 seconds past the next minute.
-            # e.g., if it's 9:30:25, wait for (60 - 25) + 5 = 40 seconds. Next run at 9:31:05.
-            seconds_to_wait = (60 - now.second) + 5
+            # Wait until 1 second past the next minute.
+            # e.g., if it's 9:30:25, wait for (60 - 25) + 1 = 36 seconds. Next run at 9:31:01.
+            seconds_to_wait = (60 - now.second) + 1
             logger.info(f"Synchronizing fetch. Waiting for {seconds_to_wait} seconds to align with candle close.")
             
             # The wait method returns True if the event is set, False on timeout.
