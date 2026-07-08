@@ -226,7 +226,7 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
     useEffect(() => {
         const fetchSignals = async () => {
             try {
-                const response = await fetch(`/madhan/api/nifty/signals-cross?timeframe=${timeframe}`);
+                const response = await fetch(`/madhan/api/nifty/signals-cross?timeframe=${timeframe}&_=${Date.now()}`);
                 const json = await response.json();
                 if (json.status === 'success') {
                     setBackendSignals(json.data);
@@ -257,7 +257,7 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
     // Fetch data for specific symbol
     const fetchSymbolData = async (symbol: string) => {
         try {
-            const response = await fetch(`/madhan/api/nifty/option-ohlc?symbol=${symbol}`);
+            const response = await fetch(`/madhan/api/nifty/option-ohlc?symbol=${symbol}&_=${Date.now()}`);
             const json = await response.json();
             if (json.status === 'success') {
                 const { timestamps, open, high, low, close, volume, oi } = json.data;

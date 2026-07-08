@@ -1034,7 +1034,7 @@ export default function EzayChart() {
       const dt = backtestDateRef.current
       // In backtest mode, load strikes from parquet data for the selected date
       if (bt && dt) {
-        const res = await fetch(`/madhan/api/nifty/backtest_strikes?date=${dt}`)
+        const res = await fetch(`/madhan/api/nifty/backtest_strikes?date=${dt}&_=${Date.now()}`)
         const json = await res.json()
         if (json.status === 'success' && json.data) {
           const sorted = json.data.sort((a: number, b: number) => b - a)

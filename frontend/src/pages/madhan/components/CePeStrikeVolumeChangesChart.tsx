@@ -85,7 +85,7 @@ export function CePeStrikeVolumeChangesChart({ refreshTrigger, atmStrike }: CePe
       const params = new URLSearchParams({
         strike_price: selectedStrike,
       });
-      const response = await fetch(`/madhan/api/nifty/ce-pe-strike-volume-changes?${params.toString()}`);
+      const response = await fetch(`/madhan/api/nifty/ce-pe-strike-volume-changes?${params.toString()}&_=${Date.now()}`);
       const json = await response.json();
       if (json.timestamps) {
         setData(json);

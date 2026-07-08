@@ -95,7 +95,7 @@ export function CePeStrikeChangesChart({ refreshTrigger, atmStrike }: CePeStrike
             const params = new URLSearchParams({
                 strike_price: selectedStrike,
             });
-            const response = await fetch(`/madhan/api/nifty/ce-pe-strike-changes?${params.toString()}`);
+            const response = await fetch(`/madhan/api/nifty/ce-pe-strike-changes?${params.toString()}&_=${Date.now()}`);
             const json = await response.json();
             // API returns data directly without status wrapper
             if (json.timestamps) {

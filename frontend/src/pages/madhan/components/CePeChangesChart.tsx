@@ -68,7 +68,7 @@ export function CePeChangesChart({ refreshTrigger }: CePeChangesChartProps) {
                 upside_strikes: '10',
                 downside_strikes: '10'
             });
-            const response = await fetch(`/madhan/api/nifty/ce-pe-changes?${params.toString()}`);
+            const response = await fetch(`/madhan/api/nifty/ce-pe-changes?${params.toString()}&_=${Date.now()}`);
             const json = await response.json();
             if (json.status === 'success') {
                 setData(json.data);

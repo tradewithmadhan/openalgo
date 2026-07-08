@@ -81,8 +81,8 @@ export function Dash({ refreshTrigger }: { refreshTrigger: number }) {
         try {
             const endTsParam = isReplayMode && replayTimestamp ? `&end_ts=${replayTimestamp}` : '';
             const [dashRes, timeRes] = await Promise.all([
-                fetch(`/madhan/api/nifty/dash-data?mode=${summaryMode}${endTsParam}`),
-                fetch(`/madhan/api/nifty/dash-time-analysis?mode=${tableMode}&interval=${tableTimeframe}${endTsParam}`)
+                fetch(`/madhan/api/nifty/dash-data?mode=${summaryMode}${endTsParam}&_=${Date.now()}`),
+                fetch(`/madhan/api/nifty/dash-time-analysis?mode=${tableMode}&interval=${tableTimeframe}${endTsParam}&_=${Date.now()}`)
             ]);
             
             const dashJson = await dashRes.json();

@@ -70,7 +70,7 @@ export function CoiTrendChart({ refreshTrigger }: CoiTrendChartProps) {
                 upside_strikes: '10',
                 downside_strikes: '10'
             });
-            const response = await fetch(`/madhan/api/nifty/coi-trend?${params.toString()}`);
+            const response = await fetch(`/madhan/api/nifty/coi-trend?${params.toString()}&_=${Date.now()}`);
             const json = await response.json();
             if (json.status === 'success') {
                 setData(json.data);
