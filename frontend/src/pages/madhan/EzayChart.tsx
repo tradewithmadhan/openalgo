@@ -217,6 +217,7 @@ export default function EzayChart() {
   const [availableStrategies, setAvailableStrategies] = useState<string[]>([])
   const isBacktestRef = useRef(false)
   const backtestDateRef = useRef('')
+  const timeOffsetRef = useRef(0)
   const [backtestSummary, setBacktestSummary] = useState<{ total: number; wins: number; losses: number; winRate: number; totalPnl: number; totalPnlAmount: number } | null>(null)
 
   const [rangeMode, setRangeMode] = useState(false)
@@ -772,7 +773,7 @@ export default function EzayChart() {
     fetch('/madhan/api/nifty/start', { method: 'POST' }).catch(() => {})
 
     return () => {
-      if (updaterRef.current) window.clearInterval(updaterRef.current)
+      if (updaterRef.current) window.clearTimeout(updaterRef.current)
       resizeObserver.disconnect()
       chart.remove()
       chartRef.current = null
@@ -855,19 +856,58 @@ export default function EzayChart() {
     applyData()
   }, [interval, applyData])
 
+  const [refreshTrigger, setRefreshTrigger] = useState(0)
+
   useEffect(() => {
     if (selectedStrike) loadData()
   }, [selectedStrike, loadData])
 
   useEffect(() => {
-    if (updaterRef.current) window.clearInterval(updaterRef.current)
-    // Skip auto-refresh in backtest mode
+    if (updaterRef.current) window.clearTimeout(updaterRef.current)
     if (isBacktest) return
-    if (selectedStrike) {
-      updaterRef.current = window.setInterval(() => loadData(), 60000)
+
+    let timer = 0
+    let pollInterval = 0
+    let isFetching = false
+    const getServerNow = () => new Date(Date.now() + timeOffsetRef.current)
+
+    const fetchStatusAndCheck = async () => {
+      if (isFetching) return
+      isFetching = true
+      try {
+        const res = await fetch(`/madhan/api/nifty/status?_=${Date.now()}`)
+        const json = await res.json()
+        if (json?.status === 'success' && json?.server_time) {
+          const serverMs = new Date(json.server_time).getTime()
+          timeOffsetRef.current = serverMs - Date.now()
+        }
+        if (json?.status === 'success' && json?.is_running && json?.last_update) {
+          const lastUpdate = new Date(json.last_update)
+          const serverNow = getServerNow()
+          if (lastUpdate.getMinutes() === serverNow.getMinutes()) {
+            await loadData()
+            setRefreshTrigger((t) => t + 1)
+            window.clearInterval(pollInterval)
+            scheduleNextMinute()
+          }
+        }
+      } catch {} finally {
+        isFetching = false
+      }
     }
-    return () => { if (updaterRef.current) window.clearInterval(updaterRef.current) }
-  }, [selectedStrike, loadData])
+
+    const scheduleNextMinute = () => {
+      const now = getServerNow()
+      const msToNextMinute = (60 - now.getSeconds()) * 1000 - now.getMilliseconds()
+      timer = window.setTimeout(() => {
+        pollInterval = window.setInterval(fetchStatusAndCheck, 1000)
+        fetchStatusAndCheck()
+      }, Math.max(0, msToNextMinute))
+    }
+
+    if (selectedStrike) scheduleNextMinute()
+    return () => { window.clearTimeout(timer); window.clearInterval(pollInterval) }
+  }, [selectedStrike, loadData, isBacktest])
 
   useEffect(() => {
     if (!strikeListRef.current || !selectedStrike) return
@@ -1473,7 +1513,7 @@ export default function EzayChart() {
           )}
           {showRealtime && <RealtimeTable onClose={() => setShowRealtime(false)} />}
         </div>
-        {showEzaySignals && <EzaySignals className="shrink-0" style={{ width: 320 }} backtestDate={isBacktest ? backtestDate : undefined} onFirstSignal={handleFirstSignal} onSignals={handleSignals} />}
+        {showEzaySignals && <EzaySignals className="shrink-0" style={{ width: 320 }} backtestDate={isBacktest ? backtestDate : undefined} refreshTrigger={refreshTrigger} onFirstSignal={handleFirstSignal} onSignals={handleSignals} />}
       </div>
     </div>
   )

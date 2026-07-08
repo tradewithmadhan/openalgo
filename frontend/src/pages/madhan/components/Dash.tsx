@@ -117,27 +117,6 @@ export function Dash({ refreshTrigger }: { refreshTrigger: number }) {
         fetchData(true);
     }, [refreshTrigger, summaryMode, tableMode, tableTimeframe, isReplayMode, replayTimestamp]);
 
-    // Custom 1-minute aligned refresh logic
-    useEffect(() => {
-        if (isReplayMode) return;
-
-        const getMsUntilNextMinute = () => {
-            const now = new Date();
-            return (60 - now.getSeconds()) * 1000 - now.getMilliseconds() + 2000; // Aligned + 2s buffer
-        };
-
-        let timeoutId: any;
-        const scheduleNextRefresh = () => {
-            timeoutId = setTimeout(() => {
-                fetchData();
-                scheduleNextRefresh();
-            }, getMsUntilNextMinute());
-        };
-
-        scheduleNextRefresh();
-        return () => clearTimeout(timeoutId);
-    }, [isReplayMode, summaryMode, tableMode, tableTimeframe]);
-
     const formatTime = (ts: number | null) => {
         if (!ts) return "--:--";
         return new Date(ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });

@@ -180,8 +180,10 @@ export default function NiftyChart() {
   const coiTrendDataRef = useRef<{ timestamps: number[]; coi_percent: number[]; oi_trend_percent: number[] } | null>(null)
   const writersViewActiveRef = useRef(true)
   const niftyRunningRef = useRef(false)
+  const timeOffsetRef = useRef(0)
   const [cePeSignalsActive, setCePeSignalsActive] = useState(false)
   const [cpSignalsActive, setCpSignalsActive] = useState(false)
+  const [refreshTrigger, setRefreshTrigger] = useState(0)
   const cePeSignalsActiveRef = useRef(false)
   const cpSignalsActiveRef = useRef(false)
   const cePeMarkersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null)
@@ -1773,6 +1775,9 @@ export default function NiftyChart() {
     fetchSignalData()
   }
 
+  const refreshChartDataRef = useRef(refreshChartData)
+  refreshChartDataRef.current = refreshChartData
+
   const repaintOverlay = () => {
     if (!candleRef.current || !priceDataRef.current.length) return
     const last = priceDataRef.current[priceDataRef.current.length - 1]
@@ -1828,19 +1833,6 @@ export default function NiftyChart() {
     void refreshChartData().then(() => {
       if (chartRef.current) chartRef.current.timeScale().scrollToRealTime()
     })
-    if (updaterRef.current) window.clearInterval(updaterRef.current)
-    if (timeoutRef.current) window.clearTimeout(timeoutRef.current)
-    const msToNextMinute = (60 - new Date().getSeconds()) * 1000
-    timeoutRef.current = window.setTimeout(() => {
-      void refreshChartData()
-      updaterRef.current = window.setInterval(() => {
-        if (niftyRunningRef.current) void refreshChartData()
-      }, 60000)
-    }, msToNextMinute)
-    return () => {
-      if (updaterRef.current) window.clearInterval(updaterRef.current)
-      if (timeoutRef.current) window.clearTimeout(timeoutRef.current)
-    }
   }, [interval])
 
   useEffect(() => {
@@ -1863,23 +1855,59 @@ export default function NiftyChart() {
         setNiftyStatus(json.message)
         setNiftyRunning(!!json.is_running)
         niftyRunningRef.current = !!json.is_running
+        // Re-sync time offset from server
+        if (json.server_time) {
+          const serverMs = new Date(json.server_time).getTime()
+          timeOffsetRef.current = serverMs - Date.now()
+        }
+        return json
       }
     } catch {}
+    return null
   }, [])
 
   useEffect(() => {
-    fetchNiftyStatus()
-    const id = window.setInterval(fetchNiftyStatus, 60000)
-    return () => window.clearInterval(id)
-  }, [fetchNiftyStatus])
+    let timer: ReturnType<typeof setTimeout>
+    let pollInterval: ReturnType<typeof setInterval>
+    let isFetching = false
+    const getServerNow = () => new Date(Date.now() + timeOffsetRef.current)
 
-  useEffect(() => {
-    if (niftyRunning) {
-      void refreshChartData().then(() => {
-        chartRef.current?.timeScale().scrollToRealTime()
-      })
+    const checkAndRefresh = async () => {
+      if (isFetching) return
+      isFetching = true
+      try {
+        const statusData = await fetchNiftyStatus()
+        if (!statusData?.is_running) {
+          clearInterval(pollInterval)
+          return
+        }
+        if (statusData.last_update) {
+          const lastUpdate = new Date(statusData.last_update)
+          const serverNow = getServerNow()
+          if (lastUpdate.getMinutes() === serverNow.getMinutes()) {
+            await refreshChartDataRef.current()
+            setRefreshTrigger((t) => t + 1)
+            clearInterval(pollInterval)
+            scheduleNextMinute()
+          }
+        }
+      } finally {
+        isFetching = false
+      }
     }
-  }, [niftyRunning])
+
+    const scheduleNextMinute = () => {
+      const now = getServerNow()
+      const msToNextMinute = (60 - now.getSeconds()) * 1000 - now.getMilliseconds()
+      timer = setTimeout(() => {
+        pollInterval = setInterval(checkAndRefresh, 1000)
+        checkAndRefresh()
+      }, Math.max(0, msToNextMinute))
+    }
+
+    scheduleNextMinute()
+    return () => { clearTimeout(timer); clearInterval(pollInterval) }
+  }, [fetchNiftyStatus])
 
   useEffect(() => {
     const live = wsData.get('NSE_INDEX:NIFTY')
@@ -2791,7 +2819,7 @@ export default function NiftyChart() {
             </>
           }
           rightPanel={
-            <WidgetBar ezaySignals={<EzaySignals className="h-full" />}>
+            <WidgetBar ezaySignals={<EzaySignals className="h-full" refreshTrigger={refreshTrigger} />}>
               <DrawingListPanel
                 drawingManager={drawingManagerRef.current}
                 selectedDrawingId={selectedDrawingId}

@@ -742,6 +742,7 @@ def nifty_status():
         'is_running': nifty_fetcher.is_running,
         'message': nifty_fetcher.status,
         'last_update': nifty_fetcher.last_update.isoformat() if nifty_fetcher.last_update else None,
+        'server_time': datetime.now().isoformat(),
         'nifty_record_count': get_nifty_data_count(),
         'open_atm_strike': nifty_fetcher.open_atm_strike,
         'current_atm_strike': nifty_fetcher.current_atm_strike,

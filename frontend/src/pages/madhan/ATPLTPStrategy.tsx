@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { 
   AlertTriangle, 
@@ -150,13 +150,51 @@ export default function ATPLTPStrategy() {
     setIsRefreshing(false)
   }, [fetchATPLTPData])
 
+  const timeOffsetRef = useRef(0)
+
   useEffect(() => {
     fetchATPLTPData()
-    
-    // Set up auto-refresh every 30 seconds
-    const interval = setInterval(fetchATPLTPData, 30000)
-    
-    return () => clearInterval(interval)
+
+    let timer: ReturnType<typeof setTimeout>
+    let pollInterval: ReturnType<typeof setInterval>
+    let isFetching = false
+    const getServerNow = () => new Date(Date.now() + timeOffsetRef.current)
+
+    const fetchStatusAndCheck = async () => {
+      if (isFetching) return
+      isFetching = true
+      try {
+        const res = await fetch(`/madhan/api/nifty/status?_=${Date.now()}`)
+        const json = await res.json()
+        if (json?.status === 'success' && json?.server_time) {
+          const serverMs = new Date(json.server_time).getTime()
+          timeOffsetRef.current = serverMs - Date.now()
+        }
+        if (json?.status === 'success' && json?.is_running && json?.last_update) {
+          const lastUpdate = new Date(json.last_update)
+          const serverNow = getServerNow()
+          if (lastUpdate.getMinutes() === serverNow.getMinutes()) {
+            await fetchATPLTPData()
+            clearInterval(pollInterval)
+            scheduleNextMinute()
+          }
+        }
+      } catch {} finally {
+        isFetching = false
+      }
+    }
+
+    const scheduleNextMinute = () => {
+      const now = getServerNow()
+      const msToNextMinute = (60 - now.getSeconds()) * 1000 - now.getMilliseconds()
+      timer = setTimeout(() => {
+        pollInterval = setInterval(fetchStatusAndCheck, 1000)
+        fetchStatusAndCheck()
+      }, Math.max(0, msToNextMinute))
+    }
+
+    scheduleNextMinute()
+    return () => { clearTimeout(timer); clearInterval(pollInterval) }
   }, [fetchATPLTPData])
 
   const formatNumber = (value: number | null | undefined) => {

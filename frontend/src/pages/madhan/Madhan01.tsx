@@ -45,6 +45,7 @@ interface NiftyStatus {
   is_running: boolean
   message: string
   last_update: string | null
+  server_time: string | null
   nifty_record_count: number
   open_atm_strike: number
   current_atm_strike: number
@@ -108,6 +109,9 @@ export default function Madhan01() {
   const [_refreshTrigger, setRefreshTrigger] = useState(0)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const latestStatusRef = useRef<NiftyStatus | null>(null)
+  const timeOffsetRef = useRef(0)
+
+  const getServerNow = useCallback(() => new Date(Date.now() + timeOffsetRef.current), [])
 
   const fetchStatus = useCallback(async () => {
     try {
@@ -125,6 +129,11 @@ export default function Madhan01() {
       const data = await response.json()
       if (data.status === 'success') {
         const statusData = data as NiftyStatus
+        // Re-sync time offset from server_time on every status response
+        if (statusData.server_time) {
+          const serverMs = new Date(statusData.server_time).getTime()
+          timeOffsetRef.current = serverMs - Date.now()
+        }
         setStatus(statusData)
         latestStatusRef.current = statusData
         return statusData
@@ -137,23 +146,6 @@ export default function Madhan01() {
       return null
     }
   }, [])
-
-  useEffect(() => {
-    let intervalId: ReturnType<typeof setInterval>
-    const run = async () => {
-      await fetchStatus()
-    }
-    run()
-
-    const isStopped = (s: NiftyStatus | null) =>
-      !s?.is_running && typeof s?.message === 'string' && s.message.includes('Stopped')
-
-    if (!isStopped(latestStatusRef.current)) {
-      intervalId = setInterval(run, 1000)
-    }
-
-    return () => clearInterval(intervalId)
-  }, [fetchStatus])
 
   const startFetcher = useCallback(async () => {
     try {
@@ -203,10 +195,6 @@ export default function Madhan01() {
     } finally {
       setIsLoading(false)
     }
-  }, [fetchStatus])
-
-  useEffect(() => {
-    // This effect is now managed by the smart loop in the main useEffect
   }, [fetchStatus])
 
 
@@ -276,58 +264,52 @@ export default function Madhan01() {
 
   useEffect(() => {
     let timeoutId: ReturnType<typeof setTimeout>
+    let intervalId: ReturnType<typeof setInterval>
+    let isFetching = false
 
-    const runSmartLoop = async () => {
-        try {
-            const statusData = latestStatusRef.current
-            await fetchPrevDayOi()
-            const lastTs = await fetchLiveData()
-            
-            // Notify chart to refresh
-            setRefreshTrigger(prev => prev + 1)
-
-            // Only schedule next run if is_running is true
-            if (statusData?.is_running) {
-                // Determine next run time (dynamic based on last_update)
-                const now = Date.now()
-                const period = 60000 // 1 min
-                const expectedTs = Math.floor(now / period) * period - period
-
-                let delay = 5000 // default retry
-
-                if (lastTs && lastTs >= expectedTs) {
-                    let nextTarget = Math.floor(now / period) * period + period + 10000
-                    if (statusData?.last_update) {
-                        const lastUpdateMs = Date.parse(statusData.last_update)
-                        if (!Number.isNaN(lastUpdateMs)) {
-                            nextTarget = lastUpdateMs + period + 2000
-                        }
-                    }
-                    delay = Math.max(5000, nextTarget - now)
-                }
-                
-                timeoutId = setTimeout(runSmartLoop, delay)
-            }
-        } catch (e) {
-            // On error, if we think we should be running, retry in 5s
-            // But checking status failed? 
-            // If fetchStatus failed, statusData is null. We stop loop.
-            // But maybe network glitch? 
-            // Let's rely on status state for fallback retry?
-            // If fetchStatus failed, we don't know if running.
-            // Safer to stop or retry? 
-            // Given user request "if false no refresh", safer to stop if we can't confirm true.
-            // But let's check current state as fallback
-            if (status?.is_running) {
-                 timeoutId = setTimeout(runSmartLoop, 5000)
-            }
-        }
+    const scheduleNextMinute = () => {
+      const serverNow = getServerNow()
+      const msToNextMinute = (60 - serverNow.getSeconds()) * 1000 - serverNow.getMilliseconds()
+      timeoutId = setTimeout(startPolling, Math.max(0, msToNextMinute))
     }
 
-    runSmartLoop()
+    const fetchDataAndScheduleNext = async () => {
+      if (intervalId) clearInterval(intervalId)
+      await fetchPrevDayOi()
+      await fetchLiveData()
+      setRefreshTrigger(prev => prev + 1)
+      scheduleNextMinute()
+    }
 
-    return () => clearTimeout(timeoutId)
-  }, [fetchStatus, fetchPrevDayOi, fetchLiveData, status?.is_running])
+    const startPolling = () => {
+      intervalId = setInterval(async () => {
+        if (isFetching) return
+        isFetching = true
+        try {
+          const statusData = await fetchStatus()
+          if (!statusData?.is_running) {
+            clearInterval(intervalId)
+            return
+          }
+          if (statusData.last_update) {
+            const lastUpdate = new Date(statusData.last_update)
+            const serverNow = getServerNow()
+            if (lastUpdate.getMinutes() === serverNow.getMinutes()) {
+              fetchDataAndScheduleNext()
+            }
+          }
+        } finally {
+          isFetching = false
+        }
+      }, 1000)
+    }
+
+    startPolling()
+    return () => {
+      clearTimeout(timeoutId)
+      clearInterval(intervalId)
+    }
+  }, [fetchStatus, fetchPrevDayOi, fetchLiveData, getServerNow])
 
   const buildUnifiedStrikes = (): UnifiedStrikeRow[] => {
     if (!prevDayOi.length) return []

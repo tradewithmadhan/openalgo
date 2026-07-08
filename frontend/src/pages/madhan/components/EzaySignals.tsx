@@ -32,6 +32,7 @@ type EzaySignalsProps = {
   className?: string
   style?: React.CSSProperties
   backtestDate?: string
+  refreshTrigger?: number
   onFirstSignal?: (data: FirstSignalInfo) => void
   onSignals?: (data: BackendSignals) => void
 }
@@ -41,7 +42,7 @@ const formatTime = (ts: number) => {
   return d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' })
 }
 
-export default function EzaySignals({ className, style, backtestDate, onFirstSignal, onSignals }: EzaySignalsProps) {
+export default function EzaySignals({ className, style, backtestDate, refreshTrigger, onFirstSignal, onSignals }: EzaySignalsProps) {
   const { mode: themeMode } = useThemeStore()
   const t = chartTheme[themeMode]
   const [data, setData] = useState<SignalRow[]>([])
@@ -87,9 +88,25 @@ export default function EzaySignals({ className, style, backtestDate, onFirstSig
     fetchData()
     // Disable auto-refresh in backtest mode (historical data doesn't change)
     if (backtestDate) return
-    const iv = setInterval(fetchData, 60_000)
-    return () => clearInterval(iv)
-  }, [fetchData, backtestDate])
+    // When refreshTrigger is provided (from parent EzayChart), rely on it instead of own timer
+    if (refreshTrigger !== undefined) return
+    // Standalone fallback: align to minute boundary
+    let timer: ReturnType<typeof setTimeout>
+    const scheduleNextMinute = () => {
+      const now = new Date()
+      const msToNextMinute = (60 - now.getSeconds()) * 1000 - now.getMilliseconds()
+      timer = setTimeout(() => {
+        fetchData()
+        scheduleNextMinute()
+      }, Math.max(0, msToNextMinute))
+    }
+    scheduleNextMinute()
+    return () => clearTimeout(timer)
+  }, [fetchData, backtestDate, refreshTrigger])
+
+  useEffect(() => {
+    if (refreshTrigger !== undefined && refreshTrigger > 0) fetchData()
+  }, [refreshTrigger, fetchData])
 
   useEffect(() => {
     if (scrollRef.current && data.length > prevDataLenRef.current) {
