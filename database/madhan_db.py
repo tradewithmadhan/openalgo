@@ -143,7 +143,7 @@ def store_nifty_data(df: pd.DataFrame):
         
         session.execute(on_conflict_stmt)
         session.commit()
-        logger.info(f"Upserted {len(records)} Nifty data records.")
+        logger.info(f"Upserted {len(records)} Nifty data records at {datetime.now().strftime('%H:%M:%S')}.")
     except SQLAlchemyError as e:
         session.rollback()
         logger.error(f"Database error during Nifty data upsert: {e}")
@@ -161,22 +161,30 @@ def store_option_data(df: pd.DataFrame):
         if not records:
             return
 
-        stmt = insert(OptionData).values(records)
-        
-        # On conflict (duplicate timestamp and symbol), update the existing row
-        update_dict = {
-            c.name: getattr(stmt.excluded, c.name) 
-            for c in OptionData.__table__.columns 
-            if c.name not in ['id', 'timestamp', 'symbol']
-        }
-        on_conflict_stmt = stmt.on_conflict_do_update(
-            index_elements=['timestamp', 'symbol'],
-            set_=update_dict
-        )
-        
-        session.execute(on_conflict_stmt)
+        # SQLite has a variable limit (~999). With 8 columns, max ~124 rows per batch.
+        BATCH_SIZE = 100
+        total_upserted = 0
+
+        for i in range(0, len(records), BATCH_SIZE):
+            chunk = records[i:i + BATCH_SIZE]
+            stmt = insert(OptionData).values(chunk)
+
+            # On conflict (duplicate timestamp and symbol), update the existing row
+            update_dict = {
+                c.name: getattr(stmt.excluded, c.name) 
+                for c in OptionData.__table__.columns 
+                if c.name not in ['id', 'timestamp', 'symbol']
+            }
+            on_conflict_stmt = stmt.on_conflict_do_update(
+                index_elements=['timestamp', 'symbol'],
+                set_=update_dict
+            )
+
+            session.execute(on_conflict_stmt)
+            total_upserted += len(chunk)
+
         session.commit()
-        logger.info(f"Upserted {len(records)} Option data records.")
+        logger.info(f"Upserted {total_upserted} Option data records at {datetime.now().strftime('%H:%M:%S')}.")
     except SQLAlchemyError as e:
         session.rollback()
         logger.error(f"Database error during Option data upsert: {e}")
@@ -206,7 +214,7 @@ def store_previous_day_oi(data: list):
         
         session.execute(on_conflict_stmt)
         session.commit()
-        logger.info(f"Upserted {len(data)} previous day OI records.")
+        logger.info(f"Upserted {len(data)} previous day OI records at {datetime.now().strftime('%H:%M:%S')}.")
     except SQLAlchemyError as e:
         session.rollback()
         logger.error(f"Database error during previous day OI upsert: {e}")
@@ -219,7 +227,7 @@ def get_tracked_symbols() -> list[str]:
     try:
         results = session.query(TrackedSymbol.symbol).order_by(TrackedSymbol.symbol).all()
         symbols = [r[0] for r in results]
-        logger.info(f"Loaded {len(symbols)} tracked symbols from the database.")
+        logger.debug(f"Loaded {len(symbols)} tracked symbols from the database.")
         return symbols
     except Exception as e:
         logger.error(f"Error fetching tracked symbols: {e}")
@@ -243,7 +251,7 @@ def save_tracked_symbols(symbols: list[str]):
         session.bulk_insert_mappings(TrackedSymbol, records)
         
         session.commit()
-        logger.info(f"Saved {len(symbols)} tracked symbols to the database.")
+        logger.debug(f"Saved {len(symbols)} tracked symbols to the database.")
     except SQLAlchemyError as e:
         session.rollback()
         logger.error(f"Database error during tracked symbols save: {e}")
@@ -287,7 +295,7 @@ def save_fetcher_state(key: str, value: any):
         )
         session.execute(on_conflict_stmt)
         session.commit()
-        logger.info(f"Saved fetcher state: {key} = {value}")
+        logger.debug(f"Saved fetcher state: {key} = {value}")
     except SQLAlchemyError as e:
         session.rollback()
         logger.error(f"Database error saving fetcher state for key {key}: {e}")
@@ -300,9 +308,9 @@ def get_fetcher_state(key: str):
     try:
         result = session.query(FetcherState.value).filter(FetcherState.key == key).scalar()
         if result:
-            logger.info(f"Retrieved fetcher state: {key} = {result}")
+            logger.debug(f"Retrieved fetcher state: {key} = {result}")
         else:
-            logger.info(f"Fetcher state not found for key: {key}")
+            logger.debug(f"Fetcher state not found for key: {key}")
         return result
     except SQLAlchemyError as e:
         logger.error(f"Database error retrieving fetcher state for key {key}: {e}")
