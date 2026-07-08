@@ -82,7 +82,7 @@ export function CePeChangesChart({ refreshTrigger }: CePeChangesChartProps) {
 
     const fetchSpotData = async () => {
         try {
-            const response = await fetch('/madhan/api/nifty/spot-data');
+            const response = await fetch(`/madhan/api/nifty/spot-data?_=${Date.now()}`);
             const json = await response.json();
             if (json.status === 'success') {
                 setSpotData(json.data);

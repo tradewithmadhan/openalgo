@@ -123,7 +123,7 @@ export default function ATPLTPStrategy() {
   const fetchATPLTPData = useCallback(async () => {
     try {
       setError(null)
-      const response = await fetch('/madhan/api/atp-ltp-data', {
+      const response = await fetch(`/madhan/api/atp-ltp-data?_=${Date.now()}`, {
         credentials: 'include',
         headers: { Accept: 'application/json' },
       })

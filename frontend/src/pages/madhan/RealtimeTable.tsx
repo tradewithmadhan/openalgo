@@ -127,7 +127,7 @@ export default function RealtimeTable({ onClose, standalone = false }: Props) {
 
   const loadStrikeSymbols = useCallback(async () => {
     try {
-      const res = await fetch('/madhan/api/strikes')
+      const res = await fetch(`/madhan/api/strikes?_=${Date.now()}`)
       const data = await res.json()
       if (data.status !== 'success') return
 

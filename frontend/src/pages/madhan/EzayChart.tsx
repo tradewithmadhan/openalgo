@@ -1046,7 +1046,7 @@ export default function EzayChart() {
         return
       }
       // Live mode — existing logic
-      const res = await fetch('/madhan/api/strikes')
+      const res = await fetch(`/madhan/api/strikes?_=${Date.now()}`)
       const json = await res.json()
       if (json.status === 'success' && json.data) {
         const sorted = json.data.sort((a: number, b: number) => b - a)

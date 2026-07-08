@@ -112,7 +112,7 @@ export default function Madhan01() {
   const fetchStatus = useCallback(async () => {
     try {
       setError(null)
-      const response = await fetch('/madhan/api/nifty/status', {
+      const response = await fetch(`/madhan/api/nifty/status?_=${Date.now()}`, {
         credentials: 'include',
         headers: { Accept: 'application/json' },
       })
@@ -213,7 +213,7 @@ export default function Madhan01() {
 
   const fetchPrevDayOi = useCallback(async () => {
     try {
-      const response = await fetch('/madhan/api/nifty/previous-day-oi', {
+      const response = await fetch(`/madhan/api/nifty/previous-day-oi?_=${Date.now()}`, {
         credentials: 'include',
         headers: { Accept: 'application/json' },
       })
@@ -231,11 +231,11 @@ export default function Madhan01() {
   const fetchLiveData = useCallback(async (): Promise<number | null> => {
     try {
       const [niftyResponse, optionResponse] = await Promise.all([
-        fetch('/madhan/api/nifty/data', {
+        fetch(`/madhan/api/nifty/data?_=${Date.now()}`, {
           credentials: 'include',
           headers: { Accept: 'application/json' },
         }),
-        fetch('/madhan/api/nifty/option-data', {
+        fetch(`/madhan/api/nifty/option-data?_=${Date.now()}`, {
           credentials: 'include',
           headers: { Accept: 'application/json' },
         }),

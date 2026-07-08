@@ -216,7 +216,7 @@ export function SupportResistanceChart({ refreshTrigger }: SupportResistanceChar
     const fetchData = async () => {
         setIsLoading(true);
         try {
-            const response = await fetch('/madhan/api/nifty/support-resistance');
+            const response = await fetch(`/madhan/api/nifty/support-resistance?_=${Date.now()}`);
             const json = await response.json();
             if (json.status === 'success') {
                 setData(json.data);
@@ -230,7 +230,7 @@ export function SupportResistanceChart({ refreshTrigger }: SupportResistanceChar
 
     const fetchSpotData = async () => {
         try {
-            const response = await fetch('/madhan/api/nifty/spot-data');
+            const response = await fetch(`/madhan/api/nifty/spot-data?_=${Date.now()}`);
             const json = await response.json();
             if (json.status === 'success') {
                 setSpotData(json.data);
