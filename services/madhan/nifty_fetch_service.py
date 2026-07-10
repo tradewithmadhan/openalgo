@@ -232,6 +232,9 @@ class NiftyDataFetcher:
                 logger.warning("No data for today found. Deferring Open ATM calculation until market opens.")
                 self.open_atm_strike = 0
                 save_fetcher_state('open_atm_strike', 0)
+                # Clear stale symbols since we don't know today's ATM yet
+                self.option_symbols = []
+                save_tracked_symbols([])
                 # Still fetch and save expiry date for later symbol generation
                 self._fetch_and_save_expiry()
                 return
@@ -534,23 +537,26 @@ class NiftyDataFetcher:
             return
         
         # 2. Initial options backfill (retry failed symbols until all succeed)
-        self.status = "Performing initial backfill for Options..."
-        logger.info(self.status)
-        
-        failed_symbols = self._fetch_and_store_options_data(start_date_str, end_date_str)
-        
-        retry_attempt = 0
-        max_retries = 10
-        while failed_symbols and retry_attempt < max_retries:
-            retry_attempt += 1
-            logger.warning(f"Retrying {len(failed_symbols)} failed symbols (attempt {retry_attempt}/{max_retries}): {failed_symbols[:5]}...")
-            time.sleep(2)
-            failed_symbols = self._fetch_and_store_options_data(start_date_str, end_date_str, symbols=failed_symbols)
-        
-        if failed_symbols:
-            logger.error(f"Options backfill incomplete after {max_retries} retries. Still missing: {len(failed_symbols)} symbols")
+        if self.option_symbols:
+            self.status = "Performing initial backfill for Options..."
+            logger.info(self.status)
+            
+            failed_symbols = self._fetch_and_store_options_data(start_date_str, end_date_str)
+            
+            retry_attempt = 0
+            max_retries = 10
+            while failed_symbols and retry_attempt < max_retries:
+                retry_attempt += 1
+                logger.warning(f"Retrying {len(failed_symbols)} failed symbols (attempt {retry_attempt}/{max_retries}): {failed_symbols[:5]}...")
+                time.sleep(2)
+                failed_symbols = self._fetch_and_store_options_data(start_date_str, end_date_str, symbols=failed_symbols)
+            
+            if failed_symbols:
+                logger.error(f"Options backfill incomplete after {max_retries} retries. Still missing: {len(failed_symbols)} symbols")
+            else:
+                logger.info("Options backfill complete: all symbols have data.")
         else:
-            logger.info("Options backfill complete: all symbols have data.")
+            logger.info("Skipping options backfill: no symbols available yet (pre-market, ATM not calculated).")
 
         # 3. Calculate previous day's OI
         today, prev_day = get_trading_days()
@@ -637,8 +643,9 @@ class NiftyDataFetcher:
                 else:
                     logger.warning(f"Incremental NIFTY fetch failed: {result_nifty.get('message', 'Unknown error')}")
 
-                # Fetch Options
-                self._fetch_and_store_options_data(today_str, today_str)
+                # Fetch Options (skip if no symbols yet — ATM not calculated in pre-market)
+                if self.option_symbols:
+                    self._fetch_and_store_options_data(today_str, today_str)
                 self.last_update = datetime.now(pytz.timezone('Asia/Kolkata'))
 
             except Exception as e:
