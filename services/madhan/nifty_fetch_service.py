@@ -7,13 +7,14 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from sqlalchemy import func, select
 import pandas as pd
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date as date_type
 import pytz
 from utils.logging import get_logger
 from services.history_service import get_history
 from services.expiry_service import get_expiry_dates
 from database.madhan_db import store_nifty_data, store_option_data, store_previous_day_oi, NiftyData, OptionData, SessionLocal, get_tracked_symbols, save_tracked_symbols, save_fetcher_state, get_fetcher_state,get_valid_trading_day,clear_madhan_db, validate_backfill_consistency
 from database.market_calendar_db import is_market_holiday
+from database.auth_db import get_first_available_api_key
 
 logger = get_logger(__name__)
 
@@ -82,6 +83,11 @@ class NiftyDataFetcher:
         self.trading_date = None
         
         self.request_delay = self._get_request_delay()
+
+        # Start auto-start scheduler (daemon thread sleeps until 9:15 AM IST)
+        scheduler_thread = threading.Thread(target=self._auto_start_scheduler, daemon=True)
+        scheduler_thread.start()
+        logger.info("Auto-start scheduler thread started.")
 
     def _normalize_history_df(self, df: pd.DataFrame) -> pd.DataFrame:
         """
@@ -154,6 +160,47 @@ class NiftyDataFetcher:
         self.is_running = False
         self.status = "Stopped"
         logger.info("Nifty data fetcher stopped.")
+
+    def _auto_start_scheduler(self):
+        """Background thread that auto-starts the fetcher at 9:15 AM IST on trading days."""
+        IST = pytz.timezone('Asia/Kolkata')
+
+        while True:
+            now_ist = datetime.now(IST)
+            target = now_ist.replace(hour=9, minute=15, second=0, microsecond=0)
+
+            if now_ist >= target:
+                target += timedelta(days=1)
+
+            sleep_seconds = (target - now_ist).total_seconds()
+            logger.info(f"Auto-start scheduler: sleeping {sleep_seconds/3600:.1f}h until {target.strftime('%Y-%m-%d %H:%M %Z')}")
+
+            while sleep_seconds > 0:
+                chunk = min(sleep_seconds, 60)
+                time.sleep(chunk)
+                sleep_seconds -= chunk
+
+            today = date_type.today()
+
+            if today.weekday() >= 5:
+                logger.info("Auto-start scheduler: weekend, skipping.")
+                continue
+
+            if is_market_holiday(today, exchange="NSE"):
+                logger.info("Auto-start scheduler: market holiday, skipping.")
+                continue
+
+            if self.is_running:
+                logger.info("Auto-start scheduler: fetcher already running, skipping.")
+                continue
+
+            api_key = get_first_available_api_key()
+            if not api_key:
+                logger.info("Auto-start scheduler: no active session/API key found, skipping.")
+                continue
+
+            logger.info("Auto-start scheduler: starting fetcher.")
+            self.start(api_key)
         
     def get_nifty_live_data(self, interval: str = '1m', days_back: int = 1):
         """
