@@ -12,7 +12,7 @@ import pytz
 from utils.logging import get_logger
 from services.history_service import get_history
 from services.expiry_service import get_expiry_dates
-from database.madhan_db import store_nifty_data, store_option_data, store_previous_day_oi, NiftyData, OptionData, SessionLocal, get_tracked_symbols, save_tracked_symbols, save_fetcher_state, get_fetcher_state,get_valid_trading_day,clear_madhan_db
+from database.madhan_db import store_nifty_data, store_option_data, store_previous_day_oi, NiftyData, OptionData, SessionLocal, get_tracked_symbols, save_tracked_symbols, save_fetcher_state, get_fetcher_state,get_valid_trading_day,clear_madhan_db, validate_backfill_consistency
 from database.market_calendar_db import is_market_holiday
 
 logger = get_logger(__name__)
@@ -555,6 +555,15 @@ class NiftyDataFetcher:
                 logger.error(f"Options backfill incomplete after {max_retries} retries. Still missing: {len(failed_symbols)} symbols")
             else:
                 logger.info("Options backfill complete: all symbols have data.")
+
+            # Validate backfill consistency
+            validation = validate_backfill_consistency(self.option_symbols)
+            if validation["consistent"]:
+                s = validation["summary"]
+                logger.info(f"Backfill validation PASSED: {s['filled']}/{s['total_tracked']} symbols filled, "
+                            f"{s['nifty_records']} NIFTY records, expected_last_ts={s['expected_last_ts']}")
+            else:
+                logger.warning(f"Backfill validation FAILED: {validation['issues']}")
         else:
             logger.info("Skipping options backfill: no symbols available yet (pre-market, ATM not calculated).")
 
@@ -619,10 +628,32 @@ class NiftyDataFetcher:
                             logger.info(f"Computed Open ATM from first candle: {self.open_atm_strike}")
                             # Generate option symbols now that ATM is known
                             self._generate_option_symbols()
-                            # Backfill historical option data for past 7 days
+                            # Backfill historical option data for past 7 days (retry until all succeed)
                             backfill_start = (now - timedelta(days=7)).strftime('%Y-%m-%d')
                             logger.info(f"Backfilling option data from {backfill_start} to {today_str}")
-                            self._fetch_and_store_options_data(backfill_start, today_str)
+                            failed_symbols = self._fetch_and_store_options_data(backfill_start, today_str)
+                            
+                            retry_attempt = 0
+                            max_retries = 10
+                            while failed_symbols and retry_attempt < max_retries:
+                                retry_attempt += 1
+                                logger.warning(f"Backfill retry: {len(failed_symbols)} failed symbols (attempt {retry_attempt}/{max_retries}): {failed_symbols[:5]}...")
+                                time.sleep(2)
+                                failed_symbols = self._fetch_and_store_options_data(backfill_start, today_str, symbols=failed_symbols)
+                            
+                            if failed_symbols:
+                                logger.error(f"Backfill incomplete after {max_retries} retries. Still missing: {len(failed_symbols)} symbols")
+                            else:
+                                logger.info("Backfill complete: all historical option data fetched.")
+
+                            # Validate backfill consistency
+                            validation = validate_backfill_consistency(self.option_symbols)
+                            if validation["consistent"]:
+                                s = validation["summary"]
+                                logger.info(f"Backfill validation PASSED: {s['filled']}/{s['total_tracked']} symbols filled, "
+                                            f"{s['nifty_records']} NIFTY records, expected_last_ts={s['expected_last_ts']}")
+                            else:
+                                logger.warning(f"Backfill validation FAILED: {validation['issues']}")
 
                         # Check for market close condition to stop the fetcher for the day
                         market_close_time = now.replace(hour=15, minute=30, second=0, microsecond=0)

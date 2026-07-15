@@ -548,6 +548,82 @@ def get_nifty_data_count():
     finally:
         session.close()
 
+def validate_backfill_consistency(tracked_symbols: list) -> dict:
+    """
+    Validates that all tracked symbols + NIFTY have the same last timestamp.
+    Returns a dict with validation results.
+    """
+    session = SessionLocal()
+    try:
+        result = {"nifty": {}, "options": {}, "consistent": True, "issues": []}
+
+        # Check NIFTY last timestamp
+        nifty_last = session.query(func.max(NiftyData.timestamp)).scalar()
+        if nifty_last:
+            nifty_count = session.query(func.count(NiftyData.timestamp)).scalar()
+            result["nifty"] = {"last_ts": nifty_last, "records": nifty_count}
+        else:
+            result["nifty"] = {"last_ts": None, "records": 0}
+            result["consistent"] = False
+            result["issues"].append("NIFTY has no data")
+
+        # Check each tracked symbol's last timestamp and record count
+        if tracked_symbols:
+            for symbol in tracked_symbols:
+                sym_last = session.query(func.max(OptionData.timestamp)).filter(
+                    OptionData.symbol == symbol
+                ).scalar()
+                sym_count = session.query(func.count(OptionData.id)).filter(
+                    OptionData.symbol == symbol
+                ).scalar()
+                result["options"][symbol] = {"last_ts": sym_last, "records": sym_count or 0}
+
+            # Find the most common last timestamp among options
+            option_timestamps = [v["last_ts"] for v in result["options"].values() if v["last_ts"]]
+            if option_timestamps:
+                from collections import Counter
+                ts_counts = Counter(option_timestamps)
+                most_common_ts, most_common_count = ts_counts.most_common(1)[0]
+                result["expected_last_ts"] = most_common_ts
+
+                # Check for mismatches
+                mismatched = []
+                empty_symbols = []
+                for symbol, data in result["options"].items():
+                    if data["last_ts"] is None:
+                        empty_symbols.append(symbol)
+                    elif data["last_ts"] != most_common_ts:
+                        mismatched.append(symbol)
+
+                if empty_symbols:
+                    result["consistent"] = False
+                    result["issues"].append(f"{len(empty_symbols)} symbols with no data: {empty_symbols[:5]}...")
+                if mismatched:
+                    result["consistent"] = False
+                    result["issues"].append(f"{len(mismatched)} symbols with mismatched last_ts (expected {most_common_ts}): {mismatched[:5]}...")
+            else:
+                result["consistent"] = False
+                result["issues"].append("No option symbols have data")
+
+        # Summary
+        total_options = len(tracked_symbols) if tracked_symbols else 0
+        filled_options = sum(1 for v in result["options"].values() if v["last_ts"])
+        result["summary"] = {
+            "total_tracked": total_options,
+            "filled": filled_options,
+            "missing": total_options - filled_options,
+            "nifty_records": result["nifty"]["records"],
+            "expected_last_ts": result.get("expected_last_ts"),
+        }
+
+        return result
+    except Exception as e:
+        logger.error(f"Error validating backfill consistency: {e}")
+        return {"consistent": False, "issues": [str(e)]}
+    finally:
+        session.close()
+
+
 def get_nth_candle_oi_for_all_symbols(n: int):
     """
     For the current day, gets the OI of the Nth candle for all tracked symbols.
