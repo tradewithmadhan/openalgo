@@ -304,6 +304,10 @@ export default function Madhan01() {
       }, 1000)
     }
 
+    // Immediate fetch on mount so data loads right away
+    fetchPrevDayOi()
+    fetchLiveData()
+
     startPolling()
     return () => {
       clearTimeout(timeoutId)
