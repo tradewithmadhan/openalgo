@@ -87,6 +87,8 @@ type SignalRow = {
   pe_signal: boolean
   cp_signal: 'CE' | 'PE' | false
   cp_ce_signal: boolean
+  th_signal: 'CE' | 'PE' | 'dot' | false
+  th_dir: 'CE' | 'PE' | false
   ce_close: number
   pe_close: number
 }
@@ -183,11 +185,14 @@ export default function NiftyChart() {
   const timeOffsetRef = useRef(0)
   const [cePeSignalsActive, setCePeSignalsActive] = useState(false)
   const [cpSignalsActive, setCpSignalsActive] = useState(false)
+  const [thSignalsActive, setThSignalsActive] = useState(false)
   const [refreshTrigger, setRefreshTrigger] = useState(0)
   const cePeSignalsActiveRef = useRef(false)
   const cpSignalsActiveRef = useRef(false)
+  const thSignalsActiveRef = useRef(false)
   const cePeMarkersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null)
   const cpMarkersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null)
+  const thMarkersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null)
   const rawSignalDataRef = useRef<SignalRow[]>([])
   const [oiX, setOiX] = useState(100)
   const [coiX, setCoiX] = useState(80)
@@ -391,6 +396,7 @@ export default function NiftyChart() {
     prevCloseRef.current = prevClose
     cePeMarkersRef.current = createSeriesMarkers(candle, [])
     cpMarkersRef.current = createSeriesMarkers(candle, [])
+    thMarkersRef.current = createSeriesMarkers(candle, [])
     setChartReady(true)
     const drawingManager = new DrawingManager()
     drawingManager.attach(chart, candle, chartContainerRef.current)
@@ -605,6 +611,7 @@ export default function NiftyChart() {
       coiTrendDataRef.current = null
       cePeMarkersRef.current = null
       cpMarkersRef.current = null
+      thMarkersRef.current = null
       rawSignalDataRef.current = []
       chart.remove()
       chartRef.current = null
@@ -1649,7 +1656,7 @@ export default function NiftyChart() {
       const [y, m, d] = istDateKey(ts).split('-').map(Number)
       return Math.floor(Date.UTC(y, m - 1, d) / 1000) - IST_OFFSET_SEC
     }
-    const bucketMap = new Map<number, { ce: boolean; pe: boolean; cp: 'CE' | 'PE' | false; cpCe: boolean; ts: number }>()
+    const bucketMap = new Map<number, { ce: boolean; pe: boolean; cp: 'CE' | 'PE' | false; cpCe: boolean; th: 'CE' | 'PE' | 'dot' | false; thDir: 'CE' | 'PE' | false; ts: number }>()
     for (const sig of signals) {
       const midnight = istMidnightTs(sig.time)
       const offset = sig.time - midnight
@@ -1657,18 +1664,19 @@ export default function NiftyChart() {
       const bucket = midnight + bucketOffset
       const existing = bucketMap.get(bucket)
       if (!existing) {
-        bucketMap.set(bucket, { ce: sig.ce_signal, pe: sig.pe_signal, cp: sig.cp_signal, cpCe: sig.cp_ce_signal, ts: sig.time })
+        bucketMap.set(bucket, { ce: sig.ce_signal, pe: sig.pe_signal, cp: sig.cp_signal, cpCe: sig.cp_ce_signal, th: sig.th_signal || false, thDir: sig.th_dir || false, ts: sig.time })
       } else {
         existing.ts = sig.time
         if (sig.ce_signal) { existing.ce = true; existing.pe = false }
         if (sig.pe_signal) { existing.pe = true; existing.ce = false }
         if (sig.cp_signal) existing.cp = sig.cp_signal
         if (sig.cp_ce_signal) existing.cpCe = true
+        if (sig.th_signal) { existing.th = sig.th_signal; existing.thDir = sig.th_dir }
       }
     }
     return Array.from(bucketMap.entries()).map(([, v]) => ({
       time: v.ts, strike: 0, ce_signal: v.ce, pe_signal: v.pe,
-      cp_signal: v.cp, cp_ce_signal: v.cpCe, ce_close: 0, pe_close: 0,
+      cp_signal: v.cp, cp_ce_signal: v.cpCe, th_signal: v.th, th_dir: v.thDir, ce_close: 0, pe_close: 0,
     })).sort((a, b) => a.time - b.time)
   }
 
@@ -1677,7 +1685,7 @@ export default function NiftyChart() {
     if (!candleSeries) return
     const agg = aggregateSignals(rawSignalDataRef.current, interval)
     const candles = priceDataRef.current
-    if (!candles.length) { cePeMarkersRef.current?.setMarkers([]); cpMarkersRef.current?.setMarkers([]); return }
+    if (!candles.length) { cePeMarkersRef.current?.setMarkers([]); cpMarkersRef.current?.setMarkers([]); thMarkersRef.current?.setMarkers([]); return }
 
     const candleTimes = new Set(candles.map((c) => c.time))
     const snapToCandle = (sigTime: number): number | null => {
@@ -1718,6 +1726,44 @@ export default function NiftyChart() {
         })
       : []
     cpMarkersRef.current?.setMarkers(cpMarkers)
+
+    const thMarkers = thSignalsActiveRef.current
+      ? (() => {
+          let lastWasDot = false
+          const filteredTh = agg.filter((s) => {
+            if (!s.th_signal) return false
+            if (s.th_signal === 'dot') {
+              if (lastWasDot) return false
+              lastWasDot = true
+              return true
+            }
+            lastWasDot = false
+            return true
+          })
+          return filteredTh.flatMap((s) => {
+            const snapped = snapToCandle(s.time)
+            if (snapped === null) return []
+            if (s.th_signal === 'dot') {
+              const candle = candles.find((c) => c.time === snapped)
+              const isPositive = candle && candle.close >= candle.open
+              return [{
+                time: snapped as Time,
+                position: (isPositive ? 'aboveBar' : 'belowBar') as 'aboveBar' | 'belowBar',
+                color: '#9C27B0',
+                shape: 'circle' as 'circle',
+              }]
+            }
+            return [{
+              time: snapped as Time,
+              position: (s.th_signal === 'CE' ? 'belowBar' : 'aboveBar') as 'aboveBar' | 'belowBar',
+              color: s.th_signal === 'CE' ? '#00C851' : '#FF4444',
+              shape: 'circle' as 'circle',
+              text: s.th_signal as string,
+            }]
+          })
+        })()
+      : []
+    thMarkersRef.current?.setMarkers(thMarkers)
   }
 
   const fetchSignalData = async () => {
@@ -1844,8 +1890,9 @@ export default function NiftyChart() {
   useEffect(() => {
     cePeSignalsActiveRef.current = cePeSignalsActive
     cpSignalsActiveRef.current = cpSignalsActive
+    thSignalsActiveRef.current = thSignalsActive
     updateSignalMarkers()
-  }, [cePeSignalsActive, cpSignalsActive])
+  }, [cePeSignalsActive, cpSignalsActive, thSignalsActive])
 
   const fetchNiftyStatus = useCallback(async () => {
     try {
@@ -2774,6 +2821,7 @@ export default function NiftyChart() {
           <Button variant={writersViewActive ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={toggleWritersView}>Writers View</Button>
           <Button variant={cePeSignalsActive ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={() => setCePeSignalsActive((p) => !p)}>CE/PE</Button>
           <Button variant={cpSignalsActive ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={() => setCpSignalsActive((p) => !p)}>CP</Button>
+          <Button variant={thSignalsActive ? 'default' : 'outline'} size="sm" className={cn('h-7 px-2 text-[11px]', thSignalsActive && 'bg-purple-600 text-white hover:bg-purple-700')} onClick={() => setThSignalsActive((p) => !p)}>TH</Button>
           <div className="flex items-center gap-1.5 ml-auto">
             {niftyStatus && (
               <div className="flex items-center gap-1" title={niftyStatus}>
