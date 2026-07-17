@@ -1488,11 +1488,12 @@ export default function NiftyChart() {
     const timestamps: number[] = json.data.timestamps || []
     const ce: number[] = json.data.ce_changes || []
     const pe: number[] = json.data.pe_changes || []
+    const volSpike: boolean[] = json.data.vol_spike || []
 
     // Source is 1-min; aggregate by selected timeframe. For sub-minute intervals, keep 1-min buckets.
     const requestedBucketSec = getIntervalSeconds(interval)
     const bucketSec = Math.max(60, requestedBucketSec)
-    const bucketMap = new Map<number, number>()
+    const bucketMap = new Map<number, { value: number; spike: boolean }>()
 
     for (let i = 0; i < timestamps.length; i++) {
       const rawTs = Number(timestamps[i] || 0)
@@ -1500,15 +1501,21 @@ export default function NiftyChart() {
       const tsSec = rawTs > 1e10 ? Math.floor(rawTs / 1000) : Math.floor(rawTs)
       const bucket = Math.floor(tsSec / bucketSec) * bucketSec
       const combined = Math.abs(Number(ce[i] || 0)) + Math.abs(Number(pe[i] || 0))
-      bucketMap.set(bucket, (bucketMap.get(bucket) || 0) + combined)
+      const existing = bucketMap.get(bucket)
+      if (existing) {
+        existing.value += combined
+        existing.spike = existing.spike || !!volSpike[i]
+      } else {
+        bucketMap.set(bucket, { value: combined, spike: !!volSpike[i] })
+      }
     }
 
     const aggregated = Array.from(bucketMap.entries())
       .sort((a, b) => a[0] - b[0])
-      .map(([time, value]) => ({
+      .map(([time, { value, spike }]) => ({
         time: time as any,
         value,
-        color: 'rgba(59, 130, 246, 1)',
+        color: spike ? 'rgba(249, 115, 22, 1)' : 'rgba(59, 130, 246, 1)',
       }))
 
     optionVolumeRef.current.setData(aggregated as any)
