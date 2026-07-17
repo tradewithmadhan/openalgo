@@ -622,7 +622,7 @@ export default function Madhan01() {
       <TabsList className="grid w-full grid-cols-2 md:grid-cols-8">
         <TabsTrigger value="dash">Dash</TabsTrigger>
         <TabsTrigger value="unified-oi-chain">Unified OI Chain</TabsTrigger>
-        <TabsTrigger value="ce-pe-analysis">CE/PE Analysis</TabsTrigger>
+        <TabsTrigger value="ce-pe-analysis">CE/PE OI</TabsTrigger>
         <TabsTrigger value="ce-pe-volume-analysis">CE/PE Volume</TabsTrigger>
         <TabsTrigger value="coi-trend">COI Trend</TabsTrigger>
         <TabsTrigger value="multi-options">Multi-Options</TabsTrigger>
