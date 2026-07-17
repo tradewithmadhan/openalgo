@@ -10,6 +10,8 @@ export type SignalRow = {
   pe_signal: boolean
   cp_signal: 'CE' | 'PE' | false
   cp_ce_signal: boolean
+  th_signal: 'CE' | 'PE' | 'dot' | false
+  th_dir: 'CE' | 'PE' | false
   ce_close: number
   pe_close: number
 }
@@ -25,6 +27,7 @@ export type BackendSignals = {
   ce_pe_hc: FirstSignalInfo
   cp: { time: number; strike: number }
   cp_open: { time: number; strike: number }
+  th: { time: number; type: 'CE' | 'PE' | ''; strike: number }
   ir: number[]
 }
 
@@ -46,7 +49,7 @@ export default function EzaySignals({ className, style, backtestDate, refreshTri
   const { mode: themeMode } = useThemeStore()
   const t = chartTheme[themeMode]
   const [data, setData] = useState<SignalRow[]>([])
-  const [signals, setSignals] = useState<BackendSignals>({ ce_pe: { time: 0, type: '', strike: 0 }, ce_pe_hc: { time: 0, type: '', strike: 0 }, cp: { time: 0, strike: 0 }, cp_open: { time: 0, strike: 0 }, ir: [] })
+  const [signals, setSignals] = useState<BackendSignals>({ ce_pe: { time: 0, type: '', strike: 0 }, ce_pe_hc: { time: 0, type: '', strike: 0 }, cp: { time: 0, strike: 0 }, cp_open: { time: 0, strike: 0 }, th: { time: 0, type: '', strike: 0 }, ir: [] })
   const [lastTime, setLastTime] = useState<number>(0)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -54,6 +57,7 @@ export default function EzaySignals({ className, style, backtestDate, refreshTri
   const [peFilter, setPeFilter] = useState(false)
   const [cpFilter, setCpFilter] = useState(false)
   const [hcFilter, setHcFilter] = useState(false)
+  const [thFilter, setThFilter] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
   const prevDataLenRef = useRef(0)
 
@@ -62,7 +66,7 @@ export default function EzaySignals({ className, style, backtestDate, refreshTri
       setLoading(true)
       setError('')
       setData([])
-      setSignals({ ce_pe: { time: 0, type: '', strike: 0 }, ce_pe_hc: { time: 0, type: '', strike: 0 }, cp: { time: 0, strike: 0 }, cp_open: { time: 0, strike: 0 }, ir: [] })
+      setSignals({ ce_pe: { time: 0, type: '', strike: 0 }, ce_pe_hc: { time: 0, type: '', strike: 0 }, cp: { time: 0, strike: 0 }, cp_open: { time: 0, strike: 0 }, th: { time: 0, type: '', strike: 0 }, ir: [] })
       setLastTime(0)
       // Use backtest endpoint when backtestDate is provided
       const url = backtestDate
@@ -115,21 +119,19 @@ export default function EzaySignals({ className, style, backtestDate, refreshTri
     prevDataLenRef.current = data.length
   }, [data])
 
-  const hasAnyFilter = ceFilter || peFilter || cpFilter || hcFilter
+  const hasAnyFilter = ceFilter || peFilter || cpFilter || hcFilter || thFilter
 
   const filtered = data.filter((row) => {
-    // Signal type filters (OR logic) — HC alone doesn't select signal types
-    const typeActive = ceFilter || peFilter || cpFilter
+    const typeActive = ceFilter || peFilter || cpFilter || thFilter
     const signalMatch = !hasAnyFilter ||
       (ceFilter && row.ce_signal) ||
       (peFilter && row.pe_signal) ||
-      (cpFilter && row.cp_signal)
+      (cpFilter && row.cp_signal) ||
+      (thFilter && row.th_signal)
     if (!signalMatch) return false
-    // HC filter: only applies when signal type filters are also active
     if (hcFilter && typeActive) {
       if (row.ce_signal && !(row.ce_close > row.pe_close)) return false
       if (row.pe_signal && !(row.pe_close > row.ce_close)) return false
-      // CP passes through (no close filter needed)
     }
     return true
   })
@@ -191,9 +193,15 @@ export default function EzaySignals({ className, style, backtestDate, refreshTri
             style={hcFilter ? {} : { color: t.textSecondary }}
             title="Higher Close: CE signal only if CE>PE, PE signal only if PE>CE"
           >HC</button>
+          <button
+            onClick={() => setThFilter(!thFilter)}
+            className={cn('px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors', thFilter ? 'bg-purple-600 text-white' : 'hover:bg-gray-600')}
+            style={thFilter ? {} : { color: t.textSecondary }}
+            title="Touch: CE and PE candle OHLC ranges overlap"
+          >TH</button>
           {hasAnyFilter && (
             <button
-              onClick={() => { setCeFilter(false); setPeFilter(false); setCpFilter(false); setHcFilter(false) }}
+              onClick={() => { setCeFilter(false); setPeFilter(false); setCpFilter(false); setHcFilter(false); setThFilter(false) }}
               className="px-1 py-0.5 rounded text-[10px] hover:bg-gray-600"
               style={{ color: t.textMuted }}
             >Clear</button>
@@ -201,13 +209,14 @@ export default function EzaySignals({ className, style, backtestDate, refreshTri
         </div>
       </div>
 
-      <div className="shrink-0 grid grid-cols-[50px_50px_1fr_1fr_1fr_1fr] gap-0 text-[9px] font-semibold uppercase px-2 py-1" style={{ color: t.textMuted, borderBottom: `1px solid ${t.border}` }}>
+      <div className="shrink-0 grid grid-cols-[50px_50px_1fr_1fr_1fr_1fr_1fr] gap-0 text-[9px] font-semibold uppercase px-2 py-1" style={{ color: t.textMuted, borderBottom: `1px solid ${t.border}` }}>
         <span>Time</span>
         <span className="text-right">Strike</span>
         <span className="text-center">CE</span>
         <span className="text-center">PE</span>
         <span className="text-center">CP</span>
         <span className="text-center">CP_CE</span>
+        <span className="text-center">TH</span>
       </div>
 
       <div ref={scrollRef} className="flex-1 overflow-y-auto min-h-0" style={{ scrollbarWidth: 'thin' }}>
@@ -229,6 +238,7 @@ export default function EzaySignals({ className, style, backtestDate, refreshTri
               {rows.map((row, idx) => {
                 const isFirstSignal = row.time === signals.ce_pe_hc.time && row.strike === signals.ce_pe_hc.strike && !!signals.ce_pe_hc.type
                 const isFirstCp = !!row.cp_signal && row.time === signals.cp_open.time && row.strike === signals.cp_open.strike
+                const isFirstTh = !!row.th_signal && row.th_signal !== 'dot' && row.time === signals.th.time && row.strike === signals.th.strike
                 const strikeBg = row.ce_signal ? 'rgba(0,200,81,0.2)'
                   : row.pe_signal ? 'rgba(255,68,68,0.2)'
                   : row.cp_signal === 'CE' ? 'rgba(0,200,81,0.4)'
@@ -236,9 +246,10 @@ export default function EzaySignals({ className, style, backtestDate, refreshTri
                   : undefined
                 const rowBg = isFirstSignal ? (signals.ce_pe_hc.type === 'CE' ? 'rgba(0,200,81,0.25)' : 'rgba(255,68,68,0.25)')
                   : isFirstCp ? 'rgba(255,214,0,0.2)'
+                  : isFirstTh ? 'rgba(156,39,176,0.25)'
                   : undefined
                 return (
-                  <div key={row.strike} className="grid grid-cols-[50px_50px_1fr_1fr_1fr_1fr] gap-0 px-2 py-0.5 items-center" style={{ borderTop: idx === 0 ? `1px solid ${t.border}` : undefined, backgroundColor: rowBg }}>
+                  <div key={row.strike} className="grid grid-cols-[50px_50px_1fr_1fr_1fr_1fr_1fr] gap-0 px-2 py-0.5 items-center" style={{ borderTop: idx === 0 ? `1px solid ${t.border}` : undefined, backgroundColor: rowBg }}>
                     {idx === 0 ? <span className="text-[11px] font-mono font-bold" style={{ color: t.text }}>{formatTime(ts)}</span> : <span />}
                     <span className="text-[11px] font-mono font-bold text-right px-1 py-0 rounded" style={{ color: t.text, backgroundColor: strikeBg }}>{row.strike}</span>
                     <div className="flex justify-center">{signalDot(row.ce_signal, '#00C851')}</div>
@@ -249,6 +260,13 @@ export default function EzaySignals({ className, style, backtestDate, refreshTri
                       ) : signalDot(false, '#FFD600')}
                     </div>
                     <div className="flex justify-center">{signalDot(row.cp_ce_signal, '#2196f3')}</div>
+                    <div className="flex justify-center">
+                      {row.th_signal === 'dot' ? (
+                        signalDot(true, row.th_dir === 'CE' ? '#00C851' : '#FF4444')
+                      ) : row.th_signal ? (
+                        <span className="text-[9px] font-bold" style={{ color: row.th_signal === 'CE' ? '#00C851' : '#FF4444' }}>{row.th_signal}</span>
+                      ) : signalDot(false, '#9C27B0')}
+                    </div>
                   </div>
                 )
               })}

@@ -1570,6 +1570,7 @@ def get_backtest_signals(date_str: str) -> dict | None:
                     'open': item['open'],
                     'close': item['close'],
                     'low': item['low'],
+                    'high': item['high'],
                     'extrinsic': round(extrinsic, 2),
                     'signal': extrinsic_signal,
                 })
@@ -1584,6 +1585,7 @@ def get_backtest_signals(date_str: str) -> dict | None:
 
         prev_cp_signal = False
         prev_cp_ce_sig = False
+        th_prev_touch = False
 
         for i, ts in enumerate(common_ts):
             ce_item = ce_dict[ts]
@@ -1627,7 +1629,30 @@ def get_backtest_signals(date_str: str) -> dict | None:
                     cp_ce_signal = True
             prev_cp_ce_sig = cp_ce_signal
 
-            if ce_item['signal'] or pe_item['signal'] or cp_signal or cp_ce_signal:
+            # TH (Touch) signal — CE and PE candle OHLC ranges overlap
+            th_signal = False
+            th_dir = False
+            ce_high = ce_item.get('high', ce_item['close'])
+            pe_high = pe_item.get('high', pe_item['close'])
+            is_touch = (ce_high is not None and pe_high is not None and
+                        ce_high >= pe_item['low'] and pe_high >= ce_item['low'])
+            if is_touch:
+                if ce_item['close'] > pe_item['close']:
+                    th_dir = 'CE'
+                else:
+                    th_dir = 'PE'
+                if not th_prev_touch:
+                    th_signal = 'dot'
+            elif th_prev_touch:
+                if ce_item['close'] > pe_item['close']:
+                    th_signal = 'CE'
+                    th_dir = 'CE'
+                else:
+                    th_signal = 'PE'
+                    th_dir = 'PE'
+            th_prev_touch = is_touch
+
+            if ce_item['signal'] or pe_item['signal'] or cp_signal or cp_ce_signal or th_signal:
                 all_signals.append({
                     'time': ts,
                     'strike': strike_price,
@@ -1635,6 +1660,8 @@ def get_backtest_signals(date_str: str) -> dict | None:
                     'pe_signal': pe_item['signal'],
                     'cp_signal': cp_signal,
                     'cp_ce_signal': cp_ce_signal,
+                    'th_signal': th_signal,
+                    'th_dir': th_dir,
                     'ce_close': ce_item['close'],
                     'pe_close': pe_item['close'],
                 })
@@ -1647,6 +1674,7 @@ def get_backtest_signals(date_str: str) -> dict | None:
         'ce_pe_hc': {'time': 0, 'type': '', 'strike': 0},
         'cp': {'time': 0, 'strike': 0},
         'cp_open': {'time': 0, 'strike': 0},
+        'th': {'time': 0, 'type': '', 'strike': 0},
         'ir': [],
     }
 
@@ -1676,6 +1704,8 @@ def get_backtest_signals(date_str: str) -> dict | None:
             if fc and (fc['ce_open'] < fc['combined_ext'] and fc['ce_close'] < fc['combined_ext'] and
                        fc['pe_open'] < fc['combined_ext'] and fc['pe_close'] < fc['combined_ext']):
                 signals['cp_open'] = {'time': row['time'], 'strike': row['strike']}
+        if signals['th']['time'] == 0 and row.get('th_signal') and row['th_signal'] != 'dot':
+            signals['th'] = {'time': row['time'], 'type': row.get('th_dir', ''), 'strike': row['strike']}
 
     return {'status': 'success', 'last_time': last_data_time, 'data': all_signals, 'signals': signals}
 
