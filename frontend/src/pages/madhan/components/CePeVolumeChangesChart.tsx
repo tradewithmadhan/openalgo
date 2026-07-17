@@ -39,6 +39,7 @@ interface CePeVolumeChangesData {
   timestamps: number[];
   ce_changes: number[];
   pe_changes: number[];
+  vol_spike: boolean[];
 }
 
 interface SpotData {
@@ -107,6 +108,7 @@ export function CePeVolumeChangesChart({ refreshTrigger }: CePeVolumeChangesChar
     const ceData: (number | null)[] = [];
     const peData: (number | null)[] = [];
     const combinedData: (number | null)[] = [];
+    const spikeFlags: boolean[] = [];
 
     let interval = 3 * 60 * 1000;
     if (data.timestamps.length >= 2) {
@@ -118,11 +120,12 @@ export function CePeVolumeChangesChart({ refreshTrigger }: CePeVolumeChangesChar
     endTime.setHours(15, 30, 0, 0);
     const endTimestamp = endTime.getTime();
 
-    const dataMap = new Map<number, { ce: number, pe: number }>();
+    const dataMap = new Map<number, { ce: number, pe: number, spike: boolean }>();
     data.timestamps.forEach((ts, idx) => {
       dataMap.set(ts, {
         ce: data.ce_changes[idx],
-        pe: data.pe_changes[idx]
+        pe: data.pe_changes[idx],
+        spike: data.vol_spike?.[idx] || false
       });
     });
 
@@ -136,15 +139,18 @@ export function CePeVolumeChangesChart({ refreshTrigger }: CePeVolumeChangesChar
           ceData.push(null);
           peData.push(null);
           combinedData.push(null);
+          spikeFlags.push(false);
         } else {
           ceData.push(entry.ce);
           peData.push(-Math.abs(entry.pe));
           combinedData.push(Math.abs(entry.ce) + Math.abs(entry.pe));
+          spikeFlags.push(entry.spike);
         }
       } else {
         ceData.push(null);
         peData.push(null);
         combinedData.push(null);
+        spikeFlags.push(false);
       }
       index += 1;
       currentTime += interval;
@@ -157,9 +163,13 @@ export function CePeVolumeChangesChart({ refreshTrigger }: CePeVolumeChangesChar
               type: 'bar' as const,
               label: 'Combined Volume (CE + PE)',
               data: combinedData,
-              backgroundColor: 'rgba(59, 130, 246, 1)',
-              borderColor: 'rgba(59, 130, 246, 1)',
-              borderWidth: 0,
+              backgroundColor: combinedData.map((_, i) =>
+                spikeFlags[i] ? 'rgba(255, 152, 0, 1)' : 'rgba(59, 130, 246, 1)'
+              ),
+              borderColor: combinedData.map((_, i) =>
+                spikeFlags[i] ? 'rgba(255, 87, 34, 1)' : 'rgba(59, 130, 246, 1)'
+              ),
+              borderWidth: combinedData.map((_, i) => spikeFlags[i] ? 2 : 0),
               barThickness: 'flex',
               maxBarThickness: 60,
               categoryPercentage: 1.0,
@@ -172,9 +182,13 @@ export function CePeVolumeChangesChart({ refreshTrigger }: CePeVolumeChangesChar
               type: 'bar' as const,
               label: 'CE Volume',
               data: ceData,
-              backgroundColor: 'rgba(16, 185, 129, 0.5)',
-              borderColor: 'rgba(16, 185, 129, 0.9)',
-              borderWidth: 1,
+              backgroundColor: ceData.map((_, i) =>
+                spikeFlags[i] ? 'rgba(255, 152, 0, 0.7)' : 'rgba(16, 185, 129, 0.5)'
+              ),
+              borderColor: ceData.map((_, i) =>
+                spikeFlags[i] ? 'rgba(255, 87, 34, 1)' : 'rgba(16, 185, 129, 0.9)'
+              ),
+              borderWidth: ceData.map((_, i) => spikeFlags[i] ? 2 : 1),
               barThickness: 'flex',
               maxBarThickness: 60,
               categoryPercentage: 1.0,
@@ -185,9 +199,13 @@ export function CePeVolumeChangesChart({ refreshTrigger }: CePeVolumeChangesChar
               type: 'bar' as const,
               label: 'PE Volume',
               data: peData,
-              backgroundColor: 'rgba(239, 68, 68, 0.5)',
-              borderColor: 'rgba(239, 68, 68, 0.9)',
-              borderWidth: 1,
+              backgroundColor: peData.map((_, i) =>
+                spikeFlags[i] ? 'rgba(255, 152, 0, 0.7)' : 'rgba(239, 68, 68, 0.5)'
+              ),
+              borderColor: peData.map((_, i) =>
+                spikeFlags[i] ? 'rgba(255, 87, 34, 1)' : 'rgba(239, 68, 68, 0.9)'
+              ),
+              borderWidth: peData.map((_, i) => spikeFlags[i] ? 2 : 1),
               barThickness: 'flex',
               maxBarThickness: 60,
               categoryPercentage: 1.0,
