@@ -192,7 +192,8 @@ export default function NiftyChart() {
   const thSignalsActiveRef = useRef(false)
   const cePeMarkersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null)
   const cpMarkersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null)
-  const thMarkersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null)
+  const thExtMarkerRef = useRef<ExtendedMarkerPrimitive | null>(null)
+  const thAnchorSeriesRef = useRef<ISeriesApi<'Line'> | null>(null)
   const rawSignalDataRef = useRef<SignalRow[]>([])
   const [oiX, setOiX] = useState(100)
   const [coiX, setCoiX] = useState(80)
@@ -396,7 +397,15 @@ export default function NiftyChart() {
     prevCloseRef.current = prevClose
     cePeMarkersRef.current = createSeriesMarkers(candle, [])
     cpMarkersRef.current = createSeriesMarkers(candle, [])
-    thMarkersRef.current = createSeriesMarkers(candle, [])
+    const thAnchor = chart.addSeries(LineSeries, {
+      color: 'transparent', lineVisible: false, lastValueVisible: false,
+      priceLineVisible: false, crosshairMarkerVisible: false,
+    })
+    thAnchor.setData([])
+    const thExtMarker = new ExtendedMarkerPrimitive(thAnchor, chart.timeScale())
+    try { thAnchor.attachPrimitive(thExtMarker as any) } catch {}
+    thAnchorSeriesRef.current = thAnchor
+    thExtMarkerRef.current = thExtMarker
     setChartReady(true)
     const drawingManager = new DrawingManager()
     drawingManager.attach(chart, candle, chartContainerRef.current)
@@ -611,7 +620,12 @@ export default function NiftyChart() {
       coiTrendDataRef.current = null
       cePeMarkersRef.current = null
       cpMarkersRef.current = null
-      thMarkersRef.current = null
+      if (thExtMarkerRef.current && thAnchorSeriesRef.current) {
+        try { thAnchorSeriesRef.current.detachPrimitive(thExtMarkerRef.current as any) } catch {}
+        try { chart.removeSeries(thAnchorSeriesRef.current) } catch {}
+      }
+      thExtMarkerRef.current = null
+      thAnchorSeriesRef.current = null
       rawSignalDataRef.current = []
       chart.remove()
       chartRef.current = null
@@ -1685,7 +1699,7 @@ export default function NiftyChart() {
     if (!candleSeries) return
     const agg = aggregateSignals(rawSignalDataRef.current, interval)
     const candles = priceDataRef.current
-    if (!candles.length) { cePeMarkersRef.current?.setMarkers([]); cpMarkersRef.current?.setMarkers([]); thMarkersRef.current?.setMarkers([]); return }
+    if (!candles.length) { cePeMarkersRef.current?.setMarkers([]); cpMarkersRef.current?.setMarkers([]); if (thExtMarkerRef.current) thExtMarkerRef.current.setMarkers([]); return }
 
     const candleTimes = new Set(candles.map((c) => c.time))
     const snapToCandle = (sigTime: number): number | null => {
@@ -1743,27 +1757,37 @@ export default function NiftyChart() {
           return filteredTh.flatMap((s) => {
             const snapped = snapToCandle(s.time)
             if (snapped === null) return []
+            const candle = candles.find((c) => c.time === snapped)
             if (s.th_signal === 'dot') {
-              const candle = candles.find((c) => c.time === snapped)
               const isPositive = candle && candle.close >= candle.open
+              const price = isPositive ? (candle?.high ?? 0) : (candle?.low ?? 0)
               return [{
-                time: snapped as Time,
+                time: snapped,
                 position: (isPositive ? 'aboveBar' : 'belowBar') as 'aboveBar' | 'belowBar',
+                price,
+                shape: 'xcross',
                 color: '#9C27B0',
-                shape: 'circle' as 'circle',
+                size: 0.5,
               }]
             }
+            const isPe = s.th_signal === 'PE'
+            const price = isPe ? (candle?.high ?? 0) : (candle?.low ?? 0)
             return [{
-              time: snapped as Time,
-              position: (s.th_signal === 'CE' ? 'belowBar' : 'aboveBar') as 'aboveBar' | 'belowBar',
+              time: snapped,
+              position: (isPe ? 'aboveBar' : 'belowBar') as 'aboveBar' | 'belowBar',
+              price,
+              shape: 'circle',
               color: s.th_signal === 'CE' ? '#00C851' : '#FF4444',
-              shape: 'circle' as 'circle',
               text: s.th_signal as string,
+              size: 1,
             }]
           })
         })()
       : []
-    thMarkersRef.current?.setMarkers(thMarkers)
+    if (thExtMarkerRef.current && thAnchorSeriesRef.current) {
+      thAnchorSeriesRef.current.setData(candles.map((c) => ({ time: c.time as any, value: c.close })))
+      thExtMarkerRef.current.setMarkers(thMarkers as any)
+    }
   }
 
   const fetchSignalData = async () => {
