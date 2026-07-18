@@ -881,6 +881,10 @@ export default function EzayChart() {
           const serverMs = new Date(json.server_time).getTime()
           timeOffsetRef.current = serverMs - Date.now()
         }
+        if (!json?.is_running) {
+          window.clearInterval(pollInterval)
+          return
+        }
         if (json?.status === 'success' && json?.is_running && json?.last_update) {
           const lastUpdate = new Date(json.last_update)
           const serverNow = getServerNow()
@@ -905,7 +909,10 @@ export default function EzayChart() {
       }, Math.max(0, msToNextMinute))
     }
 
-    if (selectedStrike) scheduleNextMinute()
+    if (selectedStrike) {
+      fetchStatusAndCheck()
+      scheduleNextMinute()
+    }
     return () => { window.clearTimeout(timer); window.clearInterval(pollInterval) }
   }, [selectedStrike, loadData, isBacktest])
 
