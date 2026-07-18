@@ -7,7 +7,7 @@ from collections import defaultdict
 from bisect import bisect_right
 from services.history_service import get_history
 from services.madhan.nifty_fetch_service import nifty_fetcher
-from database.madhan_db import get_nifty_data, get_option_data, get_consistent_current_option_data, get_nifty_data_count, get_previous_day_oi, get_nth_candle_oi_for_all_symbols, get_current_day_historical_data, get_current_day_instrument_data, get_coi_history, SessionLocal, NiftyData, get_tracked_symbols
+from database.madhan_db import get_nifty_data, get_option_data, get_consistent_current_option_data, get_nifty_data_count, get_previous_day_oi, get_nth_candle_oi_for_all_symbols, get_current_day_historical_data, get_current_day_instrument_data, get_coi_history, get_valid_trading_day, SessionLocal, NiftyData, get_tracked_symbols
 from database.auth_db import get_api_key_for_tradingview
 from blueprints.react_app import serve_react_app
 
@@ -475,8 +475,9 @@ def get_atp_ltp_data():
         
         # Sort timestamps and filter market hours
         sorted_ts = sorted(nifty_by_ts.keys())
-        market_open = datetime.combine(datetime.now().date(), time(9, 15))
-        market_close = datetime.combine(datetime.now().date(), time(15, 30))
+        today_trading = get_valid_trading_day(exchange="NSE")
+        market_open = datetime.combine(today_trading, time(9, 15))
+        market_close = datetime.combine(today_trading, time(15, 30))
         market_open_ts = int(market_open.timestamp())
         market_close_ts = int(market_close.timestamp())
         
@@ -656,10 +657,12 @@ def get_atp_ltp_data():
         
         # Do not append a "current" row; use only 1-minute DB candles to avoid duplicates like 09:31:32.
         # If outside market hours, use the last historical data point as the final state at 15:30.
-        if now.time() > time(15, 30) and len(historical_data) > 0:
-            last_entry = historical_data[-1].copy()
-            last_entry['time'] = datetime.combine(now.date(), time(15, 30)).isoformat()
-            historical_data.append(last_entry)
+        if len(historical_data) > 0:
+            last_ts = datetime.fromtimestamp(sorted_ts[-1]).time() if sorted_ts else None
+            if last_ts is None or last_ts > time(15, 30):
+                last_entry = historical_data[-1].copy()
+                last_entry['time'] = datetime.combine(today_trading, time(15, 30)).isoformat()
+                historical_data.append(last_entry)
         
         return jsonify({
             'status': 'success',
@@ -2381,7 +2384,7 @@ def nifty_dash_time_analysis():
     if sorted_ts:
         market_start_ts = sorted_ts[0]
     else:
-        today_date = datetime.now().date()
+        today_date = get_valid_trading_day(exchange="NSE")
         market_start_ts = int(datetime.combine(today_date, time(3, 45)).timestamp())
     
     current_bucket = None

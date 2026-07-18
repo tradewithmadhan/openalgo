@@ -37,6 +37,20 @@ import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/authStore'
 import { useThemeStore } from '@/stores/themeStore'
 import { useProfileMenuItems } from '@/hooks/useProfileMenuItems'
+import {
+  Chart as ChartJS,
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  Title,
+  Tooltip,
+  Legend,
+  Filler,
+} from 'chart.js'
+import { Line } from 'react-chartjs-2'
+
+ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, Filler)
 
 interface ATPLTPData {
   time: string
@@ -65,6 +79,7 @@ export default function ATPLTPStrategy() {
   const [atpLtpData, setAtpLtpData] = useState<ATPLTPData[]>([])
   const [error, setError] = useState<string | null>(null)
   const [isRefreshing, setIsRefreshing] = useState(false)
+  const [chartView, setChartView] = useState(false)
   const [visibleColumns, setVisibleColumns] = useState({
     time: true,
     spot_ltp: true,
@@ -170,6 +185,10 @@ export default function ATPLTPStrategy() {
           const serverMs = new Date(json.server_time).getTime()
           timeOffsetRef.current = serverMs - Date.now()
         }
+        if (!json?.is_running) {
+          clearInterval(pollInterval)
+          return
+        }
         if (json?.status === 'success' && json?.is_running && json?.last_update) {
           const lastUpdate = new Date(json.last_update)
           const serverNow = getServerNow()
@@ -220,6 +239,70 @@ export default function ATPLTPStrategy() {
     const bTime = new Date(b.time).getTime()
     return bTime - aTime
   })
+
+  const chartData = (() => {
+    const asc = [...atpLtpData].sort((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime())
+    const labels = asc.map((r) => {
+      try {
+        return new Date(r.time).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })
+      } catch { return r.time }
+    })
+    const spotValues = asc.map((r) => r.spot_ltp ?? null)
+    const pointColors = asc.map((r) => {
+      switch (r.final_signal) {
+        case 'Bullish': return '#22c55e'
+        case 'Bearish': return '#ef4444'
+        case 'Sideways': return '#eab308'
+        default: return '#6b7280'
+      }
+    })
+    return {
+      labels,
+      datasets: [
+        {
+          label: 'Spot LTP',
+          data: spotValues,
+          borderColor: '#3b82f6',
+          backgroundColor: 'rgba(59,130,246,0.1)',
+          borderWidth: 2,
+          pointRadius: 3,
+          pointBackgroundColor: pointColors,
+          pointBorderColor: pointColors,
+          pointHoverRadius: 5,
+          tension: 0.1,
+          fill: true,
+        },
+      ],
+    }
+  })()
+
+  const chartOptions = {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: { display: true, position: 'top' as const },
+      tooltip: {
+        callbacks: {
+          afterLabel: (ctx: any) => {
+            const idx = ctx.dataIndex
+            const asc = [...atpLtpData].sort((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime())
+            const row = asc[idx]
+            if (!row) return ''
+            return `Signal: ${row.final_signal || '-'}`
+          },
+        },
+      },
+    },
+    scales: {
+      x: {
+        title: { display: true, text: 'Time' },
+        ticks: { maxRotation: 45, autoSkip: true, maxTicksLimit: 30 },
+      },
+      y: {
+        title: { display: true, text: 'Spot LTP' },
+      },
+    },
+  }
 
   const getChangeColor = (current: number | null | undefined, previous: number | null | undefined) => {
     if (previous === null || previous === undefined || current === null || current === undefined) return 'text-muted-foreground'
@@ -396,6 +479,14 @@ export default function ATPLTPStrategy() {
         
         <div className="flex gap-2">
            <Button 
+              variant={chartView ? "default" : "outline"} 
+              size="sm" 
+              onClick={() => setChartView(!chartView)}
+           >
+              <BarChart3 className="mr-2 h-3 w-3" />
+              {chartView ? 'Table View' : 'Chart View'}
+           </Button>
+           <Button 
               variant="outline" 
               size="sm" 
               onClick={refreshData}
@@ -414,6 +505,23 @@ export default function ATPLTPStrategy() {
         </Alert>
       )}
 
+      {chartView ? (
+        <Card className="flex-1">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <BarChart3 className="h-4 w-4" />
+              ATP-LTP Chart
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="h-[calc(100vh-12rem)]">
+            {atpLtpData.length === 0 ? (
+              <div className="text-center py-8 text-muted-foreground">No data available</div>
+            ) : (
+              <Line data={chartData} options={chartOptions as any} />
+            )}
+          </CardContent>
+        </Card>
+      ) : (
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between">
@@ -580,6 +688,7 @@ export default function ATPLTPStrategy() {
           )}
         </CardContent>
       </Card>
+      )}
       </div>
     </div>
   )
