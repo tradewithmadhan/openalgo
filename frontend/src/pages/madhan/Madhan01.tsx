@@ -619,10 +619,11 @@ export default function Madhan01() {
       )}
 
       <Tabs defaultValue="dash" className="w-full">
-      <TabsList className="grid w-full grid-cols-2 md:grid-cols-8">
+      <TabsList className="grid w-full grid-cols-3 md:grid-cols-9">
         <TabsTrigger value="dash">Dash</TabsTrigger>
         <TabsTrigger value="unified-oi-chain">Unified OI Chain</TabsTrigger>
         <TabsTrigger value="ce-pe-analysis">CE/PE OI</TabsTrigger>
+        <TabsTrigger value="oi-vs-vol">OI vs Vol</TabsTrigger>
         <TabsTrigger value="ce-pe-volume-analysis">CE/PE Volume</TabsTrigger>
         <TabsTrigger value="coi-trend">COI Trend</TabsTrigger>
         <TabsTrigger value="multi-options">Multi-Options</TabsTrigger>
@@ -1004,6 +1005,13 @@ export default function Madhan01() {
           <div className="flex flex-col gap-3">
             <CePeVolumeChangesChart refreshTrigger={_refreshTrigger} />
             <CePeStrikeVolumeChangesChart refreshTrigger={_refreshTrigger} atmStrike={status?.current_atm_strike} />
+          </div>
+        </TabsContent>
+
+        <TabsContent value="oi-vs-vol" className="space-y-3">
+          <div className="flex flex-col gap-3">
+            <CePeChangesChart refreshTrigger={_refreshTrigger} />
+            <CePeVolumeChangesChart refreshTrigger={_refreshTrigger} />
           </div>
         </TabsContent>
 
