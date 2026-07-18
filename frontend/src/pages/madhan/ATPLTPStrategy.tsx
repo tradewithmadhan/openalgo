@@ -212,6 +212,7 @@ export default function ATPLTPStrategy() {
       }, Math.max(0, msToNextMinute))
     }
 
+    fetchStatusAndCheck()
     scheduleNextMinute()
     return () => { clearTimeout(timer); clearInterval(pollInterval) }
   }, [fetchATPLTPData])
