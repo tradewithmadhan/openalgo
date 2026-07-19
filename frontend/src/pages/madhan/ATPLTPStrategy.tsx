@@ -52,6 +52,73 @@ import { Line } from 'react-chartjs-2'
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, Filler)
 
+type AnnotationPoint = {
+  index: number
+  label: string
+  yValue: number
+  color: string
+  direction: 'up' | 'down'
+}
+
+const signalArrowPlugin = {
+  id: 'signalArrow',
+  afterDraw(chart: any) {
+    const annotations: AnnotationPoint[] = chart.options?.plugins?.signalArrow?.annotations
+    if (!annotations || annotations.length === 0) return
+    const ctx = chart.ctx
+    const xScale = chart.scales.x
+    const yScale = chart.scales.y
+
+    for (const ann of annotations) {
+      const x = xScale.getPixelForValue(ann.index)
+      const y = yScale.getPixelForValue(ann.yValue)
+      const arrowSize = 10
+
+      ctx.save()
+      ctx.fillStyle = ann.color
+      ctx.strokeStyle = ann.color
+      ctx.lineWidth = 2
+      ctx.font = 'bold 11px monospace'
+      ctx.textAlign = 'center'
+
+      const lines = ann.label.split('\n')
+      const lineGap = 13
+
+      if (ann.direction === 'up') {
+        // Arrow below the point pointing up
+        const tipY = y + 18
+        const baseY = tipY + arrowSize
+        ctx.beginPath()
+        ctx.moveTo(x, tipY)
+        ctx.lineTo(x - arrowSize / 2, baseY)
+        ctx.lineTo(x + arrowSize / 2, baseY)
+        ctx.closePath()
+        ctx.fill()
+        lines.forEach((line, li) => {
+          ctx.fillText(line, x, baseY + 14 + li * lineGap)
+        })
+      } else {
+        // Arrow above the point pointing down
+        const tipY = y - 18
+        const baseY = tipY - arrowSize
+        ctx.beginPath()
+        ctx.moveTo(x, tipY)
+        ctx.lineTo(x - arrowSize / 2, baseY)
+        ctx.lineTo(x + arrowSize / 2, baseY)
+        ctx.closePath()
+        ctx.fill()
+        lines.forEach((line, li) => {
+          ctx.fillText(line, x, baseY - 6 - (lines.length - 1 - li) * lineGap)
+        })
+      }
+
+      ctx.restore()
+    }
+  },
+}
+
+ChartJS.register(signalArrowPlugin)
+
 interface ATPLTPData {
   time: string
   spot_ltp: number | null
@@ -257,6 +324,67 @@ export default function ATPLTPStrategy() {
         default: return '#6b7280'
       }
     })
+
+    // Compute signal arrow annotations: after 2+ consecutive sideways, 2nd consecutive bullish/bearish
+    // Signal Arrow Annotation Logic:
+    // 1. Requires minimum 2 consecutive "Sideways" signals before arming
+    // 2. After armed, wait for 2nd consecutive "Bullish" or "Bearish"
+    // 3. Bullish: green arrow below with Strike + Call LTP
+    // 4. Bearish: red arrow above with Strike + Put LTP
+    // 5. Any other signal resets the count
+    const annotations: AnnotationPoint[] = []
+    const dotIndices = new Set<number>()
+    let sidewaysCount = 0
+    let consecutiveCount = 0
+    let lastDirection: 'Bullish' | 'Bearish' | '' = ''
+
+    for (let i = 0; i < asc.length; i++) {
+      const sig = asc[i].final_signal
+      if (sig === 'Sideways') {
+        sidewaysCount++
+        consecutiveCount = 0
+        lastDirection = ''
+        continue
+      }
+      if (sig === 'Bullish' || sig === 'Bearish') {
+        if (sidewaysCount < 2) {
+          sidewaysCount = 0
+          consecutiveCount = 0
+          lastDirection = sig
+          continue
+        }
+        if (sig !== lastDirection) {
+          lastDirection = sig
+          consecutiveCount = 1
+        } else {
+          consecutiveCount++
+        }
+        // Show dots on 1st and 2nd consecutive after sideways
+        if (consecutiveCount <= 2) {
+          dotIndices.add(i)
+        }
+        if (consecutiveCount === 2) {
+          const isBullish = sig === 'Bullish'
+          const strike = asc[i].atm_strike
+          const ltp = isBullish ? asc[i].atm_call_ltp : asc[i].atm_put_ltp
+          const timeLabel = (() => {
+            try { return new Date(asc[i].time).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) }
+            catch { return '' }
+          })()
+          annotations.push({
+            index: i,
+            label: `${strike} ${isBullish ? 'Call' : 'Put'}\n${formatNumber(ltp)}\n${timeLabel}`,
+            yValue: asc[i].spot_ltp ?? 0,
+            color: isBullish ? '#22c55e' : '#ef4444',
+            direction: isBullish ? 'up' : 'down',
+          })
+          sidewaysCount = 0
+        }
+      } else {
+        sidewaysCount = 0
+      }
+    }
+
     return {
       labels,
       datasets: [
@@ -266,14 +394,27 @@ export default function ATPLTPStrategy() {
           borderColor: '#3b82f6',
           backgroundColor: 'rgba(59,130,246,0.1)',
           borderWidth: 2,
-          pointRadius: 3,
+          pointRadius: spotValues.map((_, i) => dotIndices.has(i) ? 4 : 0),
           pointBackgroundColor: pointColors,
           pointBorderColor: pointColors,
           pointHoverRadius: 5,
           tension: 0.1,
-          fill: true,
+          fill: false,
+          segment: {
+            borderColor: (ctx: any) => {
+              const i = ctx.p0DataIndex
+              const sig = asc[i]?.final_signal
+              switch (sig) {
+                case 'Bullish': return '#22c55e'
+                case 'Bearish': return '#ef4444'
+                case 'Sideways': return '#eab308'
+                default: return '#6b7280'
+              }
+            },
+          },
         },
       ],
+      _annotations: annotations,
     }
   })()
 
@@ -282,6 +423,7 @@ export default function ATPLTPStrategy() {
     maintainAspectRatio: false,
     plugins: {
       legend: { display: true, position: 'top' as const },
+      signalArrow: { annotations: (chartData as any)._annotations || [] },
       tooltip: {
         callbacks: {
           afterLabel: (ctx: any) => {
