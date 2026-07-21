@@ -1975,14 +1975,15 @@ export default function NiftyChart() {
     }
 
     const scheduleNextMinute = () => {
+      clearTimeout(timer)
       const now = getServerNow()
       const msToNextMinute = (60 - now.getSeconds()) * 1000 - now.getMilliseconds()
       timer = setTimeout(() => {
         pollInterval = setInterval(checkAndRefresh, 1000)
-        checkAndRefresh()
       }, Math.max(0, msToNextMinute))
     }
 
+    checkAndRefresh()
     scheduleNextMinute()
     return () => { clearTimeout(timer); clearInterval(pollInterval) }
   }, [fetchNiftyStatus])

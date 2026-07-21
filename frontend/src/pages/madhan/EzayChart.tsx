@@ -901,11 +901,11 @@ export default function EzayChart() {
     }
 
     const scheduleNextMinute = () => {
+      window.clearTimeout(timer)
       const now = getServerNow()
       const msToNextMinute = (60 - now.getSeconds()) * 1000 - now.getMilliseconds()
       timer = window.setTimeout(() => {
         pollInterval = window.setInterval(fetchStatusAndCheck, 1000)
-        fetchStatusAndCheck()
       }, Math.max(0, msToNextMinute))
     }
 

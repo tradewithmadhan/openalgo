@@ -271,11 +271,11 @@ export default function ATPLTPStrategy() {
     }
 
     const scheduleNextMinute = () => {
+      clearTimeout(timer)
       const now = getServerNow()
       const msToNextMinute = (60 - now.getSeconds()) * 1000 - now.getMilliseconds()
       timer = setTimeout(() => {
         pollInterval = setInterval(fetchStatusAndCheck, 1000)
-        fetchStatusAndCheck()
       }, Math.max(0, msToNextMinute))
     }
 
