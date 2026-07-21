@@ -39,6 +39,7 @@ import { useThemeStore } from '@/stores/themeStore'
 import { useAuthStore } from '@/stores/authStore'
 import { useProfileMenuItems } from '@/hooks/useProfileMenuItems'
 import { cn } from '@/lib/utils'
+import { setTimeOffset, getTimeOffset } from '@/utils/timeSync'
 import { chartTheme } from './chartTheme'
 import DrawingToolbar, { TEXT_DRAWING_TYPES } from './DrawingToolbar'
 import DrawingListPanel from './DrawingListPanel'
@@ -1799,7 +1800,7 @@ export default function NiftyChart() {
 
   const fetchSignalData = async () => {
     try {
-      const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' })
+      const today = new Date(Date.now() + getTimeOffset()).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' })
       let res = await fetch(`/madhan/api/ezayChart_signals?_=${Date.now()}`)
       let json = await res.json()
       if (json?.status !== 'success' || !Array.isArray(json.data)) {
@@ -1832,6 +1833,14 @@ export default function NiftyChart() {
     updateIndicatorSeries(data)
     addHorizontalLines(data)
     applySqrtLevels(data)
+
+    // Re-apply live WS tick so the current running candle isn't lost when
+    // the API response only contains completed candles (e.g. at candle boundaries).
+    const live = wsData.get('NSE_INDEX:NIFTY')
+    const ltp = live?.data?.ltp
+    if (typeof ltp === 'number') {
+      applyRealtimeLtp(ltp, live?.lastUpdate ?? Date.now())
+    }
 
     if (!crosshairOHLCV && data.length > 0) {
       const last = data[data.length - 1]
@@ -1937,6 +1946,7 @@ export default function NiftyChart() {
         if (json.server_time) {
           const serverMs = new Date(json.server_time).getTime()
           timeOffsetRef.current = serverMs - Date.now()
+          setTimeOffset(timeOffsetRef.current)
         }
         return json
       }

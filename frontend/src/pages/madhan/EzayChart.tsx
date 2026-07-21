@@ -30,6 +30,7 @@ import { useThemeStore } from '@/stores/themeStore'
 import { useAuthStore } from '@/stores/authStore'
 import { useProfileMenuItems } from '@/hooks/useProfileMenuItems'
 import { cn } from '@/lib/utils'
+import { setTimeOffset, getTimeOffset } from '@/utils/timeSync'
 import { chartTheme } from './chartTheme'
 import RealtimeTable from './RealtimeTable'
 import EzaySignals, { type FirstSignalInfo, type BackendSignals } from './components/EzaySignals'
@@ -245,7 +246,7 @@ export default function EzayChart() {
     return 1
   }
 
-  const todayStr = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' })
+  const todayStr = () => new Date(Date.now() + getTimeOffset()).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' })
 
   const shiftBacktestDate = (days: number) => {
     const cur = backtestDateRef.current || todayStr()
@@ -880,6 +881,7 @@ export default function EzayChart() {
         if (json?.status === 'success' && json?.server_time) {
           const serverMs = new Date(json.server_time).getTime()
           timeOffsetRef.current = serverMs - Date.now()
+          setTimeOffset(timeOffsetRef.current)
         }
         if (!json?.is_running) {
           window.clearInterval(pollInterval)
@@ -1002,8 +1004,10 @@ export default function EzayChart() {
     const tickVolDelta = (key: string, dayVol: number) => {
       const prev = lastDayVolRef.current.get(key)
       if (prev === undefined) {
+        // First tick after strike switch / page load — seed baseline,
+        // return null so caller keeps the API per-candle volume intact.
         lastDayVolRef.current.set(key, dayVol)
-        return candleVolRef.current.get(`vol_${time}`) ?? 0
+        return null
       }
       const delta = Math.max(0, dayVol - prev)
       lastDayVolRef.current.set(key, dayVol)
@@ -1014,7 +1018,7 @@ export default function EzayChart() {
     }
     const ceTickVol = tickVolDelta('ce', ceVol)
     const peTickVol = tickVolDelta('pe', peVol)
-    const combinedVolume = ceTickVol + peTickVol
+    const combinedVolume = (ceTickVol ?? 0) + (peTickVol ?? 0)
 
     for (const [k] of candleVolRef.current) {
       const kTime = parseInt(k.replace('vol_', ''), 10)
@@ -1069,7 +1073,7 @@ export default function EzayChart() {
     if (peExtrinsicRef.current) updateLine('peExtrinsic', peExtrinsicRef.current, peExtrinsic)
     if (combinedExtrinsicRef.current) updateLine('combinedExtrinsic', combinedExtrinsicRef.current, combinedExtrinsic)
 
-    if (volumeRef.current) {
+    if (volumeRef.current && (ceTickVol !== null || peTickVol !== null)) {
       const dark = document.documentElement.classList.contains('dark')
       volumeRef.current.update({ time: time as Time, value: combinedVolume, color: dark ? 'rgba(38,166,154,0.5)' : 'rgba(38,166,154,0.6)' })
     }
