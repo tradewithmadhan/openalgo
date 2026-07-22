@@ -568,36 +568,36 @@ def get_atp_ltp_data():
             historical_itm2_put_atp = _calc_atp(itm2_put_symbol_ts, historical_itm2_put_ltp)
             
             # Calculate ATP-LTP differences
-            call_atp_ltp_diff_historical = (
+            call_atp_ltp_diff_historical = round(
                 (historical_call_atp - historical_call_ltp)
                 if historical_call_atp is not None and historical_call_ltp is not None
-                else 0
+                else 0, 2
             )
-            put_atp_ltp_diff_historical = (
+            put_atp_ltp_diff_historical = round(
                 (historical_put_atp - historical_put_ltp)
                 if historical_put_atp is not None and historical_put_ltp is not None
-                else 0
+                else 0, 2
             )
 
-            itm1_call_atp_ltp_diff_historical = (
+            itm1_call_atp_ltp_diff_historical = round(
                 (historical_itm1_call_atp - historical_itm1_call_ltp)
                 if historical_itm1_call_atp is not None and historical_itm1_call_ltp is not None
-                else 0
+                else 0, 2
             )
-            itm2_call_atp_ltp_diff_historical = (
+            itm2_call_atp_ltp_diff_historical = round(
                 (historical_itm2_call_atp - historical_itm2_call_ltp)
                 if historical_itm2_call_atp is not None and historical_itm2_call_ltp is not None
-                else 0
+                else 0, 2
             )
-            itm1_put_atp_ltp_diff_historical = (
+            itm1_put_atp_ltp_diff_historical = round(
                 (historical_itm1_put_atp - historical_itm1_put_ltp)
                 if historical_itm1_put_atp is not None and historical_itm1_put_ltp is not None
-                else 0
+                else 0, 2
             )
-            itm2_put_atp_ltp_diff_historical = (
+            itm2_put_atp_ltp_diff_historical = round(
                 (historical_itm2_put_atp - historical_itm2_put_ltp)
                 if historical_itm2_put_atp is not None and historical_itm2_put_ltp is not None
-                else 0
+                else 0, 2
             )
 
             # Real signals (same rule as "current" entry): both ITM diffs must be < ATM diff
@@ -632,10 +632,10 @@ def get_atp_ltp_data():
                 'spot_ltp': historical_spot_ltp,
                 'spot_sma_signal': _append_and_signal_sma(spot_ltp_series, historical_spot_ltp),
                 'atm_strike': historical_atm_strike,
-                'atm_call_atp': historical_call_atp,
+                'atm_call_atp': round(historical_call_atp, 2) if historical_call_atp is not None else None,
                 'atm_call_ltp': historical_call_ltp,
                 'atm_call_atp_ltp_diff': call_atp_ltp_diff_historical,
-                'atm_put_atp': historical_put_atp,
+                'atm_put_atp': round(historical_put_atp, 2) if historical_put_atp is not None else None,
                 'atm_put_ltp': historical_put_ltp,
                 'atm_put_atp_ltp_diff': put_atp_ltp_diff_historical,
                 'call_atp_signal': call_atp_signal_historical,
@@ -654,6 +654,36 @@ def get_atp_ltp_data():
                 'itm1_put_atp_ltp_diff': itm1_put_atp_ltp_diff_historical,
                 'itm2_put_atp_ltp_diff': itm2_put_atp_ltp_diff_historical,
             })
+
+        # Trade signal arrows: after 2+ consecutive Sideways, 2nd consecutive Bullish/Bearish
+        sideways_count = 0
+        consecutive_count = 0
+        last_direction = ''
+
+        for entry in historical_data:
+            sig = entry.get('final_signal', '')
+            entry['trade_signal'] = None
+
+            if sig == 'Sideways':
+                sideways_count += 1
+                consecutive_count = 0
+                last_direction = ''
+            elif sig in ('Bullish', 'Bearish'):
+                if sideways_count >= 2:
+                    if sig != last_direction:
+                        last_direction = sig
+                        consecutive_count = 1
+                    else:
+                        consecutive_count += 1
+                    if consecutive_count == 2:
+                        entry['trade_signal'] = True
+                        sideways_count = 0
+                else:
+                    sideways_count = 0
+                    consecutive_count = 0
+                    last_direction = sig
+            else:
+                sideways_count = 0
         
         # Do not append a "current" row; use only 1-minute DB candles to avoid duplicates like 09:31:32.
         # If outside market hours, use the last historical data point as the final state at 15:30.

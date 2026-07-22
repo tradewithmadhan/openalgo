@@ -325,64 +325,25 @@ export default function ATPLTPStrategy() {
       }
     })
 
-    // Compute signal arrow annotations: after 2+ consecutive sideways, 2nd consecutive bullish/bearish
-    // Signal Arrow Annotation Logic:
-    // 1. Requires minimum 2 consecutive "Sideways" signals before arming
-    // 2. After armed, wait for 2nd consecutive "Bullish" or "Bearish"
-    // 3. Bullish: green arrow below with Strike + Call LTP
-    // 4. Bearish: red arrow above with Strike + Put LTP
-    // 5. Any other signal resets the count
+    // Trade signals come from backend (trade_signal: true/false per row)
     const annotations: AnnotationPoint[] = []
     const dotIndices = new Set<number>()
-    let sidewaysCount = 0
-    let consecutiveCount = 0
-    let lastDirection: 'Bullish' | 'Bearish' | '' = ''
 
     for (let i = 0; i < asc.length; i++) {
+      if (!(asc[i] as any).trade_signal) continue
       const sig = asc[i].final_signal
-      if (sig === 'Sideways') {
-        sidewaysCount++
-        consecutiveCount = 0
-        lastDirection = ''
-        continue
-      }
-      if (sig === 'Bullish' || sig === 'Bearish') {
-        if (sidewaysCount < 2) {
-          sidewaysCount = 0
-          consecutiveCount = 0
-          lastDirection = sig
-          continue
-        }
-        if (sig !== lastDirection) {
-          lastDirection = sig
-          consecutiveCount = 1
-        } else {
-          consecutiveCount++
-        }
-        // Show dots on 1st and 2nd consecutive after sideways
-        if (consecutiveCount <= 2) {
-          dotIndices.add(i)
-        }
-        if (consecutiveCount === 2) {
-          const isBullish = sig === 'Bullish'
-          const strike = asc[i].atm_strike
-          const ltp = isBullish ? asc[i].atm_call_ltp : asc[i].atm_put_ltp
-          const timeLabel = (() => {
-            try { return new Date(asc[i].time).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) }
-            catch { return '' }
-          })()
-          annotations.push({
-            index: i,
-            label: `${strike} ${isBullish ? 'Call' : 'Put'}\n${formatNumber(ltp)}\n${timeLabel}`,
-            yValue: asc[i].spot_ltp ?? 0,
-            color: isBullish ? '#22c55e' : '#ef4444',
-            direction: isBullish ? 'up' : 'down',
-          })
-          sidewaysCount = 0
-        }
-      } else {
-        sidewaysCount = 0
-      }
+      const isBullish = sig === 'Bullish'
+      dotIndices.add(i)
+      annotations.push({
+        index: i,
+        label: `${asc[i].atm_strike} ${isBullish ? 'Call' : 'Put'}\n${formatNumber(isBullish ? asc[i].atm_call_ltp : asc[i].atm_put_ltp)}\n${(() => {
+          try { return new Date(asc[i].time).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) }
+          catch { return '' }
+        })()}`,
+        yValue: asc[i].spot_ltp ?? 0,
+        color: isBullish ? '#22c55e' : '#ef4444',
+        direction: isBullish ? 'up' : 'down',
+      })
     }
 
     return {
