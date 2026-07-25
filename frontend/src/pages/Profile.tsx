@@ -194,6 +194,11 @@ const ALERT_CATEGORIES_REALTIME: {
     label: 'Action Center',
     description: 'Pending order notifications in semi-auto mode',
   },
+  {
+    key: 'madhan',
+    label: 'Madhan Notifications',
+    description: 'All Madhan trading signals, alerts, and custom notifications',
+  },
 ]
 
 const ALERT_CATEGORIES_TRADING: {

@@ -29,6 +29,8 @@ import {
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/authStore'
 import { useThemeStore } from '@/stores/themeStore'
+import { useAlertStore } from '@/stores/alertStore'
+import { useMadhanSignalStore } from '@/stores/madhanSignalStore'
 import { useProfileMenuItems } from '@/hooks/useProfileMenuItems'
 import { useRef } from 'react'
 import { CoiTrendChart } from './components/CoiTrendChart'
@@ -92,6 +94,8 @@ export default function Madhan01() {
   const navigate = useNavigate()
   const { user } = useAuthStore()
   const { mode, toggleMode, appMode, toggleAppMode, isTogglingMode } = useThemeStore()
+  const alertStore = useAlertStore()
+  const { atp_ltp_signal, setToggle } = useMadhanSignalStore()
   const profileMenuItems = useProfileMenuItems()
   
   const [status, setStatus] = useState<NiftyStatus | null>(null)
@@ -619,7 +623,7 @@ export default function Madhan01() {
       )}
 
       <Tabs defaultValue="dash" className="w-full">
-      <TabsList className="grid w-full grid-cols-3 md:grid-cols-9">
+      <TabsList className="grid w-full grid-cols-3 md:grid-cols-5 lg:grid-cols-10">
         <TabsTrigger value="dash">Dash</TabsTrigger>
         <TabsTrigger value="unified-oi-chain">Unified OI Chain</TabsTrigger>
         <TabsTrigger value="ce-pe-analysis">CE/PE OI</TabsTrigger>
@@ -629,6 +633,7 @@ export default function Madhan01() {
         <TabsTrigger value="multi-options">Multi-Options</TabsTrigger>
         <TabsTrigger value="support-resistance">Support & Resistance</TabsTrigger>
         <TabsTrigger value="data-check">Data Check</TabsTrigger>
+        <TabsTrigger value="signal-settings">Signal Settings</TabsTrigger>
       </TabsList>
         
         <TabsContent value="dash">
@@ -1216,6 +1221,42 @@ export default function Madhan01() {
                 )}
                 </CardContent>
             </Card>
+        </TabsContent>
+        <TabsContent value="signal-settings" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base font-semibold">Signal Settings</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="font-medium">Madhan Notifications</div>
+                  <div className="text-xs text-muted-foreground">Master on/off for all signal toasts</div>
+                </div>
+                <Switch
+                  checked={alertStore.categories.madhan}
+                  onCheckedChange={(checked) => alertStore.setCategoryEnabled('madhan', checked)}
+                />
+              </div>
+              {alertStore.categories.madhan && (
+                <>
+                  <div className="border-t pt-4">
+                    <div className="text-xs text-muted-foreground mb-3">Individual Signal Types</div>
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <div className="font-medium">ATP-LTP Trade Signal</div>
+                        <div className="text-xs text-muted-foreground">Bullish/Bearish signal after Sideways consolidation</div>
+                      </div>
+                      <Switch
+                        checked={atp_ltp_signal}
+                        onCheckedChange={(checked) => setToggle('atp_ltp_signal', checked)}
+                      />
+                    </div>
+                  </div>
+                </>
+              )}
+            </CardContent>
+          </Card>
         </TabsContent>
       </Tabs>
     </div>

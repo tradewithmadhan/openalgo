@@ -15,6 +15,7 @@ export interface AlertCategories {
   analyzer: boolean // Analyzer/sandbox mode operations - Socket: analyzer_update
   system: boolean // Password change, master contract download - Socket: password_change, master_contract_download
   actionCenter: boolean // Pending order notifications - Socket: pending_order_created
+  madhan: boolean // Madhan trading signals, alerts, and custom notifications
 
   // User-initiated operations (Tier 1 - High Impact)
   historify: boolean // Historify job operations, file uploads, schedules (67 toasts)
@@ -73,6 +74,7 @@ const DEFAULT_STATE = {
     analyzer: true,
     system: true,
     actionCenter: true,
+    madhan: true,
     // Tier 1
     historify: true,
     strategy: true,

@@ -12,9 +12,11 @@ import pytz
 from utils.logging import get_logger
 from services.history_service import get_history
 from services.expiry_service import get_expiry_dates
-from database.madhan_db import store_nifty_data, store_option_data, store_previous_day_oi, NiftyData, OptionData, SessionLocal, get_tracked_symbols, save_tracked_symbols, save_fetcher_state, get_fetcher_state,get_valid_trading_day,clear_madhan_db, validate_backfill_consistency
+from database.madhan_db import store_nifty_data, store_option_data, store_previous_day_oi, NiftyData, OptionData, SessionLocal, get_tracked_symbols, save_tracked_symbols, save_fetcher_state, get_fetcher_state,get_valid_trading_day,clear_madhan_db, validate_backfill_consistency, get_current_day_historical_data
 from database.market_calendar_db import is_market_holiday
 from database.auth_db import get_first_available_api_key
+from utils.notifier import emit_notification
+from services.madhan.atp_signal import process_historical_atp_data
 
 logger = get_logger(__name__)
 
@@ -433,6 +435,62 @@ class NiftyDataFetcher:
                         f"(API: {fetch_elapsed:.2f}s)")
         return failed_symbols
 
+    def _check_and_emit_trade_signal(self, today_str):
+        """Check for trade signals using shared ATP-LTP signal computation.
+
+        Uses the same process_historical_atp_data() as the /api/atp-ltp-data endpoint.
+        Checks last 3 entries for trade_signal = True and emits notification.
+        """
+        if not self.option_symbols or not self.current_atm_strike:
+            return
+
+        try:
+            all_historical_data = get_current_day_historical_data()
+            if not all_historical_data:
+                return
+
+            historical_data = process_historical_atp_data(all_historical_data, self.current_atm_strike)
+            if not historical_data:
+                return
+
+            # Check last entry for trade_signal (previous candle)
+            entry = historical_data[-1]
+            if not entry.get('trade_signal'):
+                return
+
+            sig = entry.get('final_signal', '')
+            spot = entry.get('spot_ltp', 0)
+            atm = entry.get('atm_strike', 0)
+
+            # Determine CE/PE and LTP from the entry
+            if sig == 'Bullish':
+                ce_pe = 'CE'
+                ltp = entry.get('atm_call_ltp', 0)
+            elif sig == 'Bearish':
+                ce_pe = 'PE'
+                ltp = entry.get('atm_put_ltp', 0)
+            else:
+                return
+
+            try:
+                ltp_f = float(ltp) if ltp else 0
+                spot_f = float(spot) if spot else 0
+            except (TypeError, ValueError):
+                return
+
+            emit_notification(
+                'app_notification',
+                f'{sig} Signal',
+                f'NIFTY {atm} {ce_pe} @ {ltp_f:.2f} | Spot: {spot_f:.2f}',
+                category='madhan',
+                level='success' if sig == 'Bullish' else 'error',
+                data={'strike': atm, 'ltp': ltp_f, 'spot': spot_f, 'type': sig}
+            )
+            logger.info(f"Trade signal emitted: {sig} NIFTY {atm} {ce_pe} @ {ltp_f}")
+
+        except Exception as sig_err:
+            logger.debug(f"Signal check skipped: {sig_err}")
+
     def _calculate_and_store_previous_day_oi(self, today, prev_day):
         """
         Calculates and stores the last candle's OI and close for the previous trading day
@@ -748,6 +806,13 @@ class NiftyDataFetcher:
                 cycle_elapsed = time.time() - cycle_start
                 logger.info(f"Fetch cycle completed in {cycle_elapsed:.2f}s (NIFTY: {nifty_elapsed:.2f}s, Options: {opt_elapsed:.2f}s)")
                 self.last_update = datetime.now(pytz.timezone('Asia/Kolkata'))
+
+                # --- TRADE SIGNAL CHECK ---
+                # Check last 30 candles for trade signal (after 2+ Sideways, 2nd same-direction = signal)
+                try:
+                    self._check_and_emit_trade_signal(today_str)
+                except Exception as sig_err:
+                    logger.debug(f"Signal check skipped: {sig_err}")
 
             except Exception as e:
                 logger.error(f"Exception during incremental fetch: {e}")

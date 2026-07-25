@@ -330,6 +330,14 @@ export function useSocket() {
       }
     })
 
+    // Generic app notification — used by madhan signals, alerts, etc.
+    socket.on('app_notification', (data: { title: string; message: string; category?: string; level?: string }) => {
+      const level = (data.level || 'info') as 'success' | 'error' | 'warning' | 'info'
+      const category = (data.category || 'madhan') as keyof AlertCategories
+      playAlertSound(category)
+      showCategoryToast(level, `${data.title}: ${data.message}`, category)
+    })
+
     return () => {
       socket.disconnect()
       setSocketInstance(null)
