@@ -294,17 +294,17 @@ def get_atp_ltp_data():
         current_time = datetime.now().isoformat()
         
         # Calculate ATP-LTP differences
-        call_atp_ltp_diff = atm_call_atp - atm_call_ltp if atm_call_atp and atm_call_ltp else 0
-        put_atp_ltp_diff = atm_put_atp - atm_put_ltp if atm_put_atp and atm_put_ltp else 0
+        call_atp_ltp_diff = round(atm_call_atp - atm_call_ltp, 2) if atm_call_atp and atm_call_ltp else 0
+        put_atp_ltp_diff = round(atm_put_atp - atm_put_ltp, 2) if atm_put_atp and atm_put_ltp else 0
         
         data_entry = {
             'time': current_time,
             'spot_ltp': current_spot,
             'atm_strike': current_atm_strike,
-            'atm_call_atp': atm_call_atp,
+            'atm_call_atp': round(atm_call_atp, 2) if atm_call_atp else None,
             'atm_call_ltp': atm_call_ltp,
             'atm_call_atp_ltp_diff': call_atp_ltp_diff,
-            'atm_put_atp': atm_put_atp,
+            'atm_put_atp': round(atm_put_atp, 2) if atm_put_atp else None,
             'atm_put_ltp': atm_put_ltp,
             'atm_put_atp_ltp_diff': put_atp_ltp_diff,
             'call_atp_signal': call_atp_signal,
@@ -1002,8 +1002,8 @@ def nifty_coi_trend():
             oi_trend_percent = 100
         
         timestamps_res.append(ts * 1000) # JS expects milliseconds
-        coi_percent_res.append(coi_percent)
-        oi_trend_percent_res.append(oi_trend_percent)
+        coi_percent_res.append(round(coi_percent, 2))
+        oi_trend_percent_res.append(round(oi_trend_percent, 2))
 
     return jsonify({'status': 'success', 'data': {'timestamps': timestamps_res, 'coi_percent': coi_percent_res, 'oi_trend_percent': oi_trend_percent_res}})
 
