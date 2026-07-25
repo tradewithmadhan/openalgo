@@ -36,32 +36,20 @@ def get_valid_trading_day(
 
 def extract_strike(symbol: str) -> int | None:
     """
-    Robustly extract NIFTY strike from symbols like:
-    NIFTY28MAR2420800CE, NIFTY29AUG2524000CE (where '25' can stick to strike).
+    Extract NIFTY strike from option symbols.
 
-    Logic:
-    - Take the numeric chunk right before CE/PE.
-    - From its end, try 5 and 6-digit windows and pick the one that:
-        * is a multiple of 50 (NIFTY step)
-        * is within a realistic range (10,000-100,000)
-    - Fallback: last 5 digits.
+    Format-aware parsing: NIFTY{DDMMMYY}{STRIKE}{CE|PE}
+    Examples:
+        NIFTY29AUG2524000CE → 24000
+        NIFTY01JAN26100000CE → 100000
+        NIFTY15MAR2523500PE → 23500
+
+    Returns None for non-NIFTY or malformed symbols.
     """
-    m = re.search(r'(\d+)(CE|PE)$', symbol)
+    m = re.match(r'^NIFTY\d{2}[A-Z]{3}\d{2}(\d+)(CE|PE)$', symbol)
     if not m:
         return None
-
-    tail = m.group(1)
-    candidates = []
-    if len(tail) >= 6:
-        candidates.append(int(tail[-6:]))
-    if len(tail) >= 5:
-        candidates.append(int(tail[-5:]))
-
-    for cand in candidates:
-        if 10000 <= cand <= 100000 and cand % 50 == 0:
-            return cand
-
-    return int(tail[-5:]) if len(tail) >= 5 else None
+    return int(m.group(1))
 
 
 
@@ -793,20 +781,6 @@ def get_current_day_instrument_data(symbol: str):
         session.close()
 
 
-def extract_strike(symbol: str) -> int | None:
-    m = re.search(r'(\d+)(CE|PE)$', symbol)
-    if not m:
-        return None
-    tail = m.group(1)
-    candidates = []
-    if len(tail) >= 6:
-        candidates.append(int(tail[-6:]))
-    if len(tail) >= 5:
-        candidates.append(int(tail[-5:]))
-    for cand in candidates:
-        if 10000 <= cand <= 100000 and cand % 50 == 0:
-            return cand
-    return int(tail[-5:]) if len(tail) >= 5 else None
 
 
 def get_coi_history(days: int = 30):
