@@ -1023,6 +1023,58 @@ def oi_profile_data():
     return jsonify({"oi": oi_data, "coi": coi_data})
 
 
+@madhan_bp.route('/api/nifty/oi-strike-history')
+@check_session_validity
+def oi_strike_history():
+    """Returns per-strike CE/PE OI time series for all tracked option symbols (1-min candles)."""
+    try:
+        all_data = get_current_day_historical_data()
+        if not all_data:
+            return jsonify({"status": "success", "timestamps": [], "strikes": {}})
+
+        # Filter to option symbols only (exclude NIFTY)
+        option_rows = [r for r in all_data if r.get('symbol') and r['symbol'] != 'NIFTY']
+
+        if not option_rows:
+            return jsonify({"status": "success", "timestamps": [], "strikes": {}})
+
+        # Group OI by timestamp → strike → ce/pe
+        ts_set = set()
+        strike_data = defaultdict(lambda: {"ce_oi": {}, "pe_oi": {}})
+
+        for row in option_rows:
+            symbol = row['symbol']
+            ts = row['timestamp']
+            oi = row.get('oi', 0) or 0
+            strike = extract_strike(symbol)
+            if strike is None:
+                continue
+            ts_set.add(ts)
+            if symbol.endswith('CE'):
+                strike_data[strike]["ce_oi"][ts] = oi
+            elif symbol.endswith('PE'):
+                strike_data[strike]["pe_oi"][ts] = oi
+
+        sorted_ts = sorted(ts_set)
+
+        # Build aligned arrays per strike
+        strikes_result = {}
+        for strike in sorted(strike_data.keys()):
+            sd = strike_data[strike]
+            ce_arr = [sd["ce_oi"].get(ts) for ts in sorted_ts]
+            pe_arr = [sd["pe_oi"].get(ts) for ts in sorted_ts]
+            strikes_result[str(strike)] = {"ce_oi": ce_arr, "pe_oi": pe_arr}
+
+        return jsonify({
+            "status": "success",
+            "timestamps": sorted_ts,
+            "strikes": strikes_result,
+        })
+    except Exception as e:
+        logger.error(f"Error fetching OI strike history: {e}", exc_info=True)
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
 @madhan_bp.route('/api/nifty/coi_history')
 @check_session_validity
 def coi_history():
