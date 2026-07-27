@@ -229,10 +229,10 @@ export default function EzayChart() {
   const [rangeVisibleStrategies, setRangeVisibleStrategies] = useState<Set<string>>(new Set(['CE-PE', 'CP']))
 
   const currentAtmStrike = liveSpot > 0 ? Math.round(liveSpot / 50) * 50 : null
+  const [candleCountdown, setCandleCountdown] = useState('')
 
   const currentOhlcRef = useRef<Map<string, { time: number; open: number; high: number; low: number; close: number }>>(new Map())
-  const lastDayVolRef = useRef<Map<string, number>>(new Map())
-  const candleVolRef = useRef<Map<string, number>>(new Map())
+  const apiCandleVolRef = useRef<Map<number, number>>(new Map())
   const strikeNumRef = useRef(0)
 
   const { mode: themeMode, toggleMode, appMode, toggleAppMode, isTogglingMode } = useThemeStore()
@@ -444,7 +444,7 @@ export default function EzayChart() {
     // In live mode, include ALL API data (including current bucket) so aggregated
     // candles load correctly when switching timeframes. Seed currentOhlcRef so
     // WS update() continues from the API's OHLC instead of starting fresh.
-    const liveBucket = !isBacktestRef.current ? Math.floor(Date.now() / 1000 / (intervalMin * 60)) * (intervalMin * 60) : 0
+    const liveBucket = !isBacktestRef.current ? Math.floor((Date.now() + getTimeOffset()) / 1000 / (intervalMin * 60)) * (intervalMin * 60) : 0
 
     if (ceSeriesRef.current) {
       if (ct === 'candlestick') {
@@ -486,11 +486,14 @@ export default function EzayChart() {
 
     if (volumeRef.current) {
       const dark = document.documentElement.classList.contains('dark')
-      volumeRef.current.setData(combinedData.map((item) => ({
-        time: item.time,
-        value: item.combined_volume || 0,
-        color: dark ? 'rgba(38,166,154,0.5)' : 'rgba(38,166,154,0.6)',
-      })))
+      volumeRef.current.setData(combinedData.map((item) => {
+        apiCandleVolRef.current.set(item.time, item.combined_volume || 0)
+        return {
+          time: item.time,
+          value: item.combined_volume || 0,
+          color: dark ? 'rgba(38,166,154,0.5)' : 'rgba(38,166,154,0.6)',
+        }
+      }))
     }
 
     // Seed currentOhlcRef from the last API candle so WS update() continues
@@ -674,8 +677,7 @@ export default function EzayChart() {
         rawDataRef.current = json.data
         strikeNumRef.current = json.data.strike
         currentOhlcRef.current.clear()
-        lastDayVolRef.current.clear()
-        candleVolRef.current.clear()
+        apiCandleVolRef.current.clear()
         setCeSymbol(json.data.ce_symbol || '')
         setPeSymbol(json.data.pe_symbol || '')
         setAvailableStrategies(json.data.strategies || ['CE-PE'])
@@ -712,8 +714,7 @@ export default function EzayChart() {
       rawDataRef.current = json.data
       strikeNumRef.current = json.data.strike
       currentOhlcRef.current.clear()
-      lastDayVolRef.current.clear()
-      candleVolRef.current.clear()
+      apiCandleVolRef.current.clear()
       setCeSymbol(json.data.ce_symbol || '')
       setPeSymbol(json.data.pe_symbol || '')
       setChartInfo(`Strike ${json.data.strike} - CE: ${json.data.ce_symbol || 'N/A'} | PE: ${json.data.pe_symbol || 'N/A'} (${json.data.timezone || 'UTC'})`)
@@ -857,6 +858,30 @@ export default function EzayChart() {
     applyData()
   }, [interval, applyData])
 
+  useEffect(() => {
+    const update = () => {
+      const intervalMin = getIntervalMinutes(intervalRef.current)
+      const bucketSec = intervalMin * 60
+      const now = Math.floor((Date.now() + getTimeOffset()) / 1000)
+      const nextBucket = Math.floor(now / bucketSec) * bucketSec + bucketSec
+      const remaining = nextBucket - now
+      if (intervalMin >= 60) {
+        const h = Math.floor(remaining / 3600)
+        const m = Math.floor((remaining % 3600) / 60)
+        setCandleCountdown(h > 0 ? `${h}h ${m}m` : `${m}m`)
+      } else if (intervalMin >= 5) {
+        const m = Math.floor(remaining / 60)
+        const s = remaining % 60
+        setCandleCountdown(`${m}:${String(s).padStart(2, '0')}`)
+      } else {
+        setCandleCountdown(`${remaining}s`)
+      }
+    }
+    update()
+    const id = window.setInterval(update, 1000)
+    return () => window.clearInterval(id)
+  }, [interval])
+
   const [refreshTrigger, setRefreshTrigger] = useState(0)
 
   useEffect(() => {
@@ -931,9 +956,14 @@ export default function EzayChart() {
     setBacktestSummary(null)
     ceTradeMarkersRef.current?.setMarkers([])
     peTradeMarkersRef.current?.setMarkers([])
-    lastDayVolRef.current.clear()
-    candleVolRef.current.clear()
+    apiCandleVolRef.current.clear()
   }, [selectedStrike])
+
+  // Clear volume baselines when symbols change — prevents race where WS seeds
+  // baseline with old symbol's dayVol then computes bogus delta against new symbol
+  useEffect(() => {
+    apiCandleVolRef.current.clear()
+  }, [ceSymbol, peSymbol])
 
   // Strategy visibility toggle — re-combine trades from cached response
   useEffect(() => {
@@ -981,7 +1011,7 @@ export default function EzayChart() {
     const strike = strikeNumRef.current
     if (!strike) return
 
-    const nowSec = Math.floor(Date.now() / 1000)
+    const nowSec = Math.floor((Date.now() + timeOffsetRef.current) / 1000)
     const bucketSec = intervalMin * 60
     const time = Math.floor(nowSec / bucketSec) * bucketSec as Time
 
@@ -998,32 +1028,17 @@ export default function EzayChart() {
     const peEntry = peSymbol ? wsData.get(`NFO:${peSymbol}`) : undefined
     const ceLtp = ceEntry?.data?.ltp || 0
     const peLtp = peEntry?.data?.ltp || 0
-    const ceVol = ceEntry?.data?.volume || 0
-    const peVol = peEntry?.data?.volume || 0
+    const ceDayVol = ceEntry?.data?.volume || 0
+    const peDayVol = peEntry?.data?.volume || 0
 
-    const tickVolDelta = (key: string, dayVol: number) => {
-      const prev = lastDayVolRef.current.get(key)
-      if (prev === undefined) {
-        // First tick after strike switch / page load — seed baseline,
-        // return null so caller keeps the API per-candle volume intact.
-        lastDayVolRef.current.set(key, dayVol)
-        return null
-      }
-      const delta = Math.max(0, dayVol - prev)
-      lastDayVolRef.current.set(key, dayVol)
-      const volKey = `vol_${time}`
-      const prevCandleVol = candleVolRef.current.get(volKey) ?? 0
-      candleVolRef.current.set(volKey, prevCandleVol + delta)
-      return prevCandleVol + delta
-    }
-    const ceTickVol = tickVolDelta('ce', ceVol)
-    const peTickVol = tickVolDelta('pe', peVol)
-    const combinedVolume = (ceTickVol ?? 0) + (peTickVol ?? 0)
+    if (!ceDayVol && !peDayVol) return
 
-    for (const [k] of candleVolRef.current) {
-      const kTime = parseInt(k.replace('vol_', ''), 10)
-      if (kTime < (time as number)) candleVolRef.current.delete(k)
+    const totalDayVol = ceDayVol + peDayVol
+    let historicalVol = 0
+    for (const [ts, vol] of apiCandleVolRef.current) {
+      if (ts < (time as number)) historicalVol += vol
     }
+    const currentCandleVol = Math.max(0, totalDayVol - historicalVol)
 
     const ceIntrinsic = Math.max(0, spot - strike)
     const peIntrinsic = Math.max(0, strike - spot)
@@ -1073,9 +1088,9 @@ export default function EzayChart() {
     if (peExtrinsicRef.current) updateLine('peExtrinsic', peExtrinsicRef.current, peExtrinsic)
     if (combinedExtrinsicRef.current) updateLine('combinedExtrinsic', combinedExtrinsicRef.current, combinedExtrinsic)
 
-    if (volumeRef.current && (ceTickVol !== null || peTickVol !== null)) {
+    if (volumeRef.current && totalDayVol > 0) {
       const dark = document.documentElement.classList.contains('dark')
-      volumeRef.current.update({ time: time as Time, value: combinedVolume, color: dark ? 'rgba(38,166,154,0.5)' : 'rgba(38,166,154,0.6)' })
+      volumeRef.current.update({ time: time as Time, value: currentCandleVol, color: dark ? 'rgba(38,166,154,0.5)' : 'rgba(38,166,154,0.6)' })
     }
   }, [wsData, ceSymbol, peSymbol])
 
@@ -1423,6 +1438,12 @@ export default function EzayChart() {
         </div>
         <div className="flex-1 min-h-0 min-w-0 relative" style={{ backgroundColor: t.panelDarker }}>
           <div ref={chartContainerRef} className="absolute inset-0" />
+          {candleCountdown && (
+            <div className="absolute top-2 z-10 rounded px-3 py-1.5 text-[15px] font-bold font-mono tracking-wide"
+              style={{ backgroundColor: themeMode === 'dark' ? 'rgba(0,0,0,0.85)' : 'rgba(255,255,255,0.9)', color: themeMode === 'dark' ? '#e5e7eb' : '#1f2937', border: `1px solid ${themeMode === 'dark' ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.1)'}`, right: 80 }}>
+              {candleCountdown}
+            </div>
+          )}
           {backtestSummary && (
             <div className="absolute top-2 left-2 z-10 rounded-md px-3 py-2 text-[10px] font-mono max-h-[60%] overflow-y-auto" style={{ backgroundColor: 'rgba(0,0,0,0.85)', color: '#d1d4dc', minWidth: 360, scrollbarWidth: 'thin' }}>
               <div className="font-semibold mb-1 text-[12px] text-white">Backtest Results</div>
