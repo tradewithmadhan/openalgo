@@ -280,16 +280,17 @@ export default function EzayChart() {
     setIrStrikes(signals.ir)
   }, [])
 
+  const [fetcherRunning, setFetcherRunning] = useState(false)
+
   const wsSymbols = useMemo(() => {
-    // Don't subscribe to WS in backtest mode
-    if (isBacktest) return []
+    if (isBacktest || !fetcherRunning) return []
     const syms: Array<{ symbol: string; exchange: string }> = [
       { symbol: 'NIFTY', exchange: 'NSE_INDEX' },
     ]
     if (ceSymbol) syms.push({ symbol: ceSymbol, exchange: 'NFO' })
     if (peSymbol) syms.push({ symbol: peSymbol, exchange: 'NFO' })
     return syms
-  }, [ceSymbol, peSymbol, isBacktest])
+  }, [ceSymbol, peSymbol, isBacktest, fetcherRunning])
 
   const { data: wsData, isConnected } = useMarketData({ symbols: wsSymbols, mode: 'LTP' })
 
@@ -909,10 +910,12 @@ export default function EzayChart() {
           setTimeOffset(timeOffsetRef.current)
         }
         if (!json?.is_running) {
+          setFetcherRunning(false)
           window.clearInterval(pollInterval)
           return
         }
         if (json?.status === 'success' && json?.is_running && json?.last_update) {
+          setFetcherRunning(true)
           const lastUpdate = new Date(json.last_update)
           const serverNow = getServerNow()
           if (lastUpdate.getMinutes() === serverNow.getMinutes()) {

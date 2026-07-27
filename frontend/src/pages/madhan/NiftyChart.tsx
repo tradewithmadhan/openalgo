@@ -227,7 +227,7 @@ export default function NiftyChart() {
   const [crosshairOHLCV, setCrosshairOHLCV] = useState<{ time: string; open: number; high: number; low: number; close: number; volume?: number; change?: number; changePct?: number } | null>(null)
   const [niftyStatus, setNiftyStatus] = useState<string>('')
   const [niftyRunning, setNiftyRunning] = useState<boolean>(false)
-  const wsSymbols = useMemo(() => [{ symbol: 'NIFTY', exchange: 'NSE_INDEX' }], [])
+  const wsSymbols = useMemo(() => niftyRunning ? [{ symbol: 'NIFTY', exchange: 'NSE_INDEX' }] : [], [niftyRunning])
   const { data: wsData, isConnected, isConnecting, error: wsError, connect: wsConnect } = useMarketData({
     symbols: wsSymbols,
     mode: 'LTP',
