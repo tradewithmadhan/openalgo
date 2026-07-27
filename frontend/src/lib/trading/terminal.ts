@@ -659,13 +659,18 @@ export class TradingTerminal {
       style,
       priceFormat: { type: 'custom', formatter: (p: number) => p.toFixed(dp) },
     })
+    // Volume rides an OVERLAY price scale inside the price pane rather than a
+    // pane of its own: it autoscales independently but draws no axis, so the
+    // right-hand column stays a clean price ladder instead of stacking a second
+    // numeric scale beside it. The top margin pins the bars to the bottom fifth.
     this.volume = this.chart.addSeries('histogram', {
-      paneIndex: 1,
+      paneIndex: 0,
+      priceScaleId: '',
       style: { color: volumeColor(mode, appMode) },
-      // Raw share counts run to nine digits and swallow the axis; 'volume'
-      // formats them as 1.20M / 3.40B.
+      // Raw share counts run to nine digits; 'volume' renders 1.20M / 3.40B.
       priceFormat: { type: 'volume' },
     })
+    this.volume.priceScale().setOptions({ marginTop: 0.82, marginBottom: 0 })
     this.setPriceData()
 
     // Default zoom: a FIXED number of recent bars, so the visible price range
@@ -691,18 +696,29 @@ export class TradingTerminal {
           )
         : null
 
-    // TradingView-style mini brand mark, bottom-left (bottom pane).
-    this.chart.addPrimitive(
-      new LogoWatermark({
-        src: '/images/openalgo-mark.svg',
+    // Mini brand mark, bottom-left. On pane 0 now that volume is an overlay
+    // there rather than a pane of its own — pane 1 only exists once an
+    // indicator asks for one, so anchoring to it would have been conditional.
+    const watermark = new LogoWatermark({
+        // The symbol on its own, not the app icon: that asset is a full-bleed
+        // plate with the mark filling under half of it and the wordmark
+        // beneath, so scaling it up scaled the padding too. This one's square
+        // viewBox is tight to the symbol, so height alone gives 32x32, and
+        // 3 of plate padding puts it in a 38x38 square.
+        src: '/images/openalgo-glyph.svg',
         position: 'bottom-left',
-        height: 34,
+        height: 32,
+        padding: 3,
         margin: 10,
         opacity: 0.85,
-        tint: light ? undefined : '#e4e8f4',
-      }),
-      1
-    )
+        // Mark alone at rest; the wording unrolls to its right on hover, so it
+        // names itself when looked at without occupying the corner always. The
+        // mark and text share one colour, so this sets both.
+        label: 'OpenAlgo Charts',
+        labelColor: light ? '#3c4354' : '#e4e8f4',
+        href: 'https://openalgo.in',
+    })
+    this.chart.addPrimitive(watermark, 0)
 
     // inline SELL · qty · BUY panel, docked top-left below the OHLC legend.
     if (!this.sym!.quoteOnly) {
@@ -751,6 +767,14 @@ export class TradingTerminal {
       }
     )
     this.chart.subscribeClick((id) => {
+      // The canvas cannot hold an anchor, so the mark reports the hit and the
+      // host navigates. noopener/noreferrer: the opened tab must not reach back
+      // into a page holding a broker session.
+      if (id === 'watermark') {
+        const href = watermark.href()
+        if (href) window.open(href, '_blank', 'noopener,noreferrer')
+        return
+      }
       if (id === 'trade:buy') return void this.placeFromMenu('BUY', 'MARKET')
       if (id === 'trade:sell') return void this.placeFromMenu('SELL', 'MARKET')
       if (id === 'position::close') return void this.exitPosition()
