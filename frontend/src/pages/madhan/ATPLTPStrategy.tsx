@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { 
   AlertTriangle, 
@@ -34,6 +34,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { cn } from '@/lib/utils'
+import { useMarketData } from '@/hooks/useMarketData'
 import { useAuthStore } from '@/stores/authStore'
 import { useThemeStore } from '@/stores/themeStore'
 import { useProfileMenuItems } from '@/hooks/useProfileMenuItems'
@@ -165,6 +166,15 @@ export default function ATPLTPStrategy() {
     final_signal: true,
   })
 
+  const [fetcherRunning, setFetcherRunning] = useState(false)
+  const [statusMessage, setStatusMessage] = useState('')
+  const liveSpotRef = useRef(0)
+  const [liveSpot, setLiveSpot] = useState(0)
+
+  const wsSymbols = useMemo(() => fetcherRunning ? [{ symbol: 'NIFTY', exchange: 'NSE_INDEX' }] : [], [fetcherRunning])
+
+  const { data: wsData } = useMarketData({ symbols: wsSymbols, mode: 'LTP' })
+
   const columnConfig = [
     { key: 'time', label: 'Time' },
     { key: 'spot_ltp', label: 'Spot LTP' },
@@ -253,10 +263,14 @@ export default function ATPLTPStrategy() {
           timeOffsetRef.current = serverMs - Date.now()
         }
         if (!json?.is_running) {
+          setFetcherRunning(false)
+          setStatusMessage(json?.message || 'Stopped')
           clearInterval(pollInterval)
           return
         }
         if (json?.status === 'success' && json?.is_running && json?.last_update) {
+          setFetcherRunning(true)
+          setStatusMessage(json?.message || 'Running')
           const lastUpdate = new Date(json.last_update)
           const serverNow = getServerNow()
           if (lastUpdate.getMinutes() === serverNow.getMinutes()) {
@@ -283,6 +297,16 @@ export default function ATPLTPStrategy() {
     scheduleNextMinute()
     return () => { clearTimeout(timer); clearInterval(pollInterval) }
   }, [fetchATPLTPData])
+
+  useEffect(() => {
+    if (!wsData || wsData.size === 0) return
+    const spotEntry = wsData.get('NSE_INDEX:NIFTY')
+    const spotLtp = spotEntry?.data?.ltp
+    if (spotLtp) {
+      liveSpotRef.current = spotLtp
+      setLiveSpot(spotLtp)
+    }
+  }, [wsData])
 
   const formatNumber = (value: number | null | undefined) => {
     if (value === null || value === undefined) return '-'
@@ -316,7 +340,7 @@ export default function ATPLTPStrategy() {
       } catch { return r.time }
     })
     const spotValues = asc.map((r) => r.spot_ltp ?? null)
-    const pointColors = asc.map((r) => {
+    const pointColors: string[] = asc.map((r) => {
       switch (r.final_signal) {
         case 'Bullish': return '#22c55e'
         case 'Bearish': return '#ef4444'
@@ -324,6 +348,13 @@ export default function ATPLTPStrategy() {
         default: return '#6b7280'
       }
     })
+
+    if (liveSpot > 0) {
+      const now = new Date(Date.now() + timeOffsetRef.current)
+      labels.push(now.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }))
+      spotValues.push(liveSpot)
+      pointColors.push('#3b82f6')
+    }
 
     // Trade signals come from backend (trade_signal: true/false per row)
     const annotations: AnnotationPoint[] = []
@@ -575,8 +606,9 @@ export default function ATPLTPStrategy() {
             </div>
             <span className="text-muted-foreground/30">|</span>
             <div className="flex items-center gap-1">
-               <span className="font-semibold">Auto-refresh:</span>
-               <span className="text-primary font-mono">30s</span>
+               <span className={cn('text-sm', fetcherRunning ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400')}>
+                 {statusMessage}
+               </span>
             </div>
           </div>
         </div>
