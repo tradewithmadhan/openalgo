@@ -187,6 +187,7 @@ export default function NiftyChart() {
   const [cePeSignalsActive, setCePeSignalsActive] = useState(false)
   const [cpSignalsActive, setCpSignalsActive] = useState(false)
   const [thSignalsActive, setThSignalsActive] = useState(false)
+  const [candleCountdown, setCandleCountdown] = useState('')
   const [refreshTrigger, setRefreshTrigger] = useState(0)
   const cePeSignalsActiveRef = useRef(false)
   const cpSignalsActiveRef = useRef(false)
@@ -1922,6 +1923,22 @@ export default function NiftyChart() {
   }, [interval])
 
   useEffect(() => {
+    const intervalMs = getIntervalSeconds(interval) * 1000
+    const tick = () => {
+      const now = Date.now() + timeOffsetRef.current
+      const secondsRemaining = Math.ceil((intervalMs - (now % intervalMs)) / 1000)
+      if (secondsRemaining <= 0) { setCandleCountdown(''); return }
+      const minutes = Math.floor(secondsRemaining / 60)
+      const secs = secondsRemaining % 60
+      const text = minutes > 0 ? `${minutes}m ${String(secs).padStart(2, '0')}s` : `${secs}s`
+      setCandleCountdown(text)
+    }
+    tick()
+    const id = window.setInterval(tick, 1000)
+    return () => window.clearInterval(id)
+  }, [interval])
+
+  useEffect(() => {
     if (!chartReady || coiTrendPaneRef.current) return
     createCoiTrendPane()
     fetchCoiTrend()
@@ -2920,6 +2937,26 @@ export default function NiftyChart() {
           }
         >
           <div ref={chartContainerRef} className="h-full w-full" />
+          {candleCountdown && (
+            <div
+              className="absolute z-30 pointer-events-none select-none"
+              style={{
+                right: 80,
+                top: 10,
+                padding: '3px 8px',
+                borderRadius: 4,
+                fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+                fontSize: 13,
+                fontWeight: 700,
+                letterSpacing: '0.03em',
+                ...(themeMode === 'dark'
+                  ? { backgroundColor: 'rgba(15,15,15,0.88)', color: '#e5e5e5', border: '1px solid rgba(255,255,255,0.12)' }
+                  : { backgroundColor: 'rgba(255,255,255,0.88)', color: '#1a1a1a', border: '1px solid rgba(0,0,0,0.12)' }),
+              }}
+            >
+              {candleCountdown}
+            </div>
+          )}
           {crosshairOHLCV && (
             <div
               className="absolute top-2 left-3 z-30 pointer-events-none select-none"
