@@ -11,11 +11,7 @@ import { persist } from 'zustand/middleware'
 
 export interface MadhanSignalToggles {
   atp_ltp_signal: boolean
-  // Future signal types:
-  // volume_spike: boolean
-  // th_touch: boolean
-  // coi_trend: boolean
-  // support_resistance: boolean
+  volume_spike: boolean
 }
 
 interface MadhanSignalStore extends MadhanSignalToggles {
@@ -26,11 +22,7 @@ export const useMadhanSignalStore = create<MadhanSignalStore>()(
   persist(
     (set) => ({
       atp_ltp_signal: true,
-      // Future defaults:
-      // volume_spike: true,
-      // th_touch: true,
-      // coi_trend: true,
-      // support_resistance: true,
+      volume_spike: true,
       setToggle: (key, value) => set({ [key]: value }),
     }),
     {

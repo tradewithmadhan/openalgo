@@ -12,6 +12,7 @@ from services.madhan.atp_signal import (
     compute_final_signal, compute_sma_from_series, compute_sma_signal,
     detect_trade_signals, process_historical_atp_data,
 )
+from services.madhan.volume_signal import compute_spike_flags
 from database.madhan_db import extract_strike, get_nifty_data, get_option_data, get_consistent_current_option_data, get_nifty_data_count, get_previous_day_oi, get_nth_candle_oi_for_all_symbols, get_current_day_historical_data, get_current_day_instrument_data, get_coi_history, get_valid_trading_day, SessionLocal, NiftyData, get_tracked_symbols
 from database.auth_db import get_api_key_for_tradingview
 from blueprints.react_app import serve_react_app
@@ -812,35 +813,7 @@ def nifty_ce_pe_volume_changes():
         pe_changes_res.append(total_pe_volume)
 
     combined = [abs(ce_changes_res[i]) + abs(pe_changes_res[i]) for i in range(len(ce_changes_res))]
-    vol_spike = [False] * len(combined)
-    WARMUP = 5
-    WINDOW = 20
-    THRESHOLD = 2.0
-    for i in range(WARMUP, len(combined)):
-        start = max(0, i - WINDOW)
-        window = combined[start:i]
-        if not window:
-            continue
-        avg = sum(window) / len(window)
-        if avg > 0 and combined[i] > avg * THRESHOLD:
-            vol_spike[i] = True
-
-    # In consecutive spike runs, drop spikes where volume decreased from previous
-    i = 0
-    while i < len(vol_spike):
-        if not vol_spike[i]:
-            i += 1
-            continue
-        run_start = i
-        while i < len(vol_spike) and vol_spike[i]:
-            i += 1
-        run_end = i
-        prev_vol = combined[run_start]
-        for k in range(run_start + 1, run_end):
-            if combined[k] < prev_vol:
-                vol_spike[k] = False
-            else:
-                prev_vol = combined[k]
+    vol_spike = compute_spike_flags(combined)
 
     return jsonify({'status': 'success', 'data': {'timestamps': timestamps_res, 'ce_changes': ce_changes_res, 'pe_changes': pe_changes_res, 'vol_spike': vol_spike}})
 

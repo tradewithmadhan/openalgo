@@ -17,6 +17,7 @@ from database.market_calendar_db import is_market_holiday
 from database.auth_db import get_first_available_api_key
 from utils.notifier import emit_notification
 from services.madhan.atp_signal import process_historical_atp_data
+from services.madhan.volume_signal import detect_volume_spike
 
 logger = get_logger(__name__)
 
@@ -491,6 +492,47 @@ class NiftyDataFetcher:
         except Exception as sig_err:
             logger.debug(f"Signal check skipped: {sig_err}")
 
+    def _check_and_emit_volume_spike(self, today_str):
+        """Check for volume spike using shared volume_signal module.
+
+        Computes CE/PE volume per candle across ALL strikes.
+        If the latest candle is a spike, emits notification.
+        """
+        try:
+            all_historical_data = get_current_day_historical_data()
+            if not all_historical_data:
+                return
+
+            result = detect_volume_spike(all_historical_data)
+            if not result:
+                return
+
+            last = result[-1]
+            if not last.get('is_spike'):
+                return
+
+            ce_vol = last.get('ce_volume', 0)
+            pe_vol = last.get('pe_volume', 0)
+            combined = last.get('combined', 0)
+
+            emit_notification(
+                'app_notification',
+                'Volume Spike',
+                f'CE: {ce_vol:,.0f} | PE: {pe_vol:,.0f} | Combined: {combined:,.0f}',
+                category='madhan',
+                level='warning',
+                data={
+                    'signal_type': 'volume_spike',
+                    'ce_volume': ce_vol,
+                    'pe_volume': pe_vol,
+                    'combined': combined,
+                }
+            )
+            logger.info(f"Volume spike emitted: CE: {ce_vol} PE: {pe_vol} Combined: {combined}")
+
+        except Exception as spike_err:
+            logger.debug(f"Volume spike check skipped: {spike_err}")
+
     def _calculate_and_store_previous_day_oi(self, today, prev_day):
         """
         Calculates and stores the last candle's OI and close for the previous trading day
@@ -813,6 +855,12 @@ class NiftyDataFetcher:
                     self._check_and_emit_trade_signal(today_str)
                 except Exception as sig_err:
                     logger.debug(f"Signal check skipped: {sig_err}")
+
+                # --- VOLUME SPIKE CHECK ---
+                try:
+                    self._check_and_emit_volume_spike(today_str)
+                except Exception as spike_err:
+                    logger.debug(f"Volume spike check skipped: {spike_err}")
 
             except Exception as e:
                 logger.error(f"Exception during incremental fetch: {e}")
