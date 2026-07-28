@@ -40,6 +40,7 @@ import { CePeVolumeChangesChart } from './components/CePeVolumeChangesChart'
 import { CePeStrikeVolumeChangesChart } from './components/CePeStrikeVolumeChangesChart'
 import { OiActionChart } from './components/OiActionChart'
 import { SupportResistanceChart } from './components/SupportResistanceChart'
+import { FutStocks } from './components/FutStocks'
 import { MultiOptionsChart } from './components/MultiOptionsChart'
 import { Dash } from './components/Dash'
 
@@ -624,7 +625,7 @@ export default function Madhan01() {
       )}
 
       <Tabs defaultValue="dash" className="w-full">
-      <TabsList className="grid w-full grid-cols-4 md:grid-cols-6 lg:grid-cols-11">
+      <TabsList className="grid w-full grid-cols-4 md:grid-cols-6 lg:grid-cols-12">
         <TabsTrigger value="dash">Dash</TabsTrigger>
         <TabsTrigger value="unified-oi-chain">Unified OI Chain</TabsTrigger>
         <TabsTrigger value="ce-pe-analysis">CE/PE OI</TabsTrigger>
@@ -636,6 +637,7 @@ export default function Madhan01() {
         <TabsTrigger value="support-resistance">Support & Resistance</TabsTrigger>
         <TabsTrigger value="data-check">Data Check</TabsTrigger>
         <TabsTrigger value="signal-settings">Signal Settings</TabsTrigger>
+        <TabsTrigger value="fut-stocks">FUT Stocks</TabsTrigger>
       </TabsList>
         
         <TabsContent value="dash">
@@ -1258,6 +1260,10 @@ export default function Madhan01() {
               )}
             </CardContent>
           </Card>
+        </TabsContent>
+
+        <TabsContent value="fut-stocks">
+          <FutStocks refreshTrigger={_refreshTrigger} />
         </TabsContent>
       </Tabs>
     </div>

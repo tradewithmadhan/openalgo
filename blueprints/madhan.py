@@ -2385,3 +2385,96 @@ def nifty_support_resistance():
             'coi_sr': coi_trend
         }
     })
+
+
+@madhan_bp.route('/api/fut-stocks')
+@check_session_validity
+def api_fut_stocks():
+    """Return FUT stocks with strike interval, computed from the in-memory symbol cache.
+
+    Uses just 3 bulk cache queries instead of 200+ per-underlying queries:
+    1. All NFO FUT symbols
+    2. All NFO CE symbols (for strike interval)
+    3. All NFO PE symbols (for strike interval)
+    """
+    import pytz
+    from collections import Counter, defaultdict
+    from datetime import date as date_type
+    from database.token_db_enhanced import fno_search_symbols, extract_underlying_from_symbol
+
+    def _parse_expiry(exp_str):
+        if not exp_str:
+            return None
+        for fmt in ('%d-%b-%y', '%d-%b-%Y'):
+            try:
+                return datetime.strptime(exp_str, fmt).date()
+            except ValueError:
+                continue
+        return None
+
+    # 1. Bulk fetch: ALL FUT + ALL CE + ALL PE on NFO
+    #    High limit needed — NFO has ~20k+ CE and ~20k+ PE symbols
+    fut_symbols = fno_search_symbols(exchange='NFO', instrumenttype='FUT', limit=50000)
+    ce_symbols = fno_search_symbols(exchange='NFO', instrumenttype='CE', limit=50000)
+    pe_symbols = fno_search_symbols(exchange='NFO', instrumenttype='PE', limit=50000)
+
+    # 2. Group FUTs by underlying — extract from symbol name if not in dict
+    by_underlying = defaultdict(list)
+    for s in fut_symbols:
+        u = s.get('underlying') or extract_underlying_from_symbol(s.get('symbol', ''), 'NFO')
+        if u:
+            by_underlying[u].append(s)
+
+    # 3. Pre-group option strikes by (underlying, expiry) — CE + PE combined
+    #    Extract underlying from symbol if not in dict
+    opt_by_und_exp: dict[tuple[str, str], list[float]] = defaultdict(list)
+    for s in ce_symbols + pe_symbols:
+        u = s.get('underlying') or extract_underlying_from_symbol(s.get('symbol', ''), 'NFO')
+        exp = s.get('expiry')
+        strike = s.get('strike', 0)
+        if u and exp and strike and strike > 0:
+            opt_by_und_exp[(u, exp)].append(strike)
+
+    # Sort strike lists once; pre-compute per-expiry mode intervals
+    opt_strikes_sorted: dict[tuple[str, str], list[float]] = {}
+    per_expiry_interval: dict[tuple[str, str], tuple[float, int]] = {}  # (u, exp) -> (mode, count)
+    for key, strikes in opt_by_und_exp.items():
+        sorted_strikes = sorted(set(strikes))
+        opt_strikes_sorted[key] = sorted_strikes
+        if len(sorted_strikes) >= 2:
+            diffs = [round(sorted_strikes[i + 1] - sorted_strikes[i], 2) for i in range(len(sorted_strikes) - 1)]
+            diff_counts = Counter(diffs)
+            mode_val, mode_cnt = diff_counts.most_common(1)[0]
+            per_expiry_interval[key] = (mode_val, mode_cnt)
+
+    # 4. Per underlying: nearest expiry FUT + strike interval from options
+    #    Strike interval is the mode across ALL expiries (weighted by diff count)
+    #    to avoid weekly expiries with non-standard strikes (e.g. 103.8, 111.8)
+    results = []
+    for underlying, futs in sorted(by_underlying.items()):
+        # Aggregate weighted intervals across all expiries for this underlying
+        weighted_intervals: dict[float, float] = defaultdict(float)
+        for (u, exp), (mode_val, mode_cnt) in per_expiry_interval.items():
+            if u == underlying:
+                weighted_intervals[mode_val] += mode_cnt
+
+        strike_interval = max(weighted_intervals, key=weighted_intervals.get) if weighted_intervals else 0
+
+        # Sort by expiry date ascending, pick nearest
+        futs_dated = [(_f, _parse_expiry(_f.get('expiry'))) for _f in futs]
+        futs_dated.sort(key=lambda x: (x[1] is None, x[1] or date_type.max))
+        nearest_fut = futs_dated[0][0]
+        nearest_expiry = nearest_fut.get('expiry')
+
+        results.append({
+            'underlying': underlying,
+            'symbol': nearest_fut.get('symbol', ''),
+            'brsymbol': nearest_fut.get('brsymbol', ''),
+            'expiry': nearest_expiry,
+            'lotsize': nearest_fut.get('lotsize', 0),
+            'tick_size': nearest_fut.get('tick_size', 0),
+            'strike_interval': round(strike_interval, 2),
+        })
+
+    logger.info(f"api_fut_stocks: returning {len(results)} FUT underlyings")
+    return jsonify({'status': 'success', 'data': results})
