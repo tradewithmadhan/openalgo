@@ -48,10 +48,12 @@ import {
   Tooltip,
   Legend,
   Filler,
+  TimeScale,
 } from 'chart.js'
 import { Line } from 'react-chartjs-2'
+import 'chartjs-adapter-date-fns'
 
-ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, Filler)
+ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, Filler, TimeScale)
 
 type AnnotationPoint = {
   index: number
@@ -71,7 +73,9 @@ const signalArrowPlugin = {
     const yScale = chart.scales.y
 
     for (const ann of annotations) {
-      const x = xScale.getPixelForValue(ann.index)
+      const data = chart.data.datasets[0]?.data as Array<{ x: number; y: number | null }> | undefined
+      const xValue = data?.[ann.index]?.x ?? ann.index
+      const x = xScale.getPixelForValue(xValue)
       const y = yScale.getPixelForValue(ann.yValue)
       const arrowSize = 10
 
@@ -334,12 +338,7 @@ export default function ATPLTPStrategy() {
 
   const chartData = (() => {
     const asc = [...atpLtpData].sort((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime())
-    const labels = asc.map((r) => {
-      try {
-        return new Date(r.time).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })
-      } catch { return r.time }
-    })
-    const spotValues = asc.map((r) => r.spot_ltp ?? null)
+    const dataPoints = asc.map((r) => ({ x: new Date(r.time).getTime(), y: r.spot_ltp ?? null }))
     const pointColors: string[] = asc.map((r) => {
       switch (r.final_signal) {
         case 'Bullish': return '#22c55e'
@@ -351,8 +350,7 @@ export default function ATPLTPStrategy() {
 
     if (liveSpot > 0) {
       const now = new Date(Date.now() + timeOffsetRef.current)
-      labels.push(now.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }))
-      spotValues.push(liveSpot)
+      dataPoints.push({ x: now.getTime(), y: liveSpot })
       pointColors.push('#3b82f6')
     }
 
@@ -378,15 +376,14 @@ export default function ATPLTPStrategy() {
     }
 
     return {
-      labels,
       datasets: [
         {
           label: 'Spot LTP',
-          data: spotValues,
+          data: dataPoints,
           borderColor: '#3b82f6',
           backgroundColor: 'rgba(59,130,246,0.1)',
           borderWidth: 2,
-          pointRadius: spotValues.map((_, i) => dotIndices.has(i) ? 4 : 0),
+          pointRadius: dataPoints.map((_, i) => dotIndices.has(i) ? 4 : 0),
           pointBackgroundColor: pointColors,
           pointBorderColor: pointColors,
           pointHoverRadius: 5,
@@ -394,8 +391,7 @@ export default function ATPLTPStrategy() {
           fill: false,
           segment: {
             borderColor: (ctx: any) => {
-              const i = ctx.p0DataIndex
-              const sig = asc[i]?.final_signal
+              const sig = asc[ctx.p0DataIndex]?.final_signal
               switch (sig) {
                 case 'Bullish': return '#22c55e'
                 case 'Bearish': return '#ef4444'
@@ -430,6 +426,22 @@ export default function ATPLTPStrategy() {
     },
     scales: {
       x: {
+        type: 'time' as const,
+        time: {
+          unit: 'minute' as const,
+          displayFormats: { minute: 'HH:mm' },
+          tooltipFormat: 'HH:mm',
+        },
+        min: (() => {
+          const d = new Date()
+          d.setHours(9, 15, 0, 0)
+          return d.getTime()
+        })(),
+        max: (() => {
+          const d = new Date()
+          d.setHours(15, 30, 0, 0)
+          return d.getTime()
+        })(),
         title: { display: true, text: 'Time' },
         ticks: { maxRotation: 45, autoSkip: true, maxTicksLimit: 30 },
       },
