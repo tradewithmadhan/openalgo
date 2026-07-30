@@ -889,10 +889,21 @@ export class PositionLinePrimitive {
               const W = scope.mediaSize.width
               self._width = W
               const dark = document.documentElement.classList.contains('dark')
+              const pillH = 22
+              const renderedPills: Array<{ top: number; bottom: number }> = []
               for (const pos of self._positions) {
                 if (self._hidden.has(pos.symbol)) continue
                 const y = self._series.priceToCoordinate(pos.entryPrice)
                 if (y == null) continue
+
+                // Offset overlapping pills downward
+                let pillY = y - pillH / 2
+                for (const rp of renderedPills) {
+                  if (pillY < rp.bottom && pillY + pillH > rp.top) {
+                    pillY = rp.bottom + 2
+                  }
+                }
+                renderedPills.push({ top: pillY, bottom: pillY + pillH })
                 const isLong = pos.side === 'LONG'
                 const lineColor = isLong
                   ? (dark ? 'rgba(52,211,153,0.6)' : 'rgba(52,211,153,0.5)')
@@ -919,8 +930,6 @@ export class PositionLinePrimitive {
                 // Pill group positioned at far right, ending before price tag
                 const tagW = 56
                 const gap = 3
-                const pillH = 22
-                const pillY = y - pillH / 2
 
                 // Measure segments first
                 ctx.font = 'bold 11px sans-serif'
@@ -1253,12 +1262,23 @@ export class OrderLinePrimitive {
               const W = scope.mediaSize.width
               self._width = W
               const dark = document.documentElement.classList.contains('dark')
+              const pillH = 22
+              const renderedPills: Array<{ top: number; bottom: number }> = []
               for (const ord of self._orders) {
                 if (self._hidden.has(ord.orderId)) continue
                 const isDragging = self._isDragging && self._dragOrderId === ord.orderId
                 const displayPrice = isDragging ? self._dragCurrentPrice : ord.price
                 const y = self._series.priceToCoordinate(displayPrice)
                 if (y == null) continue
+
+                // Offset overlapping pills downward
+                let pillY = y - pillH / 2
+                for (const rp of renderedPills) {
+                  if (pillY < rp.bottom && pillY + pillH > rp.top) {
+                    pillY = rp.bottom + 2
+                  }
+                }
+                renderedPills.push({ top: pillY, bottom: pillY + pillH })
                 const isBuy = ord.side === 'BUY'
                 const isSl = ord.orderType === 'SL' || ord.orderType === 'SL-M'
                 const lineColor = isBuy
@@ -1319,8 +1339,6 @@ export class OrderLinePrimitive {
                 const typeW = ctx.measureText(typeText).width + 12
                 const closeW = 20
                 const gap = 3
-                const pillH = 22
-                const pillY = y - pillH / 2
                 const tagW = 56
                 const totalW = sideW + gap + qtyW + gap + typeW + gap + closeW
                 const pillX = W - tagW - gap - totalW
