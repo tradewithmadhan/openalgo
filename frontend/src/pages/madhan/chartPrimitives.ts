@@ -951,6 +951,7 @@ export class PositionLinePrimitive {
                 ctx.roundRect(pillX, pillY, totalW, pillH, 4)
                 ctx.fill()
 
+                const textY = pillY + pillH / 2
                 let cx = pillX
 
                 // Badge (CE-LONG / PE-SHORT etc.)
@@ -962,7 +963,7 @@ export class PositionLinePrimitive {
                 ctx.fillStyle = '#fff'
                 ctx.textAlign = 'center'
                 ctx.textBaseline = 'middle'
-                ctx.fillText(badgeText, cx + badgeW / 2, y)
+                ctx.fillText(badgeText, cx + badgeW / 2, textY)
 
                 // Quantity
                 cx += badgeW + gap
@@ -972,7 +973,7 @@ export class PositionLinePrimitive {
                 ctx.fill()
                 ctx.font = 'bold 11px sans-serif'
                 ctx.fillStyle = qtyText
-                ctx.fillText(qtyText_, cx + qtyW / 2, y)
+                ctx.fillText(qtyText_, cx + qtyW / 2, textY)
 
                 // Price + PnL
                 cx += qtyW + gap
@@ -983,7 +984,7 @@ export class PositionLinePrimitive {
                 ctx.font = 'bold 11px sans-serif'
                 ctx.fillStyle = pos.pnl >= 0 ? '#60a5fa' : '#f87171'
                 ctx.textAlign = 'left'
-                ctx.fillText(pnlText, cx + 6, y)
+                ctx.fillText(pnlText, cx + 6, textY)
 
                 // Close button (X)
                 cx += infoW + gap
@@ -999,7 +1000,7 @@ export class PositionLinePrimitive {
                 ctx.font = '12px sans-serif'
                 ctx.fillStyle = closeX
                 ctx.textAlign = 'center'
-                ctx.fillText('×', cx + closeW / 2, y + 1)
+                ctx.fillText('×', cx + closeW / 2, textY)
 
                 // Cache the actual rendered positions for hit testing
                 self._hitAreas.set(pos.symbol, {
@@ -1349,6 +1350,7 @@ export class OrderLinePrimitive {
                 ctx.roundRect(pillX, pillY, totalW, pillH, 4)
                 ctx.fill()
 
+                const textY = pillY + pillH / 2
                 let cx = pillX
 
                 // Side badge (CE SELL / PE BUY etc.)
@@ -1360,7 +1362,7 @@ export class OrderLinePrimitive {
                 ctx.fillStyle = '#fff'
                 ctx.textAlign = 'center'
                 ctx.textBaseline = 'middle'
-                ctx.fillText(sideText, cx + sideW / 2, y)
+                ctx.fillText(sideText, cx + sideW / 2, textY)
 
                 // Quantity
                 cx += sideW + gap
@@ -1370,7 +1372,7 @@ export class OrderLinePrimitive {
                 ctx.fill()
                 ctx.font = 'bold 11px sans-serif'
                 ctx.fillStyle = qtyText
-                ctx.fillText(qtyStr, cx + qtyW / 2, y)
+                ctx.fillText(qtyStr, cx + qtyW / 2, textY)
 
                 // Order type — during drag shows @ price, otherwise LIMIT/SL/SL-M
                 cx += qtyW + gap
@@ -1386,7 +1388,7 @@ export class OrderLinePrimitive {
                 ctx.font = 'bold 11px sans-serif'
                 ctx.fillStyle = isDragging ? '#facc15' : typeTextColor
                 ctx.textAlign = 'center'
-                ctx.fillText(typeText, cx + typeW / 2, y)
+                ctx.fillText(typeText, cx + typeW / 2, textY)
 
                 // Close button (X)
                 cx += typeW + gap
@@ -1402,7 +1404,7 @@ export class OrderLinePrimitive {
                 ctx.font = '12px sans-serif'
                 ctx.fillStyle = closeX
                 ctx.textAlign = 'center'
-                ctx.fillText('×', cx + closeW / 2, y + 1)
+                ctx.fillText('×', cx + closeW / 2, textY)
 
                 // Cache the actual rendered positions for hit testing
                 self._hitAreas.set(ord.orderId, {
