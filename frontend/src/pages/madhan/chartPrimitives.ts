@@ -1,4 +1,4 @@
-import type { ISeriesApi } from 'lightweight-charts'
+import type { ISeriesApi, IChartApi, PrimitiveHoveredItem } from 'lightweight-charts'
 
 // ─── Transparency Helpers ────────────────────────────────────────────────
 
@@ -808,6 +808,8 @@ export interface PositionDatum {
   entryPrice: number
   pnl: number
   symbol: string
+  exchange: string
+  product: string
 }
 
 export class PositionLinePrimitive {
@@ -817,11 +819,61 @@ export class PositionLinePrimitive {
   _show = true
   _hidden = new Set<string>()
   _onClose?: (symbol: string) => void
+  _container: HTMLDivElement | null = null
+  _width = 0
+  _lastHovered: string | null = null
+  _hitAreas = new Map<string, { closeX: number; closeW: number; pillLeft: number; pillRight: number; pillY: number; pillH: number; y: number }>()
 
   constructor(series: ISeriesApi<any>, timeScale: any, onClose?: (symbol: string) => void) {
     this._series = series
     this._timeScale = timeScale
     this._onClose = onClose
+  }
+
+  attached(param: { chart: IChartApi; series: ISeriesApi<any> }) {
+    this._container = param.chart.chartElement()
+    this._container.addEventListener('mousedown', this._onMouseDown)
+    this._container.addEventListener('mousemove', this._onMouseMove)
+    this._container.addEventListener('mouseleave', this._onMouseLeave)
+  }
+
+  detached() {
+    this._container?.removeEventListener('mousedown', this._onMouseDown)
+    this._container?.removeEventListener('mousemove', this._onMouseMove)
+    this._container?.removeEventListener('mouseleave', this._onMouseLeave)
+    this._container = null
+  }
+
+  _onMouseDown = (e: MouseEvent) => {
+    if (!this._container) return
+    const symbol = this._hitTestCloseBtn(e.offsetX, e.offsetY)
+    if (symbol) {
+      this._onClose?.(symbol)
+      e.preventDefault()
+      e.stopPropagation()
+    }
+  }
+
+  _onMouseMove = (e: MouseEvent) => {
+    if (!this._container) return
+    const symbol = this._hitTestCloseBtn(e.offsetX, e.offsetY)
+    if (symbol) {
+      this._container.title = `Close ${symbol} position`
+      this._container.style.cursor = 'pointer'
+      this._lastHovered = symbol
+    } else if (this._lastHovered) {
+      this._container.title = ''
+      this._container.style.cursor = ''
+      this._lastHovered = null
+    }
+  }
+
+  _onMouseLeave = () => {
+    if (this._container) {
+      this._container.title = ''
+      this._container.style.cursor = ''
+    }
+    this._lastHovered = null
   }
 
   paneViews() {
@@ -835,6 +887,7 @@ export class PositionLinePrimitive {
             target.useMediaCoordinateSpace((scope: any) => {
               const ctx = scope.context
               const W = scope.mediaSize.width
+              self._width = W
               const dark = document.documentElement.classList.contains('dark')
               for (const pos of self._positions) {
                 if (self._hidden.has(pos.symbol)) continue
@@ -939,6 +992,13 @@ export class PositionLinePrimitive {
                 ctx.textAlign = 'center'
                 ctx.fillText('×', cx + closeW / 2, y + 1)
 
+                // Cache the actual rendered positions for hit testing
+                self._hitAreas.set(pos.symbol, {
+                  closeX: cx, closeW,
+                  pillLeft: pillX, pillRight: pillX + totalW,
+                  pillY, pillH, y,
+                })
+
                 // Price tag on right axis
                 const tagH = 18
                 const tagX = W - tagW
@@ -965,21 +1025,47 @@ export class PositionLinePrimitive {
   hidePosition(symbol: string) { this._hidden.add(symbol) }
   showPosition(symbol: string) { this._hidden.delete(symbol) }
 
-  hitTest(x: number, y: number, W: number, _H: number): string | null {
+  _hitTestPill(x: number, y: number): string | null {
     for (const pos of this._positions) {
       if (this._hidden.has(pos.symbol)) continue
-      const priceY = this._series.priceToCoordinate(pos.entryPrice)
-      if (priceY == null) continue
-      if (Math.abs(y - priceY) > 14) continue
-      const pillH = 22
-      const pillY = priceY - pillH / 2
-      if (y < pillY || y > pillY + pillH) continue
-      // Close button is always the last 20px before the price tag
-      const closeBtnRight = W - 56 - 3
-      const closeBtnLeft = closeBtnRight - 20
-      if (x >= closeBtnLeft && x <= closeBtnRight) return pos.symbol
+      const area = this._hitAreas.get(pos.symbol)
+      if (!area) continue
+      if (x >= area.pillLeft && x <= area.pillRight && y >= area.pillY && y <= area.pillY + area.pillH) {
+        if (x >= area.closeX && x <= area.closeX + area.closeW) continue
+        return pos.symbol
+      }
     }
     return null
+  }
+
+  _hitTestCloseBtn(x: number, y: number): string | null {
+    for (const pos of this._positions) {
+      if (this._hidden.has(pos.symbol)) continue
+      const area = this._hitAreas.get(pos.symbol)
+      if (!area) continue
+      if (y >= area.pillY && y <= area.pillY + area.pillH && x >= area.closeX && x <= area.closeX + area.closeW) {
+        return pos.symbol
+      }
+    }
+    return null
+  }
+
+  // Overloaded: hitTest(x, y) for lightweight-charts native, hitTest(x, y, W, H) for subscribeClick
+  hitTest(x: number, y: number): PrimitiveHoveredItem | null
+  hitTest(x: number, y: number, W: number, H: number): string | null
+  hitTest(x: number, y: number, W?: number, _H?: number): PrimitiveHoveredItem | null | string | null {
+    if (W == null) {
+      const symbol = this._hitTestPill(x, y)
+      if (symbol) {
+        return {
+          cursorStyle: 'pointer',
+          externalId: `position:${symbol}`,
+          zOrder: 'top',
+        } as PrimitiveHoveredItem
+      }
+      return null
+    }
+    return this._hitTestCloseBtn(x, y)
   }
 }
 
@@ -993,6 +1079,8 @@ export interface OrderLineDatum {
   price: number
   triggerPrice: number
   symbol: string
+  exchange: string
+  product: string
   orderId: string
 }
 
@@ -1002,11 +1090,155 @@ export class OrderLinePrimitive {
   _show = true
   _hidden = new Set<string>()
   _onClose?: (orderId: string) => void
+  _onModify?: (orderId: string, newPrice: number) => void
 
-  constructor(series: ISeriesApi<any>, onClose?: (orderId: string) => void) {
+  _chart: IChartApi | null = null
+  _container: HTMLDivElement | null = null
+  _isDragging = false
+  _dragOrderId: string | null = null
+  _dragOriginalPrice = 0
+  _dragCurrentPrice = 0
+  _width = 0
+  _lastHovered: string | null = null
+  _hitAreas = new Map<string, { closeX: number; closeW: number; pillLeft: number; pillRight: number; pillY: number; pillH: number; y: number }>()
+
+  constructor(
+    series: ISeriesApi<any>,
+    onClose?: (orderId: string) => void,
+    onModify?: (orderId: string, newPrice: number) => void,
+  ) {
     this._series = series
     this._onClose = onClose
+    this._onModify = onModify
   }
+
+  attached(param: { chart: IChartApi; series: ISeriesApi<any> }) {
+    this._chart = param.chart
+    this._container = param.chart.chartElement()
+    this._container.addEventListener('mousedown', this._onMouseDown)
+    this._container.addEventListener('mousemove', this._onTooltip)
+    this._container.addEventListener('mouseleave', this._onMouseLeave)
+    window.addEventListener('mousemove', this._onMouseMove)
+    window.addEventListener('mouseup', this._onMouseUp)
+  }
+
+  detached() {
+    this._container?.removeEventListener('mousedown', this._onMouseDown)
+    this._container?.removeEventListener('mousemove', this._onTooltip)
+    this._container?.removeEventListener('mouseleave', this._onMouseLeave)
+    window.removeEventListener('mousemove', this._onMouseMove)
+    window.removeEventListener('mouseup', this._onMouseUp)
+    this._chart = null
+    this._container = null
+  }
+
+  _hitTestPill(x: number, y: number): string | null {
+    for (const ord of this._orders) {
+      if (this._hidden.has(ord.orderId)) continue
+      const area = this._hitAreas.get(ord.orderId)
+      if (!area) continue
+      if (x >= area.pillLeft && x <= area.pillRight && y >= area.pillY && y <= area.pillY + area.pillH) {
+        if (x >= area.closeX && x <= area.closeX + area.closeW) continue
+        return ord.orderId
+      }
+    }
+    return null
+  }
+
+  _hitTestCloseBtn(x: number, y: number): string | null {
+    for (const ord of this._orders) {
+      if (this._hidden.has(ord.orderId)) continue
+      const area = this._hitAreas.get(ord.orderId)
+      if (!area) continue
+      if (y >= area.pillY && y <= area.pillY + area.pillH && x >= area.closeX && x <= area.closeX + area.closeW) {
+        return ord.orderId
+      }
+    }
+    return null
+  }
+
+  _onMouseDown = (e: MouseEvent) => {
+    if (!this._chart) return
+    // If clicking the × close button, fire close directly and block everything else
+    const closeHit = this._hitTestCloseBtn(e.offsetX, e.offsetY)
+    if (closeHit) {
+      this._onClose?.(closeHit)
+      e.preventDefault()
+      e.stopPropagation()
+      return
+    }
+    const orderId = this._hitTestPill(e.offsetX, e.offsetY)
+    if (!orderId) return
+    const ord = this._orders.find(o => o.orderId === orderId)
+    if (!ord) return
+    this._isDragging = true
+    this._dragOrderId = orderId
+    this._dragOriginalPrice = ord.price
+    this._dragCurrentPrice = ord.price
+    // Disable chart scroll so dragging the pill doesn't pan the chart
+    this._chart.applyOptions({ handleScroll: false })
+    e.preventDefault()
+    e.stopPropagation()
+  }
+
+  _onTooltip = (e: MouseEvent) => {
+    if (!this._container || this._isDragging) return
+    const closeHit = this._hitTestCloseBtn(e.offsetX, e.offsetY)
+    const pillHit = this._hitTestPill(e.offsetX, e.offsetY)
+    if (closeHit) {
+      this._container.title = `Cancel order ${closeHit}`
+      this._container.style.cursor = 'pointer'
+      this._lastHovered = closeHit
+    } else if (pillHit) {
+      this._container.title = `Drag to modify price`
+      this._container.style.cursor = 'grab'
+      this._lastHovered = null
+    } else if (this._lastHovered) {
+      this._container.title = ''
+      this._container.style.cursor = ''
+      this._lastHovered = null
+    }
+  }
+
+  _onMouseLeave = () => {
+    if (this._container) {
+      this._container.title = ''
+      this._container.style.cursor = ''
+    }
+    this._lastHovered = null
+  }
+
+  _onMouseMove = (e: MouseEvent) => {
+    if (!this._container || !this._series) return
+    if (this._isDragging && this._dragOrderId) {
+      const rect = this._container.getBoundingClientRect()
+      const localY = e.clientY - rect.top
+      const newPrice = this._series.coordinateToPrice(localY)
+      if (newPrice != null) {
+        this._dragCurrentPrice = newPrice as number
+        this.requestUpdate()
+      }
+      this._container.style.cursor = 'grabbing'
+      e.preventDefault()
+    }
+  }
+
+  _onMouseUp = (_e: MouseEvent) => {
+    if (!this._isDragging || !this._dragOrderId) return
+    const ord = this._orders.find(o => o.orderId === this._dragOrderId)
+    if (ord && ord.price !== this._dragCurrentPrice) {
+      this._onModify?.(this._dragOrderId, this._dragCurrentPrice)
+    }
+    this._isDragging = false
+    this._dragOrderId = null
+    // Re-enable chart scroll
+    if (this._chart) {
+      this._chart.applyOptions({ handleScroll: { pressedMouseMove: true, mouseWheel: true, horzTouchDrag: true, vertTouchDrag: true } })
+    }
+    this.requestUpdate()
+  }
+
+  requestUpdate() { try { (this as any).requestUpdate?.() } catch {} }
 
   paneViews() {
     const self = this
@@ -1019,10 +1251,13 @@ export class OrderLinePrimitive {
             target.useMediaCoordinateSpace((scope: any) => {
               const ctx = scope.context
               const W = scope.mediaSize.width
+              self._width = W
               const dark = document.documentElement.classList.contains('dark')
               for (const ord of self._orders) {
                 if (self._hidden.has(ord.orderId)) continue
-                const y = self._series.priceToCoordinate(ord.price)
+                const isDragging = self._isDragging && self._dragOrderId === ord.orderId
+                const displayPrice = isDragging ? self._dragCurrentPrice : ord.price
+                const y = self._series.priceToCoordinate(displayPrice)
                 if (y == null) continue
                 const isBuy = ord.side === 'BUY'
                 const isSl = ord.orderType === 'SL' || ord.orderType === 'SL-M'
@@ -1038,11 +1273,34 @@ export class OrderLinePrimitive {
                 const closeBorder = dark ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.2)'
                 const closeX = dark ? '#9ca3af' : '#6b7280'
 
-                // Dashed horizontal line
+                // Ghost line at original price when dragging
+                if (isDragging) {
+                  const origY = self._series.priceToCoordinate(self._dragOriginalPrice)
+                  if (origY != null) {
+                    ctx.save()
+                    ctx.strokeStyle = lineColor
+                    ctx.lineWidth = 1
+                    ctx.setLineDash([4, 4])
+                    ctx.globalAlpha = 0.4
+                    ctx.beginPath()
+                    ctx.moveTo(0, origY)
+                    ctx.lineTo(W, origY)
+                    ctx.stroke()
+                    ctx.restore()
+                  }
+                }
+
+                // Dashed horizontal line at current position
                 ctx.save()
                 ctx.strokeStyle = lineColor
                 ctx.lineWidth = 1
                 ctx.setLineDash([6, 4])
+                if (isDragging) {
+                  ctx.lineWidth = 2
+                  ctx.strokeStyle = isBuy
+                    ? (dark ? 'rgba(0,200,81,0.8)' : 'rgba(0,180,60,0.75)')
+                    : (dark ? 'rgba(239,68,68,0.8)' : 'rgba(220,50,50,0.75)')
+                }
                 ctx.beginPath()
                 ctx.moveTo(0, y)
                 ctx.lineTo(W, y)
@@ -1055,7 +1313,9 @@ export class OrderLinePrimitive {
                 const sideW = ctx.measureText(sideText).width + 12
                 const qtyStr = String(ord.qty)
                 const qtyW = ctx.measureText(qtyStr).width + 10
-                const typeText = ord.orderType === 'SL-M' ? `SL-M @ ${ord.triggerPrice.toFixed(2)}` : ord.orderType === 'SL' ? `SL @ ${ord.triggerPrice.toFixed(2)}` : `LIMIT @ ${ord.price.toFixed(2)}`
+                const typeText = isDragging
+                  ? `@ ${displayPrice.toFixed(2)}`
+                  : ord.orderType === 'SL-M' ? `SL-M @ ${ord.triggerPrice.toFixed(2)}` : ord.orderType === 'SL' ? `SL @ ${ord.triggerPrice.toFixed(2)}` : `LIMIT @ ${ord.price.toFixed(2)}`
                 const typeW = ctx.measureText(typeText).width + 12
                 const closeW = 20
                 const gap = 3
@@ -1066,7 +1326,7 @@ export class OrderLinePrimitive {
                 const pillX = W - tagW - gap - totalW
 
                 // Background
-                ctx.fillStyle = pillBg
+                ctx.fillStyle = isDragging ? (dark ? 'rgba(30,30,50,0.95)' : 'rgba(240,240,255,0.98)') : pillBg
                 ctx.beginPath()
                 ctx.roundRect(pillX, pillY, totalW, pillH, 4)
                 ctx.fill()
@@ -1094,14 +1354,19 @@ export class OrderLinePrimitive {
                 ctx.fillStyle = qtyText
                 ctx.fillText(qtyStr, cx + qtyW / 2, y)
 
-                // Order type (LIMIT / SL / SL-M)
+                // Order type — during drag shows @ price, otherwise LIMIT/SL/SL-M
                 cx += qtyW + gap
-                ctx.fillStyle = typeColor
+                if (isDragging) {
+                  // Highlight the new price during drag
+                  ctx.fillStyle = dark ? 'rgba(250,204,21,0.2)' : 'rgba(234,179,8,0.15)'
+                } else {
+                  ctx.fillStyle = typeColor
+                }
                 ctx.beginPath()
                 ctx.roundRect(cx, pillY, typeW, pillH, 4)
                 ctx.fill()
                 ctx.font = 'bold 11px sans-serif'
-                ctx.fillStyle = typeTextColor
+                ctx.fillStyle = isDragging ? '#facc15' : typeTextColor
                 ctx.textAlign = 'center'
                 ctx.fillText(typeText, cx + typeW / 2, y)
 
@@ -1121,18 +1386,25 @@ export class OrderLinePrimitive {
                 ctx.textAlign = 'center'
                 ctx.fillText('×', cx + closeW / 2, y + 1)
 
-                // Price tag on right axis
+                // Cache the actual rendered positions for hit testing
+                self._hitAreas.set(ord.orderId, {
+                  closeX: cx, closeW,
+                  pillLeft: pillX, pillRight: pillX + totalW,
+                  pillY, pillH, y,
+                })
+
+                // Price tag on right axis — shows displayPrice during drag
                 const tagH = 18
                 const tagX = W - tagW
                 const tagY = y - tagH / 2
-                ctx.fillStyle = badgeColor
+                ctx.fillStyle = isDragging ? '#facc15' : badgeColor
                 ctx.beginPath()
                 ctx.roundRect(tagX, tagY, tagW, tagH, 3)
                 ctx.fill()
                 ctx.font = 'bold 10px sans-serif'
-                ctx.fillStyle = '#fff'
+                ctx.fillStyle = isDragging ? '#000' : '#fff'
                 ctx.textAlign = 'center'
-                ctx.fillText(ord.price.toFixed(2), tagX + tagW / 2, y)
+                ctx.fillText(displayPrice.toFixed(2), tagX + tagW / 2, y)
               }
             })
           },
@@ -1141,25 +1413,30 @@ export class OrderLinePrimitive {
     }]
   }
 
-  setData(orders: OrderLineDatum[]) { this._orders = orders; try { (this as any).requestUpdate?.() } catch {} }
+  setData(orders: OrderLineDatum[]) { this._orders = orders; this.requestUpdate() }
   setVisible(v: boolean) { this._show = v }
 
-  hideOrder(orderId: string) { this._hidden.add(orderId) }
-  showOrder(orderId: string) { this._hidden.delete(orderId) }
+  hideOrder(orderId: string) { this._hidden.add(orderId); this.requestUpdate() }
+  showOrder(orderId: string) { this._hidden.delete(orderId); this.requestUpdate() }
 
-  hitTest(x: number, y: number, W: number, _H: number): string | null {
-    for (const ord of this._orders) {
-      if (this._hidden.has(ord.orderId)) continue
-      const priceY = this._series.priceToCoordinate(ord.price)
-      if (priceY == null) continue
-      const pillH = 22
-      const pillY = priceY - pillH / 2
-      if (y < pillY || y > pillY + pillH) continue
-      const closeBtnRight = W - 56 - 3
-      const closeBtnLeft = closeBtnRight - 20
-      if (x >= closeBtnLeft && x <= closeBtnRight) return ord.orderId
+  // Overloaded: hitTest(x, y) for lightweight-charts native, hitTest(x, y, W, H) for subscribeClick
+  hitTest(x: number, y: number): PrimitiveHoveredItem | null
+  hitTest(x: number, y: number, W: number, H: number): string | null
+  hitTest(x: number, y: number, W?: number, _H?: number): PrimitiveHoveredItem | null | string | null {
+    if (W == null) {
+      // Native lightweight-charts call — return PrimitiveHoveredItem for cursor
+      const orderId = this._hitTestPill(x, y)
+      if (orderId) {
+        return {
+          cursorStyle: this._isDragging ? 'grabbing' : 'grab',
+          externalId: `order:${orderId}`,
+          zOrder: 'top',
+        } as PrimitiveHoveredItem
+      }
+      return null
     }
-    return null
+    // subscribeClick call — return orderId for × close button
+    return this._hitTestCloseBtn(x, y)
   }
 }
 

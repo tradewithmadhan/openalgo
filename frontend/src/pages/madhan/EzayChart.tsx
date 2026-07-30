@@ -30,6 +30,7 @@ import { useThemeStore } from '@/stores/themeStore'
 import { useAuthStore } from '@/stores/authStore'
 import { useProfileMenuItems } from '@/hooks/useProfileMenuItems'
 import { cn } from '@/lib/utils'
+import { tradingApi } from '@/api/trading'
 import { setTimeOffset, getTimeOffset } from '@/utils/timeSync'
 import { chartTheme } from './chartTheme'
 import { PositionLinePrimitive, type PositionDatum, OrderLinePrimitive, type OrderLineDatum } from './chartPrimitives'
@@ -180,6 +181,9 @@ export default function EzayChart() {
 
   const ceOrderRef = useRef<OrderLinePrimitive | null>(null)
   const peOrderRef = useRef<OrderLinePrimitive | null>(null)
+  const handleClosePositionRef = useRef<(symbol: string, exchange: string, product: string) => void>(() => {})
+  const handleCancelOrderRef = useRef<(orderId: string) => void>(() => {})
+  const handleModifyOrderRef = useRef<(orderId: string, newPrice: number) => void>(() => {})
   const backtestTradesRef = useRef<BacktestTrade[]>([])
   const backtestSummaryRef = useRef<{ total: number; wins: number; losses: number; winRate: number; totalPnl: number; totalPnlAmount: number } | null>(null)
   const firstSignalTimeRef = useRef(0)
@@ -432,31 +436,31 @@ export default function EzayChart() {
     peTradeMarkersRef.current = createSeriesMarkers(peSeriesRef.current, [])
 
     const cePos = new PositionLinePrimitive(ceSeriesRef.current, chart.timeScale(), (sym) => {
-      cePositionRef.current?.hidePosition(sym)
-      cePositionDataRef.current = null
-      cePositionRef.current?.setData([])
+      const pos = cePositionDataRef.current
+      if (pos) handleClosePositionRef.current(pos.symbol, pos.exchange, pos.product)
     })
     cePositionRef.current = cePos
     ceSeriesRef.current.attachPrimitive(cePos as any)
 
     const pePos = new PositionLinePrimitive(peSeriesRef.current, chart.timeScale(), (sym) => {
-      pePositionRef.current?.hidePosition(sym)
-      pePositionDataRef.current = null
-      pePositionRef.current?.setData([])
+      const pos = pePositionDataRef.current
+      if (pos) handleClosePositionRef.current(pos.symbol, pos.exchange, pos.product)
     })
     pePositionRef.current = pePos
     peSeriesRef.current.attachPrimitive(pePos as any)
 
     const ceOrd = new OrderLinePrimitive(ceSeriesRef.current, (orderId) => {
-      ceOrderRef.current?.hideOrder(orderId)
-      ceOrderRef.current?.setData([])
+      handleCancelOrderRef.current(orderId)
+    }, (orderId, newPrice) => {
+      handleModifyOrderRef.current(orderId, newPrice)
     })
     ceOrderRef.current = ceOrd
     ceSeriesRef.current.attachPrimitive(ceOrd as any)
 
     const peOrd = new OrderLinePrimitive(peSeriesRef.current, (orderId) => {
-      peOrderRef.current?.hideOrder(orderId)
-      peOrderRef.current?.setData([])
+      handleCancelOrderRef.current(orderId)
+    }, (orderId, newPrice) => {
+      handleModifyOrderRef.current(orderId, newPrice)
     })
     peOrderRef.current = peOrd
     peSeriesRef.current.attachPrimitive(peOrd as any)
@@ -798,9 +802,9 @@ export default function EzayChart() {
         const pnl = Number(p.pnl) || 0
         const side: 'LONG' | 'SHORT' = net > 0 ? 'LONG' : 'SHORT'
         if (sym === curCe) {
-          foundCe = { side, type: 'CE', qty: Math.abs(net), entryPrice: avg, pnl, symbol: sym }
+          foundCe = { side, type: 'CE', qty: Math.abs(net), entryPrice: avg, pnl, symbol: sym, exchange: p.exchange, product: p.product }
         } else if (sym === curPe) {
-          foundPe = { side, type: 'PE', qty: Math.abs(net), entryPrice: avg, pnl, symbol: sym }
+          foundPe = { side, type: 'PE', qty: Math.abs(net), entryPrice: avg, pnl, symbol: sym, exchange: p.exchange, product: p.product }
         }
       }
       cePositionDataRef.current = foundCe
@@ -836,9 +840,14 @@ export default function EzayChart() {
           type: sym === curCe ? 'CE' : 'PE',
           orderType: o.pricetype,
           qty: Math.abs(Number(o.quantity)),
-          price: Number(o.price) || Number(o.trigger_price) || 0,
+          // For SL/SL-M: line at trigger price; for LIMIT: line at limit price
+          price: (o.pricetype === 'SL' || o.pricetype === 'SL-M')
+            ? (Number(o.trigger_price) || 0)
+            : (Number(o.price) || 0),
           triggerPrice: Number(o.trigger_price) || 0,
           symbol: sym,
+          exchange: o.exchange,
+          product: o.product,
           orderId: o.orderid,
         }
         if (ord.price <= 0) continue
@@ -849,6 +858,67 @@ export default function EzayChart() {
       peOrderRef.current?.setData(peOrders)
     } catch {}
   }, [])
+
+  const handleClosePosition = useCallback(async (symbol: string, exchange: string, product: string) => {
+    cePositionRef.current?.hidePosition(symbol)
+    pePositionRef.current?.hidePosition(symbol)
+    cePositionDataRef.current = null
+    pePositionDataRef.current = null
+    cePositionRef.current?.setData([])
+    pePositionRef.current?.setData([])
+    try {
+      await tradingApi.closePosition(symbol, exchange, product)
+      fetchPositions()
+    } catch { fetchPositions() }
+  }, [fetchPositions])
+  handleClosePositionRef.current = handleClosePosition
+
+  const handleCancelOrder = useCallback(async (orderId: string) => {
+    ceOrderRef.current?.hideOrder(orderId)
+    peOrderRef.current?.hideOrder(orderId)
+    try {
+      await tradingApi.cancelOrder(orderId)
+      fetchOrders()
+    } catch { fetchOrders() }
+  }, [fetchOrders])
+  handleCancelOrderRef.current = handleCancelOrder
+
+  const handleModifyOrder = useCallback(async (orderId: string, newPrice: number) => {
+    const ceOrders = ceOrderRef.current?._orders || []
+    const peOrders = peOrderRef.current?._orders || []
+    const ord = ceOrders.find(o => o.orderId === orderId) || peOrders.find(o => o.orderId === orderId)
+    if (!ord) return
+    try {
+      const isSl = ord.orderType === 'SL' || ord.orderType === 'SL-M'
+      const isLimit = ord.orderType === 'LIMIT'
+      // Round to nearest 0.05 with minimum 0.05 gap from trigger
+      const round005 = (v: number, up: boolean) => {
+        const step = 0.05
+        return up ? Math.ceil(v / step) * step : Math.floor(v / step) * step
+      }
+      const triggerPrice = isSl ? newPrice : 0
+      const limitPrice = isSl
+        ? (ord.side === 'BUY'
+            ? round005(newPrice + 0.05, true)   // BUY SL: limit above trigger
+            : round005(newPrice - 0.05, false)) // SELL SL: limit below trigger
+        : (isLimit ? newPrice : 0)
+      const res = await tradingApi.modifyOrder(orderId, {
+        symbol: ord.symbol,
+        exchange: ord.exchange,
+        action: ord.side,
+        product: ord.product,
+        pricetype: ord.orderType,
+        quantity: ord.qty,
+        price: limitPrice,
+        trigger_price: triggerPrice,
+        disclosed_quantity: 0,
+      })
+      if (res.status === 'success') {
+        fetchOrders()
+      }
+    } catch {}
+  }, [fetchOrders])
+  handleModifyOrderRef.current = handleModifyOrder
 
   useEffect(() => {
     if (!chartContainerRef.current) return
@@ -896,28 +966,24 @@ export default function EzayChart() {
       const H = chartContainerRef.current?.clientHeight || 0
       const hitCe = cePositionRef.current?.hitTest(x, y, W, H)
       if (hitCe) {
-        cePositionRef.current?.hidePosition(hitCe)
-        cePositionDataRef.current = null
-        cePositionRef.current?.setData([])
+        const pos = cePositionDataRef.current
+        if (pos) handleClosePositionRef.current(pos.symbol, pos.exchange, pos.product)
         return
       }
       const hitPe = pePositionRef.current?.hitTest(x, y, W, H)
       if (hitPe) {
-        pePositionRef.current?.hidePosition(hitPe)
-        pePositionDataRef.current = null
-        pePositionRef.current?.setData([])
+        const pos = pePositionDataRef.current
+        if (pos) handleClosePositionRef.current(pos.symbol, pos.exchange, pos.product)
         return
       }
       const hitCeOrd = ceOrderRef.current?.hitTest(x, y, W, H)
       if (hitCeOrd) {
-        ceOrderRef.current?.hideOrder(hitCeOrd)
-        ceOrderRef.current?.setData([])
+        handleCancelOrderRef.current(hitCeOrd as string)
         return
       }
       const hitPeOrd = peOrderRef.current?.hitTest(x, y, W, H)
       if (hitPeOrd) {
-        peOrderRef.current?.hideOrder(hitPeOrd)
-        peOrderRef.current?.setData([])
+        handleCancelOrderRef.current(hitPeOrd as string)
         return
       }
     })

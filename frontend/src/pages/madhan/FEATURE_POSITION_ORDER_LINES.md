@@ -5,92 +5,105 @@ Display open positions and pending orders (LIMIT / SL / SL-M) as horizontal line
 
 ---
 
-## Current Implementation (View-Only)
+## Phase 2: Interactive Position & Order Lines (COMPLETED)
 
-### Position Lines
-- **Data source**: `POST /api/v1/positionbook` with `{apikey}` body
-- **Matching**: Filters positions by current `ceSymbol` / `peSymbol` (exact symbol match)
-- **Refresh**: On symbol change + every 30s periodic refresh
-- **Primitive**: `PositionLinePrimitive` in `chartPrimitives.ts`
-- **Visual**:
-  - Dashed horizontal line at entry price (green for LONG, purple for SHORT)
-  - Pill group (right-aligned before 56px price tag):
-    - `CE-LONG` / `PE-SHORT` badge (light green / light purple)
-    - Quantity badge
-    - `@ entryPrice ₹+pnl` text (blue for positive, red for negative, bold)
-    - Close button (×)
-  - Price tag on right axis (matches badge color)
-- **Hide**: Click × button hides the line (does NOT close the position)
+### What Was Built
 
-### Order Lines
-- **Data source**: `POST /api/v1/orderbook` with `{apikey}` body
-- **Matching**: Filters open/pending/trigger-pending orders by `ceSymbol` / `peSymbol`; excludes MARKET orders
-- **Refresh**: On symbol change + every 30s periodic refresh
-- **Primitive**: `OrderLinePrimitive` in `chartPrimitives.ts`
-- **Visual**:
-  - Dashed horizontal line at order price (green for BUY, red for SELL)
-  - Pill group (right-aligned before 56px price tag):
-    - `CE SELL` / `PE BUY` badge (light red / light green)
-    - Quantity badge
-    - `LIMIT @ price` / `SL @ triggerPrice` / `SL-M @ triggerPrice` badge (amber for SL types, neutral for LIMIT)
-    - Close button (×)
-  - Price tag on right axis
-- **Hide**: Click × button hides the line (does NOT cancel the order)
+#### Position Lines — Close from Chart
+- **Close button (×)**: Clicking × on a position line closes the position immediately
+  - Calls `tradingApi.closePosition(symbol, exchange, product)` → `POST /close_position`
+  - Optimistic UI: hides line immediately, refreshes positions on success or failure
+  - `mousedown` handler on the × fires `_onClose` directly (no coordinate mismatch)
+- **Cursor feedback**: `pointer` cursor + tooltip "Close SYMBOL position" on hover
+- **Data**: `PositionDatum` includes `exchange` and `product` fields for the close API call
 
-### Theme Support
-Both primitives detect `document.documentElement.classList.contains('dark')` on every draw call:
-- **Dark mode**: Semi-transparent dark pill backgrounds, white text
-- **Light mode**: White pill backgrounds with subtle borders, dark text
-- Line opacity adjusted for readability in each mode
+#### Order Lines — Cancel & Drag-to-Modify
+- **Cancel button (×)**: Clicking × on an order line cancels the order immediately
+  - Calls `tradingApi.cancelOrder(orderId)` → `POST /cancel_order`
+  - Optimistic UI: hides line immediately, refreshes orders on success or failure
+  - `mousedown` handler on the × fires `_onClose` directly
+- **Drag to modify price**: Dragging a pill horizontally changes the order price
+  - `mousedown` on pill body → `mousemove` tracks vertical position via `coordinateToPrice()` → `mouseup` calls `handleModifyOrder(orderId, newPrice)` via `tradingApi.modifyOrder()`
+  - Chart scroll disabled during drag (`handleScroll: false`)
+  - Visual feedback: ghost dashed line at original price, bold line at dragged position, yellow `@ newPrice` text
+  - Cursor: `grab` on hover, `grabbing` during drag
+- **SL order price rounding**: Trigger and limit price differ by min 0.05, rounded to nearest 0.05 step
+  - BUY SL: `ceil((trigger + 0.05) / 0.05) * 0.05` (limit above trigger)
+  - SELL SL: `floor((trigger - 0.05) / 0.05) * 0.05` (limit below trigger)
+- **Cursor feedback**: `grab` cursor + tooltip "Drag to modify price" on pill hover; `pointer` + "Cancel order..." on × hover
+- **Data**: `OrderLineDatum` includes `exchange`, `product`, and `action` fields for the modify API call
 
-### Data Flow
-```
-fetchPositions() / fetchOrders()
-  → filters by ceSymbol / peSymbol
-  → sets primitive data via refs (no React state, no re-renders)
-  → WS useEffect updates position PnL live from CE/PE LTP
-  → primitive.setData() triggers chart redraw via requestUpdate()
-```
+#### Hit Detection — Cached Hit Areas
+- **Root cause of × misalignment**: `_getOrderPillRect` / `_getPillRect` recalculated pill geometry via `ctx.measureText()` outside the render callback. The canvas context state inside `useMediaCoordinateSpace` differs from event handlers, causing the recalculated × position to shift from the rendered ×.
+- **Fix**: Both primitives cache the actual rendered pixel positions (`closeX`, `pillLeft`, `pillRight`, `pillY`, `pillH`, `y`) during `draw()` into a `_hitAreas` Map. Hit tests (`_hitTestCloseBtn`, `_hitTestPill`) use these cached values directly — zero recalculation, zero mismatch.
+- **Removed**: `_getOrderPillRect()` and `_getPillRect()` methods (no longer needed)
+
+#### Stale Closure Fix
+- `subscribeClick` handler and primitive constructors delegate to refs (`handleClosePositionRef`, `handleCancelOrderRef`, `handleModifyOrderRef`) to avoid stale closure issues
+- Refs updated after each `useCallback` definition
+
+#### Order Line Price Display
+- **SL/SL-M orders**: `ord.price` set to trigger price (line positioned at trigger level)
+- **LIMIT orders**: `ord.price` set to limit price
+
+### API Endpoints Used
+| Endpoint | Method | Body | Purpose |
+|----------|--------|------|---------|
+| `/close_position` | POST | `{apikey, symbol, exchange, product}` | Close position from chart |
+| `/cancel_order` | POST | `{apikey, orderid}` | Cancel order from chart |
+| `/modify_order` | POST | `{apikey, strategy, exchange, symbol, product, orderid, order_type, trigger_price, quantity, price, validity, disclosed_quantity}` | Modify order price via drag |
+
+### Visual Design
+| Element | Position Line | Order Line |
+|---------|--------------|------------|
+| Dashed line | Green (LONG) / Purple (SHORT) | Green (BUY) / Red (SELL) |
+| Badge | `CE-LONG` / `PE-SHORT` | `CE SELL` / `PE BUY` |
+| Info text | `@ entryPrice ₹+pnl` (blue/red bold) | `LIMIT @ price` / `SL @ trigger` (amber for SL) |
+| × button | Close position | Cancel order |
+| Price tag | Entry price | Order/trigger price |
+| Drag behavior | None | Horizontal drag to modify price |
+| Cursor (pill) | `pointer` | `grab` / `grabbing` during drag |
+| Cursor (×) | `pointer` | `pointer` |
 
 ### Key Files
 | File | Purpose |
 |------|---------|
-| `chartPrimitives.ts` | `PositionLinePrimitive`, `OrderLinePrimitive`, `PositionDatum`, `OrderLineDatum` |
-| `EzayChart.tsx` | `fetchPositions()`, `fetchOrders()`, primitive refs, WS PnL update, click handlers |
+| `chartPrimitives.ts` | `PositionLinePrimitive` (cached hit areas, mousedown close), `OrderLinePrimitive` (cached hit areas, mousedown cancel, drag-to-modify, SL rounding) |
+| `EzayChart.tsx` | `fetchPositions()`, `fetchOrders()`, primitive refs, WS PnL update, `handleClosePosition()`, `handleCancelOrder()`, `handleModifyOrder()`, stale closure refs |
+| `trading.ts` | `closePosition()`, `cancelOrder()`, `modifyOrder()` API calls |
+| `trading.ts` | `Position` and `Order` type interfaces |
 
 ### Architecture Notes
-- **Refs only**: Position/order data stored in refs (`cePositionDataRef`, `pePositionDataRef`, `ceOrderRef`, `peOrderRef`), not React state — avoids re-renders on every WS tick
-- **Immutable updates**: Position PnL updates create new objects (`{ ...cePos, pnl }`) so lightweight-charts detects changes
-- **requestUpdate()**: Called in `setData()` to signal chart redraw
-- **Strike change**: Clears all position and order primitives
+- **Refs only**: Position/order data stored in refs (no React state, no re-renders on WS tick)
+- **Immutable updates**: `setData()` creates new arrays; PnL updates create new objects
+- **requestUpdate()**: Signals lightweight-charts to redraw
+- **DOM event lifecycle**: `attached()` stores chart reference, attaches mousedown/mousemove/mouseup; `detached()` removes listeners
+- **Strike change**: Clears all position and order primitives + `_hitAreas` cache
+- **Optimistic UI**: Close/cancel hide the line immediately; refresh confirms or reverts
 
 ---
 
-## Phase 2: Editable Orders (Planned)
+## Pending / Future Work
 
-### Goal
-Make order lines interactive — user can close, modify price, or move SL trigger directly from the chart.
+### High Priority
+1. **Commit & push Phase 2** — All changes are local, not yet committed
+2. **Remove debug red outlines** — Red `strokeRect` around × is for debugging, should be removed before production
+3. **Confirmation dialog** — Optional: confirm before close/cancel/modify (currently immediate action)
+4. **Error handling toasts** — Show success/failure toasts after close/cancel/modify operations
+5. **Order modify validation** — Check order status before modify (don't modify filled/cancelled orders)
 
-### Planned Features
-1. **Cancel Order**: × button sends `POST /api/v1/cancelorder` with `{apikey, orderid}`
-2. **Modify Limit Price**: Drag pill to new price level → `POST /api/v1/modifyorder` with new price
-3. **Modify SL Trigger**: Drag SL pill to new trigger price → `POST /api/v1/modifyorder` with new trigger_price
-4. **Visual feedback**: While dragging, show updated price in pill and price tag in real-time
-5. **Undo/Confirm**: Optional confirmation dialog before executing modify/cancel
+### Medium Priority
+6. **SL trigger price drag** — Currently dragging modifies the limit/trigger price. SL trigger and limit are different; dragging should update trigger_price for SL orders (currently both are set to the same dragged value)
+7. **Position close confirmation** — Currently closes immediately; consider adding a confirm dialog for large positions
+8. **Multi-order handling** — If multiple orders exist at similar prices, ensure pills don't overlap
 
-### Technical Approach
-- Add `chart.subscribeDrag()` or pointer event handlers on the primitive
-- Detect drag start on pill area → track mouse movement → update price on drag end
-- On drag end: call modify API, refresh order list
-- Add loading state / success toast after modification
-- Handle error cases (insufficient margin, order already executed, etc.)
+### Low Priority
+9. **Undo/redo** — Undo last close/cancel/modify action
+10. **Order modify history** — Show modification history on the chart
+11. **Partial close** — Allow closing partial position quantity from chart
+12. **Batch operations** — Close all positions / cancel all orders from chart
+13. **Sound alerts** — Audio feedback on successful close/cancel/modify
 
-### API Endpoints Needed
-- `POST /api/v1/cancelorder` — body: `{ apikey, orderid }`
-- `POST /api/v1/modifyorder` — body: `{ apikey, orderid, quantity, price, trigger_price, pricetype }`
-
-### UI Considerations
-- Cursor changes to `grab` / `grabbing` on hover over draggable pills
-- Price tag updates in real-time during drag
-- Prevent drag outside chart bounds
-- Show modification confirmation toast
+### Cleanup
+14. **Remove debug elements**: Red outlines, debug console logs
+15. **Performance audit**: Verify no memory leaks from DOM event listeners on repeated primitive attach/detach
