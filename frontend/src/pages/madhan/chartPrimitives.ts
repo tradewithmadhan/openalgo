@@ -1412,19 +1412,6 @@ export class OrderLinePrimitive {
                   pillLeft: pillX, pillRight: pillX + totalW,
                   pillY, pillH, y,
                 })
-
-                // Price tag on right axis — shows displayPrice during drag
-                const tagH = 18
-                const tagX = W - tagW
-                const tagY = y - tagH / 2
-                ctx.fillStyle = isDragging ? '#facc15' : badgeColor
-                ctx.beginPath()
-                ctx.roundRect(tagX, tagY, tagW, tagH, 3)
-                ctx.fill()
-                ctx.font = 'bold 10px sans-serif'
-                ctx.fillStyle = isDragging ? '#000' : '#fff'
-                ctx.textAlign = 'center'
-                ctx.fillText(displayPrice.toFixed(2), tagX + tagW / 2, y)
               }
             })
           },
