@@ -799,6 +799,370 @@ export class CrossPlotPrimitive {
   setVisible(v: boolean) { this._show = v }
 }
 
+// ─── PositionLinePrimitive ───────────────────────────────────────────────
+
+export interface PositionDatum {
+  side: 'LONG' | 'SHORT'
+  type: 'CE' | 'PE'
+  qty: number
+  entryPrice: number
+  pnl: number
+  symbol: string
+}
+
+export class PositionLinePrimitive {
+  _series: ISeriesApi<any>
+  _timeScale: any
+  _positions: PositionDatum[] = []
+  _show = true
+  _hidden = new Set<string>()
+  _onClose?: (symbol: string) => void
+
+  constructor(series: ISeriesApi<any>, timeScale: any, onClose?: (symbol: string) => void) {
+    this._series = series
+    this._timeScale = timeScale
+    this._onClose = onClose
+  }
+
+  paneViews() {
+    const self = this
+    return [{
+      zOrder() { return 'top' as const },
+      renderer() {
+        return {
+          draw(target: any) {
+            if (!self._show || !self._positions.length) return
+            target.useMediaCoordinateSpace((scope: any) => {
+              const ctx = scope.context
+              const W = scope.mediaSize.width
+              const dark = document.documentElement.classList.contains('dark')
+              for (const pos of self._positions) {
+                if (self._hidden.has(pos.symbol)) continue
+                const y = self._series.priceToCoordinate(pos.entryPrice)
+                if (y == null) continue
+                const isLong = pos.side === 'LONG'
+                const lineColor = isLong
+                  ? (dark ? 'rgba(52,211,153,0.6)' : 'rgba(52,211,153,0.5)')
+                  : (dark ? 'rgba(192,132,252,0.6)' : 'rgba(192,132,252,0.5)')
+                const badgeColor = isLong ? '#34d399' : '#c084fc'
+                const pillBg = dark ? 'rgba(20,20,30,0.88)' : 'rgba(255,255,255,0.92)'
+                const qtyBg = dark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.06)'
+                const qtyText = dark ? '#e5e7eb' : '#374151'
+                const infoBg = dark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.03)'
+                const closeBorder = dark ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.2)'
+                const closeX = dark ? '#9ca3af' : '#6b7280'
+
+                // Dashed horizontal line across full width
+                ctx.save()
+                ctx.strokeStyle = lineColor
+                ctx.lineWidth = 1
+                ctx.setLineDash([6, 4])
+                ctx.beginPath()
+                ctx.moveTo(0, y)
+                ctx.lineTo(W, y)
+                ctx.stroke()
+                ctx.restore()
+
+                // Pill group positioned at far right, ending before price tag
+                const tagW = 56
+                const gap = 3
+                const pillH = 22
+                const pillY = y - pillH / 2
+
+                // Measure segments first
+                ctx.font = 'bold 11px sans-serif'
+                const badgeText = `${pos.type}-${pos.side}`
+                const badgeW = ctx.measureText(badgeText).width + 12
+                const qtyText_ = String(pos.qty)
+                const qtyW = ctx.measureText(qtyText_).width + 10
+                const pnlSign = pos.pnl >= 0 ? '+' : '-'
+                const pnlText = `@ ${pos.entryPrice.toFixed(2)}  ₹${pnlSign}${Math.abs(pos.pnl).toFixed(0)}`
+                ctx.font = '11px sans-serif'
+                const infoW = ctx.measureText(pnlText).width + 12
+                const closeW = 20
+                const totalW = badgeW + gap + qtyW + gap + infoW + gap + closeW
+                const pillX = W - tagW - gap - totalW
+
+                // Background
+                ctx.fillStyle = pillBg
+                ctx.beginPath()
+                ctx.roundRect(pillX, pillY, totalW, pillH, 4)
+                ctx.fill()
+
+                let cx = pillX
+
+                // Badge (CE-LONG / PE-SHORT etc.)
+                ctx.fillStyle = badgeColor
+                ctx.beginPath()
+                ctx.roundRect(cx, pillY, badgeW, pillH, 4)
+                ctx.fill()
+                ctx.font = 'bold 11px sans-serif'
+                ctx.fillStyle = '#fff'
+                ctx.textAlign = 'center'
+                ctx.textBaseline = 'middle'
+                ctx.fillText(badgeText, cx + badgeW / 2, y)
+
+                // Quantity
+                cx += badgeW + gap
+                ctx.fillStyle = qtyBg
+                ctx.beginPath()
+                ctx.roundRect(cx, pillY, qtyW, pillH, 4)
+                ctx.fill()
+                ctx.font = 'bold 11px sans-serif'
+                ctx.fillStyle = qtyText
+                ctx.fillText(qtyText_, cx + qtyW / 2, y)
+
+                // Price + PnL
+                cx += qtyW + gap
+                ctx.fillStyle = infoBg
+                ctx.beginPath()
+                ctx.roundRect(cx, pillY, infoW, pillH, 4)
+                ctx.fill()
+                ctx.font = 'bold 11px sans-serif'
+                ctx.fillStyle = pos.pnl >= 0 ? '#60a5fa' : '#f87171'
+                ctx.textAlign = 'left'
+                ctx.fillText(pnlText, cx + 6, y)
+
+                // Close button (X)
+                cx += infoW + gap
+                ctx.fillStyle = dark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)'
+                ctx.beginPath()
+                ctx.roundRect(cx, pillY, closeW, pillH, 4)
+                ctx.fill()
+                ctx.strokeStyle = closeBorder
+                ctx.lineWidth = 1
+                ctx.beginPath()
+                ctx.roundRect(cx, pillY, closeW, pillH, 4)
+                ctx.stroke()
+                ctx.font = '12px sans-serif'
+                ctx.fillStyle = closeX
+                ctx.textAlign = 'center'
+                ctx.fillText('×', cx + closeW / 2, y + 1)
+
+                // Price tag on right axis
+                const tagH = 18
+                const tagX = W - tagW
+                const tagY = y - tagH / 2
+                ctx.fillStyle = badgeColor
+                ctx.beginPath()
+                ctx.roundRect(tagX, tagY, tagW, tagH, 3)
+                ctx.fill()
+                ctx.font = 'bold 10px sans-serif'
+                ctx.fillStyle = '#fff'
+                ctx.textAlign = 'center'
+                ctx.fillText(pos.entryPrice.toFixed(2), tagX + tagW / 2, y)
+              }
+            })
+          },
+        }
+      },
+    }]
+  }
+
+  setData(positions: PositionDatum[]) { this._positions = positions; try { (this as any).requestUpdate?.() } catch {} }
+  setVisible(v: boolean) { this._show = v }
+
+  hidePosition(symbol: string) { this._hidden.add(symbol) }
+  showPosition(symbol: string) { this._hidden.delete(symbol) }
+
+  hitTest(x: number, y: number, W: number, _H: number): string | null {
+    for (const pos of this._positions) {
+      if (this._hidden.has(pos.symbol)) continue
+      const priceY = this._series.priceToCoordinate(pos.entryPrice)
+      if (priceY == null) continue
+      if (Math.abs(y - priceY) > 14) continue
+      const pillH = 22
+      const pillY = priceY - pillH / 2
+      if (y < pillY || y > pillY + pillH) continue
+      // Close button is always the last 20px before the price tag
+      const closeBtnRight = W - 56 - 3
+      const closeBtnLeft = closeBtnRight - 20
+      if (x >= closeBtnLeft && x <= closeBtnRight) return pos.symbol
+    }
+    return null
+  }
+}
+
+// ─── OrderLinePrimitive ───────────────────────────────────────────────
+
+export interface OrderLineDatum {
+  side: 'BUY' | 'SELL'
+  type: 'CE' | 'PE'
+  orderType: 'LIMIT' | 'SL' | 'SL-M' | 'MARKET'
+  qty: number
+  price: number
+  triggerPrice: number
+  symbol: string
+  orderId: string
+}
+
+export class OrderLinePrimitive {
+  _series: ISeriesApi<any>
+  _orders: OrderLineDatum[] = []
+  _show = true
+  _hidden = new Set<string>()
+  _onClose?: (orderId: string) => void
+
+  constructor(series: ISeriesApi<any>, onClose?: (orderId: string) => void) {
+    this._series = series
+    this._onClose = onClose
+  }
+
+  paneViews() {
+    const self = this
+    return [{
+      zOrder() { return 'top' as const },
+      renderer() {
+        return {
+          draw(target: any) {
+            if (!self._show || !self._orders.length) return
+            target.useMediaCoordinateSpace((scope: any) => {
+              const ctx = scope.context
+              const W = scope.mediaSize.width
+              const dark = document.documentElement.classList.contains('dark')
+              for (const ord of self._orders) {
+                if (self._hidden.has(ord.orderId)) continue
+                const y = self._series.priceToCoordinate(ord.price)
+                if (y == null) continue
+                const isBuy = ord.side === 'BUY'
+                const isSl = ord.orderType === 'SL' || ord.orderType === 'SL-M'
+                const lineColor = isBuy
+                  ? (dark ? 'rgba(0,200,81,0.5)' : 'rgba(0,180,60,0.45)')
+                  : (dark ? 'rgba(239,68,68,0.5)' : 'rgba(220,50,50,0.45)')
+                const badgeColor = isBuy ? '#34d399' : '#fb7185'
+                const typeColor = isSl ? '#F59E0B' : (dark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.08)')
+                const typeTextColor = isSl ? '#000' : (dark ? '#e5e7eb' : '#374151')
+                const pillBg = dark ? 'rgba(20,20,30,0.88)' : 'rgba(255,255,255,0.92)'
+                const qtyBg = dark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.06)'
+                const qtyText = dark ? '#e5e7eb' : '#374151'
+                const closeBorder = dark ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.2)'
+                const closeX = dark ? '#9ca3af' : '#6b7280'
+
+                // Dashed horizontal line
+                ctx.save()
+                ctx.strokeStyle = lineColor
+                ctx.lineWidth = 1
+                ctx.setLineDash([6, 4])
+                ctx.beginPath()
+                ctx.moveTo(0, y)
+                ctx.lineTo(W, y)
+                ctx.stroke()
+                ctx.restore()
+
+                // Measure segments
+                ctx.font = 'bold 11px sans-serif'
+                const sideText = `${ord.type} ${ord.side}`
+                const sideW = ctx.measureText(sideText).width + 12
+                const qtyStr = String(ord.qty)
+                const qtyW = ctx.measureText(qtyStr).width + 10
+                const typeText = ord.orderType === 'SL-M' ? `SL-M @ ${ord.triggerPrice.toFixed(2)}` : ord.orderType === 'SL' ? `SL @ ${ord.triggerPrice.toFixed(2)}` : `LIMIT @ ${ord.price.toFixed(2)}`
+                const typeW = ctx.measureText(typeText).width + 12
+                const closeW = 20
+                const gap = 3
+                const pillH = 22
+                const pillY = y - pillH / 2
+                const tagW = 56
+                const totalW = sideW + gap + qtyW + gap + typeW + gap + closeW
+                const pillX = W - tagW - gap - totalW
+
+                // Background
+                ctx.fillStyle = pillBg
+                ctx.beginPath()
+                ctx.roundRect(pillX, pillY, totalW, pillH, 4)
+                ctx.fill()
+
+                let cx = pillX
+
+                // Side badge (CE SELL / PE BUY etc.)
+                ctx.fillStyle = badgeColor
+                ctx.beginPath()
+                ctx.roundRect(cx, pillY, sideW, pillH, 4)
+                ctx.fill()
+                ctx.font = 'bold 11px sans-serif'
+                ctx.fillStyle = '#fff'
+                ctx.textAlign = 'center'
+                ctx.textBaseline = 'middle'
+                ctx.fillText(sideText, cx + sideW / 2, y)
+
+                // Quantity
+                cx += sideW + gap
+                ctx.fillStyle = qtyBg
+                ctx.beginPath()
+                ctx.roundRect(cx, pillY, qtyW, pillH, 4)
+                ctx.fill()
+                ctx.font = 'bold 11px sans-serif'
+                ctx.fillStyle = qtyText
+                ctx.fillText(qtyStr, cx + qtyW / 2, y)
+
+                // Order type (LIMIT / SL / SL-M)
+                cx += qtyW + gap
+                ctx.fillStyle = typeColor
+                ctx.beginPath()
+                ctx.roundRect(cx, pillY, typeW, pillH, 4)
+                ctx.fill()
+                ctx.font = 'bold 11px sans-serif'
+                ctx.fillStyle = typeTextColor
+                ctx.textAlign = 'center'
+                ctx.fillText(typeText, cx + typeW / 2, y)
+
+                // Close button (X)
+                cx += typeW + gap
+                ctx.fillStyle = dark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)'
+                ctx.beginPath()
+                ctx.roundRect(cx, pillY, closeW, pillH, 4)
+                ctx.fill()
+                ctx.strokeStyle = closeBorder
+                ctx.lineWidth = 1
+                ctx.beginPath()
+                ctx.roundRect(cx, pillY, closeW, pillH, 4)
+                ctx.stroke()
+                ctx.font = '12px sans-serif'
+                ctx.fillStyle = closeX
+                ctx.textAlign = 'center'
+                ctx.fillText('×', cx + closeW / 2, y + 1)
+
+                // Price tag on right axis
+                const tagH = 18
+                const tagX = W - tagW
+                const tagY = y - tagH / 2
+                ctx.fillStyle = badgeColor
+                ctx.beginPath()
+                ctx.roundRect(tagX, tagY, tagW, tagH, 3)
+                ctx.fill()
+                ctx.font = 'bold 10px sans-serif'
+                ctx.fillStyle = '#fff'
+                ctx.textAlign = 'center'
+                ctx.fillText(ord.price.toFixed(2), tagX + tagW / 2, y)
+              }
+            })
+          },
+        }
+      },
+    }]
+  }
+
+  setData(orders: OrderLineDatum[]) { this._orders = orders; try { (this as any).requestUpdate?.() } catch {} }
+  setVisible(v: boolean) { this._show = v }
+
+  hideOrder(orderId: string) { this._hidden.add(orderId) }
+  showOrder(orderId: string) { this._hidden.delete(orderId) }
+
+  hitTest(x: number, y: number, W: number, _H: number): string | null {
+    for (const ord of this._orders) {
+      if (this._hidden.has(ord.orderId)) continue
+      const priceY = this._series.priceToCoordinate(ord.price)
+      if (priceY == null) continue
+      const pillH = 22
+      const pillY = priceY - pillH / 2
+      if (y < pillY || y > pillY + pillH) continue
+      const closeBtnRight = W - 56 - 3
+      const closeBtnLeft = closeBtnRight - 20
+      if (x >= closeBtnLeft && x <= closeBtnRight) return ord.orderId
+    }
+    return null
+  }
+}
+
 // ─── removeEmptyPanes ───────────────────────────────────────────────────
 
 export function removeEmptyPanes(chart: any) {

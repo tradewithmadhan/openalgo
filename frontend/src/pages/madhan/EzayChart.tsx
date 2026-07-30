@@ -32,6 +32,7 @@ import { useProfileMenuItems } from '@/hooks/useProfileMenuItems'
 import { cn } from '@/lib/utils'
 import { setTimeOffset, getTimeOffset } from '@/utils/timeSync'
 import { chartTheme } from './chartTheme'
+import { PositionLinePrimitive, type PositionDatum, OrderLinePrimitive, type OrderLineDatum } from './chartPrimitives'
 import RealtimeTable from './RealtimeTable'
 import EzaySignals, { type FirstSignalInfo, type BackendSignals } from './components/EzaySignals'
 
@@ -174,6 +175,11 @@ export default function EzayChart() {
   const combinedExtrinsicMarkersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null)
   const ceTradeMarkersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null)
   const peTradeMarkersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null)
+  const cePositionRef = useRef<PositionLinePrimitive | null>(null)
+  const pePositionRef = useRef<PositionLinePrimitive | null>(null)
+
+  const ceOrderRef = useRef<OrderLinePrimitive | null>(null)
+  const peOrderRef = useRef<OrderLinePrimitive | null>(null)
   const backtestTradesRef = useRef<BacktestTrade[]>([])
   const backtestSummaryRef = useRef<{ total: number; wins: number; losses: number; winRate: number; totalPnl: number; totalPnlAmount: number } | null>(null)
   const firstSignalTimeRef = useRef(0)
@@ -210,6 +216,8 @@ export default function EzayChart() {
   const semiTransparentRef = useRef(true)
   const [ceSymbol, setCeSymbol] = useState('')
   const [peSymbol, setPeSymbol] = useState('')
+  const ceSymbolRef = useRef('')
+  const peSymbolRef = useRef('')
   const [liveSpot, setLiveSpot] = useState(0)
   const liveSpotRef = useRef(0)
   const [ceLtpDisplay, setCeLtpDisplay] = useState(0)
@@ -232,6 +240,9 @@ export default function EzayChart() {
 
   const currentAtmStrike = liveSpot > 0 ? Math.round(liveSpot / 50) * 50 : null
   const [candleCountdown, setCandleCountdown] = useState('')
+
+  const cePositionDataRef = useRef<PositionDatum | null>(null)
+  const pePositionDataRef = useRef<PositionDatum | null>(null)
 
   const currentOhlcRef = useRef<Map<string, { time: number; open: number; high: number; low: number; close: number }>>(new Map())
   const apiCandleVolRef = useRef<Map<number, number>>(new Map())
@@ -419,6 +430,36 @@ export default function EzayChart() {
     combinedExtrinsicMarkersRef.current = createSeriesMarkers(combinedExtrinsicRef.current, [])
     ceTradeMarkersRef.current = createSeriesMarkers(ceSeriesRef.current, [])
     peTradeMarkersRef.current = createSeriesMarkers(peSeriesRef.current, [])
+
+    const cePos = new PositionLinePrimitive(ceSeriesRef.current, chart.timeScale(), (sym) => {
+      cePositionRef.current?.hidePosition(sym)
+      cePositionDataRef.current = null
+      cePositionRef.current?.setData([])
+    })
+    cePositionRef.current = cePos
+    ceSeriesRef.current.attachPrimitive(cePos as any)
+
+    const pePos = new PositionLinePrimitive(peSeriesRef.current, chart.timeScale(), (sym) => {
+      pePositionRef.current?.hidePosition(sym)
+      pePositionDataRef.current = null
+      pePositionRef.current?.setData([])
+    })
+    pePositionRef.current = pePos
+    peSeriesRef.current.attachPrimitive(pePos as any)
+
+    const ceOrd = new OrderLinePrimitive(ceSeriesRef.current, (orderId) => {
+      ceOrderRef.current?.hideOrder(orderId)
+      ceOrderRef.current?.setData([])
+    })
+    ceOrderRef.current = ceOrd
+    ceSeriesRef.current.attachPrimitive(ceOrd as any)
+
+    const peOrd = new OrderLinePrimitive(peSeriesRef.current, (orderId) => {
+      peOrderRef.current?.hideOrder(orderId)
+      peOrderRef.current?.setData([])
+    })
+    peOrderRef.current = peOrd
+    peSeriesRef.current.attachPrimitive(peOrd as any)
   }, [removeAllSeries])
 
   const applyData = useCallback(() => {
@@ -685,6 +726,8 @@ export default function EzayChart() {
         apiCandleVolRef.current.clear()
         setCeSymbol(json.data.ce_symbol || '')
         setPeSymbol(json.data.pe_symbol || '')
+        ceSymbolRef.current = json.data.ce_symbol || ''
+        peSymbolRef.current = json.data.pe_symbol || ''
         setAvailableStrategies(json.data.strategies || ['CE-PE'])
         setVisibleStrategies(new Set(json.data.strategies || ['CE-PE']))
         const allTrades: BacktestTrade[] = []
@@ -722,12 +765,90 @@ export default function EzayChart() {
       apiCandleVolRef.current.clear()
       setCeSymbol(json.data.ce_symbol || '')
       setPeSymbol(json.data.pe_symbol || '')
+      ceSymbolRef.current = json.data.ce_symbol || ''
+      peSymbolRef.current = json.data.pe_symbol || ''
       setChartInfo(`Strike ${json.data.strike} - CE: ${json.data.ce_symbol || 'N/A'} | PE: ${json.data.pe_symbol || 'N/A'} (${json.data.timezone || 'UTC'})`)
       applyData()
     } catch (err) {
       console.error('Error loading EzayChart data:', err)
     }
   }, [selectedStrike, applyData, isBacktest, backtestDate])
+
+  const fetchPositions = useCallback(async () => {
+    const apiKey = useAuthStore.getState().apiKey
+    if (!apiKey || isBacktestRef.current) return
+    try {
+      const res = await fetch('/api/v1/positionbook', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ apikey: apiKey }),
+      })
+      const json = await res.json()
+      if (json.status !== 'success' || !json.data) return
+      const positions: any[] = json.data
+      const curCe = ceSymbolRef.current
+      const curPe = peSymbolRef.current
+      let foundCe: PositionDatum | null = null
+      let foundPe: PositionDatum | null = null
+      for (const p of positions) {
+        if (Number(p.quantity) === 0) continue
+        const sym = p.symbol
+        const net = Number(p.quantity)
+        const avg = Number(p.average_price)
+        const pnl = Number(p.pnl) || 0
+        const side: 'LONG' | 'SHORT' = net > 0 ? 'LONG' : 'SHORT'
+        if (sym === curCe) {
+          foundCe = { side, type: 'CE', qty: Math.abs(net), entryPrice: avg, pnl, symbol: sym }
+        } else if (sym === curPe) {
+          foundPe = { side, type: 'PE', qty: Math.abs(net), entryPrice: avg, pnl, symbol: sym }
+        }
+      }
+      cePositionDataRef.current = foundCe
+      pePositionDataRef.current = foundPe
+      cePositionRef.current?.setData(foundCe ? [foundCe] : [])
+      pePositionRef.current?.setData(foundPe ? [foundPe] : [])
+    } catch {}
+  }, [])
+
+  const fetchOrders = useCallback(async () => {
+    const apiKey = useAuthStore.getState().apiKey
+    if (!apiKey || isBacktestRef.current) return
+    try {
+      const res = await fetch('/api/v1/orderbook', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ apikey: apiKey }),
+      })
+      const json = await res.json()
+      if (json.status !== 'success' || !json.data) return
+      const rawOrders: any[] = json.data.orders || []
+      const curCe = ceSymbolRef.current
+      const curPe = peSymbolRef.current
+      const ceOrders: OrderLineDatum[] = []
+      const peOrders: OrderLineDatum[] = []
+      for (const o of rawOrders) {
+        const status = o.order_status
+        if (status !== 'open' && status !== 'pending' && status !== 'trigger pending') continue
+        if (o.pricetype === 'MARKET') continue
+        const sym = o.symbol
+        const ord: OrderLineDatum = {
+          side: o.action,
+          type: sym === curCe ? 'CE' : 'PE',
+          orderType: o.pricetype,
+          qty: Math.abs(Number(o.quantity)),
+          price: Number(o.price) || Number(o.trigger_price) || 0,
+          triggerPrice: Number(o.trigger_price) || 0,
+          symbol: sym,
+          orderId: o.orderid,
+        }
+        if (ord.price <= 0) continue
+        if (sym === curCe) ceOrders.push(ord)
+        else if (sym === curPe) peOrders.push(ord)
+      }
+      ceOrderRef.current?.setData(ceOrders)
+      peOrderRef.current?.setData(peOrders)
+    } catch {}
+  }, [])
 
   useEffect(() => {
     if (!chartContainerRef.current) return
@@ -767,6 +888,39 @@ export default function EzayChart() {
 
     chartRef.current = chart
     chartReadyRef.current = true
+
+    chart.subscribeClick((param: any) => {
+      if (!param || !param.point) return
+      const { x, y } = param.point
+      const W = chartContainerRef.current?.clientWidth || 0
+      const H = chartContainerRef.current?.clientHeight || 0
+      const hitCe = cePositionRef.current?.hitTest(x, y, W, H)
+      if (hitCe) {
+        cePositionRef.current?.hidePosition(hitCe)
+        cePositionDataRef.current = null
+        cePositionRef.current?.setData([])
+        return
+      }
+      const hitPe = pePositionRef.current?.hitTest(x, y, W, H)
+      if (hitPe) {
+        pePositionRef.current?.hidePosition(hitPe)
+        pePositionDataRef.current = null
+        pePositionRef.current?.setData([])
+        return
+      }
+      const hitCeOrd = ceOrderRef.current?.hitTest(x, y, W, H)
+      if (hitCeOrd) {
+        ceOrderRef.current?.hideOrder(hitCeOrd)
+        ceOrderRef.current?.setData([])
+        return
+      }
+      const hitPeOrd = peOrderRef.current?.hitTest(x, y, W, H)
+      if (hitPeOrd) {
+        peOrderRef.current?.hideOrder(hitPeOrd)
+        peOrderRef.current?.setData([])
+        return
+      }
+    })
 
     const resizeObserver = new ResizeObserver(() => {
       if (!chartContainerRef.current || !chartRef.current) return
@@ -966,6 +1120,8 @@ export default function EzayChart() {
     apiCandleVolRef.current.clear()
     setCeLtpDisplay(0)
     setPeLtpDisplay(0)
+    ceOrderRef.current?.setData([])
+    peOrderRef.current?.setData([])
   }, [selectedStrike])
 
   // Clear volume baselines when symbols change — prevents race where WS seeds
@@ -973,6 +1129,32 @@ export default function EzayChart() {
   useEffect(() => {
     apiCandleVolRef.current.clear()
   }, [ceSymbol, peSymbol])
+
+  // Fetch positions when CE/PE symbols change
+  useEffect(() => {
+    if (!ceSymbol && !peSymbol) return
+    fetchPositions()
+  }, [ceSymbol, peSymbol, fetchPositions])
+
+  // Periodic position refresh (every 30s)
+  useEffect(() => {
+    if (isBacktest) return
+    const id = window.setInterval(fetchPositions, 30000)
+    return () => window.clearInterval(id)
+  }, [fetchPositions, isBacktest])
+
+  // Fetch orders when CE/PE symbols change
+  useEffect(() => {
+    if (!ceSymbol && !peSymbol) return
+    fetchOrders()
+  }, [ceSymbol, peSymbol, fetchOrders])
+
+  // Periodic order refresh (every 30s)
+  useEffect(() => {
+    if (isBacktest) return
+    const id = window.setInterval(fetchOrders, 30000)
+    return () => window.clearInterval(id)
+  }, [fetchOrders, isBacktest])
 
   // Strategy visibility toggle — re-combine trades from cached response
   useEffect(() => {
@@ -1042,6 +1224,26 @@ export default function EzayChart() {
 
     if (ceLtp) setCeLtpDisplay(ceLtp)
     if (peLtp) setPeLtpDisplay(peLtp)
+
+    // Update position PnL from live LTP (immutable updates for primitive redraw)
+    const cePos = cePositionDataRef.current
+    if (cePos && ceLtp) {
+      const pnl = cePos.side === 'LONG'
+        ? (ceLtp - cePos.entryPrice) * cePos.qty
+        : (cePos.entryPrice - ceLtp) * cePos.qty
+      const updated = { ...cePos, pnl }
+      cePositionDataRef.current = updated
+      cePositionRef.current?.setData([updated])
+    }
+    const pePos = pePositionDataRef.current
+    if (pePos && peLtp) {
+      const pnl = pePos.side === 'LONG'
+        ? (peLtp - pePos.entryPrice) * pePos.qty
+        : (pePos.entryPrice - peLtp) * pePos.qty
+      const updated = { ...pePos, pnl }
+      pePositionDataRef.current = updated
+      pePositionRef.current?.setData([updated])
+    }
 
     if (!ceDayVol && !peDayVol) return
 
