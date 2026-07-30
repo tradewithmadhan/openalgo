@@ -199,24 +199,31 @@ export default function EzayChart() {
   const showSignalsRef = useRef(true)
   const showHCRef = useRef(false)
 
-  const [chartType, setChartType] = useState<'candlestick' | 'line'>('candlestick')
-  const [interval, setInterval] = useState('1m')
+  const loadSetting = (key: string, fallback: any) => {
+    try { const v = localStorage.getItem(`ezay_${key}`); return v !== null ? JSON.parse(v) : fallback } catch { return fallback }
+  }
+  const saveSetting = (key: string, value: any) => {
+    try { localStorage.setItem(`ezay_${key}`, JSON.stringify(value)) } catch {}
+  }
+
+  const [chartType, setChartType] = useState<'candlestick' | 'line'>(() => loadSetting('chartType', 'candlestick'))
+  const [interval, setInterval] = useState(() => loadSetting('interval', '1m'))
   const [strikes, setStrikes] = useState<number[]>([])
   const [selectedStrike, setSelectedStrike] = useState<string>('')
-  const [showCE, setShowCE] = useState(true)
-  const [showPE, setShowPE] = useState(true)
-  const [showIntrinsic, setShowIntrinsic] = useState(true)
-  const [showExtrinsic, setShowExtrinsic] = useState(true)
-  const [showCombinedAll, setShowCombinedAll] = useState(true)
-  const [showSignals, setShowSignals] = useState(true)
-  const [showHC, setShowHC] = useState(false)
+  const [showCE, setShowCE] = useState(() => loadSetting('showCE', true))
+  const [showPE, setShowPE] = useState(() => loadSetting('showPE', true))
+  const [showIntrinsic, setShowIntrinsic] = useState(() => loadSetting('showIntrinsic', false))
+  const [showExtrinsic, setShowExtrinsic] = useState(() => loadSetting('showExtrinsic', false))
+  const [showCombinedAll, setShowCombinedAll] = useState(() => loadSetting('showCombinedAll', true))
+  const [showSignals, setShowSignals] = useState(() => loadSetting('showSignals', false))
+  const [showHC, setShowHC] = useState(() => loadSetting('showHC', false))
   const [chartInfo, setChartInfo] = useState('')
   const [atmStrike, setAtmStrike] = useState<number | null>(null)
-  const [strikePanelOpen, setStrikePanelOpen] = useState(true)
-  const [showRealtime, setShowRealtime] = useState(false)
-  const [showEzaySignals, setShowEzaySignals] = useState(false)
+  const [strikePanelOpen, setStrikePanelOpen] = useState(() => loadSetting('strikePanelOpen', true))
+  const [showRealtime, setShowRealtime] = useState(() => loadSetting('showRealtime', false))
+  const [showEzaySignals, setShowEzaySignals] = useState(() => loadSetting('showEzaySignals', false))
   const [irStrikes, setIrStrikes] = useState<number[]>([])
-  const [semiTransparent, setSemiTransparent] = useState(true)
+  const [semiTransparent, setSemiTransparent] = useState(() => loadSetting('semiTransparent', true))
   const semiTransparentRef = useRef(true)
   const [ceSymbol, setCeSymbol] = useState('')
   const [peSymbol, setPeSymbol] = useState('')
@@ -368,7 +375,7 @@ export default function EzayChart() {
         })
       }
       return chart.addSeries(LineSeries, {
-        lineWidth: 2, priceLineVisible: false, lastValueVisible: false, ...opts,
+        lineWidth: 2, priceLineVisible: false, lastValueVisible: true, ...opts,
       })
     }
 
@@ -380,12 +387,12 @@ export default function EzayChart() {
         })
       }
       return chart.addSeries(LineSeries, {
-        lineWidth: 2, priceLineVisible: false, lastValueVisible: false, ...opts,
+        lineWidth: 2, priceLineVisible: false, lastValueVisible: true, ...opts,
       })
     }
 
-    ceSeriesRef.current = makeCeSeries({ title: 'CE Premium', color: '#2962FF' })
-    peSeriesRef.current = makePeSeries({ title: 'PE Premium', color: '#E040FB' })
+    ceSeriesRef.current = makeCeSeries({ title: 'CE', color: '#2962FF' })
+    peSeriesRef.current = makePeSeries({ title: 'PE', color: '#E040FB' })
 
     combinedSeriesRef.current = chart.addSeries(LineSeries, {
       color: '#2196f3', lineWidth: 3, title: 'Combined Premium',
@@ -393,7 +400,7 @@ export default function EzayChart() {
     })
     llpSeriesRef.current = chart.addSeries(LineSeries, {
       color: '#1976d2', lineWidth: 2, title: 'LLP',
-      priceLineVisible: false, lastValueVisible: false,
+      priceLineVisible: false, lastValueVisible: true,
     })
     ceIntrinsicRef.current = chart.addSeries(LineSeries, {
       color: '#4caf50', lineWidth: 1, lineStyle: 1, title: 'CE Intrinsic',
@@ -435,14 +442,14 @@ export default function EzayChart() {
     ceTradeMarkersRef.current = createSeriesMarkers(ceSeriesRef.current, [])
     peTradeMarkersRef.current = createSeriesMarkers(peSeriesRef.current, [])
 
-    const cePos = new PositionLinePrimitive(ceSeriesRef.current, chart.timeScale(), (sym) => {
+    const cePos = new PositionLinePrimitive(ceSeriesRef.current, chart.timeScale(), (_sym) => {
       const pos = cePositionDataRef.current
       if (pos) handleClosePositionRef.current(pos.symbol, pos.exchange, pos.product)
     })
     cePositionRef.current = cePos
     ceSeriesRef.current.attachPrimitive(cePos as any)
 
-    const pePos = new PositionLinePrimitive(peSeriesRef.current, chart.timeScale(), (sym) => {
+    const pePos = new PositionLinePrimitive(peSeriesRef.current, chart.timeScale(), (_sym) => {
       const pos = pePositionDataRef.current
       if (pos) handleClosePositionRef.current(pos.symbol, pos.exchange, pos.product)
     })
@@ -1481,7 +1488,7 @@ export default function EzayChart() {
       <div className="shrink-0 flex flex-wrap items-center gap-2 px-3 py-2" style={{ backgroundColor: t.panelDarker, borderBottom: `1px solid ${t.border}` }}>
         <div className="flex items-center gap-1.5">
           <Label className="text-[11px]" style={{ color: t.textSecondary }}>Time:</Label>
-          <Select value={interval} onValueChange={(v) => setInterval(v)}>
+          <Select value={interval} onValueChange={(v) => { setInterval(v); saveSetting('interval', v) }}>
             <SelectTrigger className="h-7 w-16 text-[11px]"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="1m">1m</SelectItem>
@@ -1492,7 +1499,7 @@ export default function EzayChart() {
         </div>
         <div className="flex items-center gap-1.5">
           <Label className="text-[11px]" style={{ color: t.textSecondary }}>Chart:</Label>
-          <Select value={chartType} onValueChange={(v) => setChartType(v as 'candlestick' | 'line')}>
+          <Select value={chartType} onValueChange={(v) => { setChartType(v as 'candlestick' | 'line'); saveSetting('chartType', v) }}>
             <SelectTrigger className="h-7 w-20 text-[11px]"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="candlestick">Candle</SelectItem>
@@ -1502,37 +1509,37 @@ export default function EzayChart() {
         </div>
         <div className="flex items-center gap-2">
           <div className="flex items-center gap-1">
-            <Checkbox checked={showCE} onCheckedChange={(v) => setShowCE(!!v)} />
+            <Checkbox checked={showCE} onCheckedChange={(v) => { setShowCE(!!v); saveSetting('showCE', !!v) }} />
             <Label className="text-[11px] font-semibold" style={{ color: t.textSecondary }}>CE</Label>
           </div>
           <div className="flex items-center gap-1">
-            <Checkbox checked={showPE} onCheckedChange={(v) => setShowPE(!!v)} />
+            <Checkbox checked={showPE} onCheckedChange={(v) => { setShowPE(!!v); saveSetting('showPE', !!v) }} />
             <Label className="text-[11px] font-semibold" style={{ color: t.textSecondary }}>PE</Label>
           </div>
         </div>
         <div className="flex items-center gap-2">
           <div className="flex items-center gap-1">
-            <Checkbox checked={showIntrinsic} onCheckedChange={(v) => setShowIntrinsic(!!v)} />
+            <Checkbox checked={showIntrinsic} onCheckedChange={(v) => { setShowIntrinsic(!!v); saveSetting('showIntrinsic', !!v) }} />
             <Label className="text-[11px]" style={{ color: t.textSecondary }}>Intrinsic</Label>
           </div>
           <div className="flex items-center gap-1">
-            <Checkbox checked={showExtrinsic} onCheckedChange={(v) => setShowExtrinsic(!!v)} />
+            <Checkbox checked={showExtrinsic} onCheckedChange={(v) => { setShowExtrinsic(!!v); saveSetting('showExtrinsic', !!v) }} />
             <Label className="text-[11px]" style={{ color: t.textSecondary }}>Extrinsic</Label>
           </div>
           <div className="flex items-center gap-1">
-            <Checkbox checked={showCombinedAll} onCheckedChange={(v) => setShowCombinedAll(!!v)} />
+            <Checkbox checked={showCombinedAll} onCheckedChange={(v) => { setShowCombinedAll(!!v); saveSetting('showCombinedAll', !!v) }} />
             <Label className="text-[11px] font-semibold" style={{ color: t.textSecondary }}>Combined</Label>
           </div>
           <div className="flex items-center gap-1">
-            <Checkbox checked={showSignals} onCheckedChange={(v) => setShowSignals(!!v)} />
+            <Checkbox checked={showSignals} onCheckedChange={(v) => { setShowSignals(!!v); saveSetting('showSignals', !!v) }} />
             <Label className="text-[11px]" style={{ color: t.textSecondary }}>Signals</Label>
           </div>
           <div className="flex items-center gap-1">
-            <Checkbox checked={showHC} onCheckedChange={(v) => setShowHC(!!v)} />
+            <Checkbox checked={showHC} onCheckedChange={(v) => { setShowHC(!!v); saveSetting('showHC', !!v) }} />
             <Label className="text-[11px]" style={{ color: t.textSecondary }}>HC</Label>
           </div>
           <div className="flex items-center gap-1">
-            <Checkbox checked={semiTransparent} onCheckedChange={(v) => setSemiTransparent(!!v)} />
+            <Checkbox checked={semiTransparent} onCheckedChange={(v) => { setSemiTransparent(!!v); saveSetting('semiTransparent', !!v) }} />
             <Label className="text-[11px]" style={{ color: t.textSecondary }}>50% Candles</Label>
           </div>
           <div className="h-4 w-px" style={{ backgroundColor: t.border }} />
@@ -1622,7 +1629,7 @@ export default function EzayChart() {
             size="sm"
             variant={showEzaySignals ? 'default' : 'ghost'}
             className={cn('h-6 px-2 text-[10px] font-medium', showEzaySignals && 'bg-primary text-primary-foreground')}
-            onClick={() => setShowEzaySignals(!showEzaySignals)}
+            onClick={() => { setShowEzaySignals(!showEzaySignals); saveSetting('showEzaySignals', !showEzaySignals) }}
           >
             EzaySignals
           </Button>
@@ -1630,7 +1637,7 @@ export default function EzayChart() {
             size="sm"
             variant={showRealtime ? 'default' : 'ghost'}
             className="h-6 px-2 text-[10px]"
-            onClick={() => setShowRealtime(!showRealtime)}
+            onClick={() => { setShowRealtime(!showRealtime); saveSetting('showRealtime', !showRealtime) }}
           >
             Realtime
           </Button>
@@ -1671,7 +1678,7 @@ export default function EzayChart() {
           }}
         >
           <button
-            onClick={() => setStrikePanelOpen(!strikePanelOpen)}
+            onClick={() => { setStrikePanelOpen(!strikePanelOpen); saveSetting('strikePanelOpen', !strikePanelOpen) }}
             className="h-7 flex items-center justify-center shrink-0 hover:bg-[rgba(128,128,128,0.15)] transition-colors"
             style={{ color: t.textSecondary }}
             title={strikePanelOpen ? 'Collapse strike list' : 'Expand strike list'}

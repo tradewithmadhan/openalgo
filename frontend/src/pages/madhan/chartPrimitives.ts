@@ -1008,19 +1008,6 @@ export class PositionLinePrimitive {
                   pillLeft: pillX, pillRight: pillX + totalW,
                   pillY, pillH, y,
                 })
-
-                // Price tag on right axis
-                const tagH = 18
-                const tagX = W - tagW
-                const tagY = y - tagH / 2
-                ctx.fillStyle = badgeColor
-                ctx.beginPath()
-                ctx.roundRect(tagX, tagY, tagW, tagH, 3)
-                ctx.fill()
-                ctx.font = 'bold 10px sans-serif'
-                ctx.fillStyle = '#fff'
-                ctx.textAlign = 'center'
-                ctx.fillText(pos.entryPrice.toFixed(2), tagX + tagW / 2, y)
               }
             })
           },
