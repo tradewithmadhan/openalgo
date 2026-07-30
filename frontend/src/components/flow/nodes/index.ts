@@ -5,7 +5,9 @@
 
 // Logic Gate Nodes
 import { AndGateNode } from './AndGateNode'
+import { BarOffsetNode } from './BarOffsetNode'
 import { BasketOrderNode } from './BasketOrderNode'
+import { CalendarNode } from './CalendarNode'
 import { CancelAllOrdersNode } from './CancelAllOrdersNode'
 import { CancelOrderNode } from './CancelOrderNode'
 import { ClosePositionsNode } from './ClosePositionsNode'
@@ -23,6 +25,7 @@ import { HistoryNode } from './HistoryNode'
 import { HoldingsNode } from './HoldingsNode'
 import { HolidaysNode } from './HolidaysNode'
 import { HttpRequestNode } from './HttpRequestNode'
+import { IndicatorNode } from './IndicatorNode'
 import { IntervalsNode } from './IntervalsNode'
 import { LogNode } from './LogNode'
 import { MarginNode } from './MarginNode'
@@ -36,6 +39,7 @@ import { OptionSymbolNode } from './OptionSymbolNode'
 import { OptionsMultiOrderNode } from './OptionsMultiOrderNode'
 import { OptionsOrderNode } from './OptionsOrderNode'
 import { OrderBookNode } from './OrderBookNode'
+import { OrderUpdateTriggerNode } from './OrderUpdateTriggerNode'
 import { OrGateNode } from './OrGateNode'
 // Action Nodes
 import { PlaceOrderNode } from './PlaceOrderNode'
@@ -44,10 +48,12 @@ import { PositionBookNode } from './PositionBookNode'
 import { PositionCheckNode } from './PositionCheckNode'
 import { PriceAlertNode } from './PriceAlertNode'
 import { PriceConditionNode } from './PriceConditionNode'
+import { PriorPeriodOhlcNode } from './PriorPeriodOhlcNode'
 import { SmartOrderNode } from './SmartOrderNode'
 import { SplitOrderNode } from './SplitOrderNode'
 // Trigger Nodes
 import { StartNode } from './StartNode'
+import { StrategyPnlNode } from './StrategyPnlNode'
 import { SubscribeDepthNode } from './SubscribeDepthNode'
 // WebSocket Streaming Nodes
 import { SubscribeLTPNode } from './SubscribeLTPNode'
@@ -61,14 +67,10 @@ import { TimeWindowNode } from './TimeWindowNode'
 import { TimingsNode } from './TimingsNode'
 import { TradeBookNode } from './TradeBookNode'
 import { UnsubscribeNode } from './UnsubscribeNode'
+import { VarConditionNode } from './VarConditionNode'
 import { VariableNode } from './VariableNode'
 import { WaitUntilNode } from './WaitUntilNode'
 import { WebhookTriggerNode } from './WebhookTriggerNode'
-import { IndicatorNode } from './IndicatorNode'
-import { VarConditionNode } from './VarConditionNode'
-import { PriorPeriodOhlcNode } from './PriorPeriodOhlcNode'
-import { BarOffsetNode } from './BarOffsetNode'
-import { OrderUpdateTriggerNode } from './OrderUpdateTriggerNode'
 import { WhatsappAlertNode } from './WhatsappAlertNode'
 
 // Base Components
@@ -111,6 +113,7 @@ export {
   HistoryNode,
   IndicatorNode,
   PriorPeriodOhlcNode,
+  StrategyPnlNode,
   BarOffsetNode,
   OpenPositionNode,
   ExpiryNode,
@@ -143,6 +146,7 @@ export {
   LogNode,
   HolidaysNode,
   TimingsNode,
+  CalendarNode,
 }
 
 /**
@@ -189,6 +193,7 @@ export const nodeTypes = {
   history: HistoryNode,
   indicator: IndicatorNode,
   priorPeriodOhlc: PriorPeriodOhlcNode,
+  strategyPnl: StrategyPnlNode,
   barOffset: BarOffsetNode,
   openPosition: OpenPositionNode,
   expiry: ExpiryNode,
@@ -224,4 +229,5 @@ export const nodeTypes = {
   log: LogNode,
   holidays: HolidaysNode,
   timings: TimingsNode,
+  calendar: CalendarNode,
 } as const

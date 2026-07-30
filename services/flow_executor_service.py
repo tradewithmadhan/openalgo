@@ -9,7 +9,7 @@ import logging
 import re
 import threading
 import time as time_module
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
 from database.flow_db import (
@@ -103,8 +103,37 @@ class WorkflowContext:
             "second": now.strftime("%S"),
             "weekday": now.strftime("%A"),
             "iso_timestamp": now.isoformat(),
+            # Numeric weekday, because varCondition compares numbers and
+            # "Thursday" cannot be used in a range test.
+            "weekday_num": str(now.isoweekday()),  # 1 = Monday
+            "quarter": str((now.month - 1) // 3 + 1),
+            "week_of_year": str(now.isocalendar().week),
+            "day_of_year": str(now.timetuple().tm_yday),
+            # The trading session date, which differs from `date` between
+            # midnight and the 03:00 IST rollover. `date` is left as the plain
+            # calendar date for back-compatibility.
+            "session_date": self._session_date(),
         }
         return builtins.get(name)
+
+    @staticmethod
+    def _session_date() -> str:
+        """The trading session date, falling back to the local calendar date.
+
+        The fallback is wrong by up to three hours of session labelling, so it
+        is logged rather than swallowed: silently returning a different date
+        than the method promises is the kind of failure that only shows up as a
+        strategy acting on the wrong day.
+        """
+        try:
+            from utils.session import get_trading_session_date
+
+            return get_trading_session_date()
+        except Exception:
+            logger.exception(
+                "Could not resolve the trading session date; using the local calendar date"
+            )
+            return datetime.now().date().isoformat()
 
     # Path segment: either a dotted key ([^.[\]]+) or a bracketed integer index (\[\d+\])
     _PATH_SEGMENT_RE = re.compile(r"([^\.\[\]]+)|\[(\d+)\]")
@@ -185,10 +214,29 @@ class WorkflowContext:
 class NodeExecutor:
     """Executes individual workflow nodes"""
 
-    def __init__(self, client: FlowOpenAlgoClient, context: WorkflowContext, logs: list):
+    def __init__(
+        self,
+        client: FlowOpenAlgoClient,
+        context: WorkflowContext,
+        logs: list,
+        default_strategy: str = "flow_workflow",
+    ):
         self.client = client
         self.context = context
         self.logs = logs
+        # Tag applied to every order this workflow places, so trades can be
+        # attributed back to the strategy that produced them (the tradebook
+        # carries this field). Defaults to the workflow's own name; a node may
+        # override it with `strategyTag`.
+        self.default_strategy = default_strategy or "flow_workflow"
+
+    def strategy_tag(self, node_data: dict) -> str:
+        """Strategy label for an order node.
+
+        Uses `strategyTag`, not `strategy`: optionsMultiOrder already uses
+        `strategy` for the structure type (straddle / iron_condor / custom).
+        """
+        return self.get_str(node_data, "strategyTag", "") or self.default_strategy
 
     def log(self, message: str, level: str = "info"):
         """Add log entry"""
@@ -255,6 +303,7 @@ class NodeExecutor:
             product_type=product,
             price=price,
             trigger_price=trigger_price,
+            strategy=self.strategy_tag(node_data),
         )
         self.log(
             f"Order result: {result}", "info" if result.get("status") == "success" else "error"
@@ -281,6 +330,7 @@ class NodeExecutor:
             position_size=position_size,
             price_type=price_type,
             product_type=product,
+            strategy=self.strategy_tag(node_data),
         )
         self.log(
             f"Smart order result: {result}",
@@ -288,6 +338,101 @@ class NodeExecutor:
         )
         self.store_output(node_data, result)
         return result
+
+    # Exchange lot sizes are revised by the exchanges periodically, so a
+    # hardcoded table goes stale silently and mis-sizes every order placed
+    # against it. The master contract is refreshed daily and is authoritative;
+    # the table below is only a last resort for an unseeded database.
+    _FALLBACK_LOT_SIZES = {
+        "NIFTY": 65,
+        "BANKNIFTY": 30,
+        "FINNIFTY": 60,
+        "MIDCPNIFTY": 120,
+        "NIFTYNXT50": 25,
+        "SENSEX": 20,
+        "BANKEX": 30,
+        "SENSEX50": 25,
+    }
+
+    @staticmethod
+    def _invalid_price_reason(price_type: str, price: float, trigger_price: float) -> str | None:
+        """Why this price type cannot be sent, or None when it is usable.
+
+        A LIMIT or SL order whose price never reached the broker executes at an
+        unintended level, so it is refused rather than sent with a zero.
+        """
+        price_type = (price_type or "MARKET").upper()
+        if price_type in ("LIMIT", "SL") and price <= 0:
+            return f"{price_type} order needs a positive price, got {price}"
+        if price_type in ("SL", "SL-M") and trigger_price <= 0:
+            return f"{price_type} order needs a positive trigger price, got {trigger_price}"
+        return None
+
+    class LotSizeUnavailable(RuntimeError):
+        """The lot size could not be determined, so quantity cannot be computed."""
+
+    def _resolve_lot_size(self, underlying: str, fo_exchange: str) -> int:
+        """Lot size for an underlying, from the master contract.
+
+        Fails closed. A lookup error means the lot size is *unknown*, and
+        guessing it sizes a real order wrongly - the fallback table is used only
+        when the master contract is genuinely unseeded for this exchange, and
+        only for an underlying whose lot size we ship.
+
+        Raises:
+            LotSizeUnavailable: the lot size cannot be established.
+        """
+        from database.symbol import SymToken, db_session
+
+        try:
+            row = (
+                db_session.query(SymToken.lotsize)
+                .filter(
+                    SymToken.name == underlying,
+                    SymToken.exchange == fo_exchange,
+                    SymToken.lotsize.isnot(None),
+                    SymToken.lotsize > 0,
+                )
+                .first()
+            )
+            if row and row[0]:
+                return int(row[0])
+            # Distinguish "this exchange has no contracts loaded" from "this
+            # underlying is not one of them". Only the former is a fallback case.
+            exchange_seeded = (
+                db_session.query(SymToken.id).filter(SymToken.exchange == fo_exchange).first()
+                is not None
+            )
+        except Exception as exc:
+            db_session.rollback()
+            logger.exception(f"Lot size lookup failed for {underlying} on {fo_exchange}")
+            raise self.LotSizeUnavailable(
+                f"Could not read the lot size for {underlying} on {fo_exchange}. "
+                "Refusing to size an order on a guess."
+            ) from exc
+        finally:
+            # Flow runs in background threads with no Flask app context, so the
+            # per-request teardown never fires and this session would stay bound
+            # to the thread holding its connection.
+            db_session.remove()
+
+        if exchange_seeded:
+            raise self.LotSizeUnavailable(
+                f"{underlying} has no contract on {fo_exchange} in the master contract. "
+                "Check the symbol, or re-download the master contract."
+            )
+        fallback = self._FALLBACK_LOT_SIZES.get(underlying)
+        if fallback is None:
+            raise self.LotSizeUnavailable(
+                f"The master contract has no {fo_exchange} contracts loaded and no "
+                f"built-in lot size for {underlying}. Download the master contract first."
+            )
+        self.log(
+            f"Master contract has no {fo_exchange} contracts loaded; using the built-in "
+            f"lot size {fallback} for {underlying}",
+            "warning",
+        )
+        return fallback
 
     def execute_options_order(self, node_data: dict) -> dict:
         """Execute Options Order node"""
@@ -297,9 +442,17 @@ class NodeExecutor:
         offset = self.get_str(node_data, "offset", "ATM")
         option_type = self.get_str(node_data, "optionType", "CE")
         action = self.get_str(node_data, "action", "BUY")
-        price_type = self.get_str(node_data, "priceType", "MARKET")
+        price_type = self.get_str(node_data, "priceType", "MARKET").upper()
         product = self.get_str(node_data, "product", "NRML")
         split_size = self.get_int(node_data, "splitSize", 0)
+        price = self.get_float(node_data, "price", 0.0)
+        trigger_price = self.get_float(node_data, "triggerPrice", 0.0)
+
+        invalid = self._invalid_price_reason(price_type, price, trigger_price)
+        if invalid:
+            error_result = {"status": "error", "message": invalid}
+            self.log(f"Options order failed: {invalid}", "error")
+            return error_result
 
         self.log(f"Placing options order: {underlying} {option_type} {offset}")
 
@@ -311,19 +464,14 @@ class NodeExecutor:
             underlying_exchange = "NSE_INDEX"
             fo_exchange = "NFO"
 
-        # Get lot size (updated Jan 2026)
-        lot_sizes = {
-            "NIFTY": 65,
-            "BANKNIFTY": 30,
-            "FINNIFTY": 65,
-            "MIDCPNIFTY": 120,
-            "NIFTYNXT50": 25,
-            "SENSEX": 20,
-            "BANKEX": 30,
-            "SENSEX50": 25,
-        }
-        lot_size = lot_sizes.get(underlying, 75)
+        try:
+            lot_size = self._resolve_lot_size(underlying, fo_exchange)
+        except self.LotSizeUnavailable as exc:
+            error_result = {"status": "error", "message": str(exc)}
+            self.log(f"Options order failed: {exc}", "error")
+            return error_result
         total_quantity = quantity * lot_size
+        self.log(f"Lot size for {underlying}: {lot_size} -> {quantity} lot(s) = {total_quantity}")
 
         # Resolve expiry date from expiry type
         expiry_date = self._resolve_expiry_date(underlying, fo_exchange, expiry_type)
@@ -347,7 +495,10 @@ class NodeExecutor:
             option_type=option_type,
             price_type=price_type,
             product=product,
+            price=price,
+            trigger_price=trigger_price,
             splitsize=split_size,
+            strategy=self.strategy_tag(node_data),
         )
         self.log(
             f"Options order result: {result}",
@@ -371,6 +522,10 @@ class NodeExecutor:
         quantity_lots = self.get_int(node_data, "quantity", 1)  # Number of lots per leg
         product = self.get_str(node_data, "product", "MIS")
         strangle_width = self.get_str(node_data, "strangleWidth", "OTM2")  # For strangle strategy
+        # Documented as a top-level field; previously read for custom legs only,
+        # so a predefined strategy silently executed MARKET legs.
+        multi_price_type = self.get_str(node_data, "priceType", "MARKET").upper()
+        multi_price = self.get_float(node_data, "price", 0.0)
 
         # Check for custom legs data
         legs_data = node_data.get("legs", []) or node_data.get("orderLegs", [])
@@ -387,19 +542,19 @@ class NodeExecutor:
             underlying_exchange = "NSE_INDEX"
             fo_exchange = "NFO"
 
-        # Get lot size for quantity calculation
-        lot_sizes = {
-            "NIFTY": 65,
-            "BANKNIFTY": 30,
-            "FINNIFTY": 65,
-            "MIDCPNIFTY": 120,
-            "NIFTYNXT50": 25,
-            "SENSEX": 20,
-            "BANKEX": 30,
-            "SENSEX50": 25,
-        }
-        lot_size = lot_sizes.get(underlying, 65)
+        # Same master-contract lookup the single-leg options node uses. A second
+        # hardcoded table here drifted the same way the first one had: it still
+        # claimed FINNIFTY was 65 where the contract says 60.
+        try:
+            lot_size = self._resolve_lot_size(underlying, fo_exchange)
+        except self.LotSizeUnavailable as exc:
+            error_result = {"status": "error", "message": str(exc)}
+            self.log(f"Options multi-order failed: {exc}", "error")
+            return error_result
         total_quantity = quantity_lots * lot_size
+        self.log(
+            f"Lot size for {underlying}: {lot_size} -> {quantity_lots} lot(s) = {total_quantity}"
+        )
 
         # Resolve expiry date
         expiry_date = self._resolve_expiry_date(underlying, fo_exchange, expiry_type)
@@ -419,21 +574,58 @@ class NodeExecutor:
             # Use custom legs from node data
             for leg in legs_data:
                 leg_qty = self.get_int(leg, "quantity", 1)
+                leg_price_type = self.get_str(leg, "priceType", multi_price_type).upper()
+                leg_price = self.get_float(leg, "price", multi_price)
+                leg_trigger = self.get_float(leg, "triggerPrice", 0.0)
                 leg_entry = {
                     "offset": self.get_str(leg, "offset", "ATM"),
                     "option_type": self.get_str(leg, "optionType", "CE"),
                     "action": self.get_str(leg, "action", "BUY"),
                     "quantity": leg_qty * lot_size,
-                    "pricetype": self.get_str(leg, "priceType", "MARKET"),
+                    "pricetype": leg_price_type,
                     "product": self.get_str(leg, "product", product),
-                    "price": self.get_float(leg, "price", 0),
+                    "price": leg_price,
+                    "trigger_price": leg_trigger,
                     "splitsize": self.get_int(leg, "splitSize", 0),
                 }
+                invalid = self._invalid_price_reason(leg_price_type, leg_price, leg_trigger)
+                if invalid:
+                    error_result = {
+                        "status": "error",
+                        "message": f"Leg {len(legs) + 1}: {invalid}",
+                    }
+                    self.log(f"Options multi-order failed: {error_result['message']}", "error")
+                    return error_result
                 legs.append(leg_entry)
         else:
             # Generate legs from predefined strategy type
+            # A generated strategy shares one price type across its legs. Its
+            # legs have no individual trigger price - the panel offers MARKET
+            # and LIMIT only - so an SL type here has no way to carry the
+            # trigger the broker requires. Say that, rather than sending a
+            # zero trigger or rejecting it as a missing price.
+            if multi_price_type in ("SL", "SL-M"):
+                message = (
+                    f"{multi_price_type} is not available for a generated "
+                    f"{strategy_type} strategy: its legs carry no trigger price. "
+                    "Use MARKET or LIMIT, or build the legs individually as custom "
+                    "legs where each can set its own trigger price."
+                )
+                self.log(f"Options multi-order failed: {message}", "error")
+                return {"status": "error", "message": message}
+            invalid = self._invalid_price_reason(multi_price_type, multi_price, 0.0)
+            if invalid:
+                error_result = {"status": "error", "message": invalid}
+                self.log(f"Options multi-order failed: {invalid}", "error")
+                return error_result
             legs = self._generate_strategy_legs(
-                strategy_type, action, total_quantity, product, strangle_width
+                strategy_type,
+                action,
+                total_quantity,
+                product,
+                strangle_width,
+                price_type=multi_price_type,
+                price=multi_price,
             )
 
         if not legs:
@@ -455,6 +647,7 @@ class NodeExecutor:
             exchange=underlying_exchange,
             expiry_date=expiry_date,
             legs=legs,
+            strategy=self.strategy_tag(node_data),
         )
         self.log(
             f"Options multi-order result: {result}",
@@ -470,8 +663,15 @@ class NodeExecutor:
         quantity: int,
         product: str,
         strangle_width: str = "OTM2",
+        price_type: str = "MARKET",
+        price: float = 0.0,
     ) -> list[dict]:
-        """Generate legs for predefined option strategies"""
+        """Generate legs for predefined option strategies.
+
+        `price_type` is honored rather than hardcoded: silently turning a
+        documented LIMIT instruction into a MARKET order is the one outcome a
+        trader can never recover from.
+        """
         legs = []
 
         # Common leg template
@@ -481,9 +681,9 @@ class NodeExecutor:
                 "option_type": option_type,
                 "action": leg_action,
                 "quantity": quantity,
-                "pricetype": "MARKET",
+                "pricetype": price_type,
                 "product": product,
-                "price": 0,
+                "price": price,
                 "splitsize": 0,
             }
 
@@ -757,6 +957,7 @@ class NodeExecutor:
             split_size=split_size,
             price_type=price_type,
             product_type=product,
+            strategy=self.strategy_tag(node_data),
         )
         self.log(
             f"Split order result: {result}",
@@ -823,6 +1024,17 @@ class NodeExecutor:
         interval = self.get_str(node_data, "interval", "5m")
         start_date = self.get_str(node_data, "startDate", "")
         end_date = self.get_str(node_data, "endDate", "")
+        # The panel offers a "Days" control, which was previously ignored -
+        # configuring 30 days sent empty dates and silently got whatever the
+        # broker defaults to. An explicit range still wins when both are set.
+        if not (start_date and end_date):
+            days = self.get_int(node_data, "days", 0)
+            if days > 0:
+                end_dt = datetime.now()
+                start_dt = end_dt - timedelta(days=days)
+                start_date = start_dt.strftime("%Y-%m-%d")
+                end_date = end_dt.strftime("%Y-%m-%d")
+                self.log(f"History range from days={days}: {start_date} to {end_date}")
         if start_date and end_date:
             start_date, end_date = clamp_history_range(start_date, end_date, interval)
         self.log(f"Getting history for: {symbol} ({interval})")
@@ -861,6 +1073,36 @@ class NodeExecutor:
                 )
             return f"History fetch failed for {symbol} ({interval}): {detail}.{hint}"
         return None
+
+    def execute_strategy_pnl(self, node_data: dict) -> dict:
+        """Execute Strategy P&L node - realized / unrealized / total for one
+        strategy, so a workflow can exit on its own performance rather than
+        the account's.
+
+        `strategy` defaults to this workflow's name, which is also the tag its
+        order nodes apply, so the common case needs no configuration.
+        """
+        from services.strategy_pnl_service import get_strategy_pnl
+
+        strategy = self.get_str(node_data, "strategy", "") or self.default_strategy
+        result = get_strategy_pnl(self.client, strategy=strategy)
+        if result.get("status") == "error":
+            self.log(f"Strategy P&L error: {result.get('message')}", "error")
+            return result
+
+        self.log(
+            f"Strategy P&L [{strategy}]: realized={result.get('realized')} "
+            f"unrealized={result.get('unrealized')} total={result.get('total')} "
+            f"openQty={result.get('open_quantity')}"
+        )
+        if result.get("unpriced_legs"):
+            self.log(
+                f"{result['unpriced_legs']} open leg(s) had no live price and were "
+                "excluded from unrealized P&L",
+                "warning",
+            )
+        self.store_output(node_data, result)
+        return result
 
     def execute_prior_period_ohlc(self, node_data: dict) -> dict:
         """Execute Prior Period OHLC node.
@@ -1264,26 +1506,101 @@ class NodeExecutor:
         self.store_output(node_data, result)
         return result
 
+    def execute_calendar(self, node_data: dict) -> dict:
+        """Execute Calendar node - trading-day facts for a date.
+
+        Answers "has a new day/week/month/quarter/year started" without any
+        cross-run state, by asking whether today is the first trading day of
+        that period. Correct where the obvious tests are not: the 1st of a
+        month falling on a Sunday, or a week whose Monday is a holiday.
+        """
+        from datetime import date as _date
+
+        from utils.trading_calendar import describe
+
+        raw = self.get_str(node_data, "date", "")
+        if raw:
+            try:
+                day = _date.fromisoformat(raw[:10])
+            except ValueError:
+                error_result = {
+                    "status": "error",
+                    "message": f"Calendar date must be YYYY-MM-DD, got {raw!r}",
+                }
+                self.log(f"Calendar failed: {error_result['message']}", "error")
+                return error_result
+        else:
+            # Session date, not the server's calendar date: between midnight and
+            # the 03:00 IST rollover those differ, and a strategy asking "is a
+            # new day" means the trading day.
+            day = _date.fromisoformat(self.context._session_date())
+
+        info = describe(day)
+        result = {"status": "success", **info}
+        self.log(
+            f"Calendar {info['date']} ({info['weekday']}): trading={info['is_trading_day']} "
+            f"newWeek={info['is_new_week']} newMonth={info['is_new_month']} "
+            f"newQuarter={info['is_new_quarter']}"
+        )
+        self.store_output(node_data, result)
+        return result
+
     def execute_holidays(self, node_data: dict) -> dict:
-        """Execute Holidays node - get market holidays"""
-        exchange = self.get_str(node_data, "exchange", "NSE")
-        self.log(f"Fetching holidays for exchange: {exchange}")
-        result = self.client.holidays(exchange=exchange)
-        self.log(f"Holidays result received")
+        """Execute Holidays node - get market holidays for a year."""
+        year = self.get_int(node_data, "year", 0)
+        self.log(f"Fetching holidays for year: {year or 'current'}")
+        result = self.client.holidays(year=year or None)
+        self.log("Holidays result received")
         self.store_output(node_data, result)
         return result
 
     def execute_timings(self, node_data: dict) -> dict:
-        """Execute Timings node - get market timings"""
-        exchange = self.get_str(node_data, "exchange", "NSE")
-        self.log(f"Fetching market timings for exchange: {exchange}")
-        result = self.client.timings(exchange=exchange)
+        """Execute Timings node - get market timings for a date."""
+        date_str = self.get_str(node_data, "date", "") or datetime.now().strftime("%Y-%m-%d")
+        self.log(f"Fetching market timings for date: {date_str}")
+        result = self.client.timings(date_str=date_str)
         self.log(f"Timings result: {result}")
         self.store_output(node_data, result)
         return result
 
+    def _parse_margin_positions(self, node_data: dict) -> list[dict] | None:
+        """Read the panel's positionsJson basket, if present and usable."""
+        raw = node_data.get("positionsJson") or node_data.get("positions")
+        if not raw:
+            return None
+        if isinstance(raw, str):
+            raw = self.context.interpolate(raw).strip()
+            if not raw:
+                return None
+            try:
+                raw = json.loads(raw)
+            except (TypeError, ValueError):
+                self.log("Margin positions JSON is not valid JSON; using the single position", "warning")
+                return None
+        if isinstance(raw, dict):
+            raw = [raw]
+        if not isinstance(raw, list) or not raw:
+            return None
+        if any(not isinstance(entry, dict) for entry in raw):
+            # Dropping the bad entries would quietly price part of the basket
+            # and report it as the whole estimate.
+            raise ValueError(
+                "Margin positions must all be objects; the basket contains a "
+                "non-object entry."
+            )
+        return raw or None
+
     def execute_margin(self, node_data: dict) -> dict:
         """Execute Margin node - calculate margin requirements"""
+        # The panel can supply a whole basket as positionsJson; a single
+        # position is the fallback. Ignoring positionsJson silently priced only
+        # the first leg of a multi-leg estimate.
+        try:
+            positions = self._parse_margin_positions(node_data)
+        except ValueError as exc:
+            error_result = {"status": "error", "message": str(exc)}
+            self.log(f"Margin failed: {exc}", "error")
+            return error_result
         symbol = self.get_str(node_data, "symbol", "")
         exchange = self.get_str(node_data, "exchange", "NSE")
         quantity = self.get_int(node_data, "quantity", 1)
@@ -1291,7 +1608,10 @@ class NodeExecutor:
         product_type = self.get_str(node_data, "product", "MIS")
         action = self.get_str(node_data, "action", "BUY")
         price_type = self.get_str(node_data, "priceType", "MARKET")
-        self.log(f"Calculating margin for: {symbol} ({exchange})")
+        if positions:
+            self.log(f"Calculating margin for a basket of {len(positions)} position(s)")
+        else:
+            self.log(f"Calculating margin for: {symbol} ({exchange})")
         result = self.client.margin(
             symbol=symbol,
             exchange=exchange,
@@ -1300,6 +1620,7 @@ class NodeExecutor:
             product_type=product_type,
             action=action,
             price_type=price_type,
+            positions=positions,
         )
         self.log(f"Margin result: {result}")
         self.store_output(node_data, result)
@@ -1649,7 +1970,33 @@ class NodeExecutor:
         `operator`/`threshold` (never written by the UI), so it always
         defaulted to `available > 0` and ignored `minAvailable`.
         """
-        min_available = self.get_float(node_data, "minAvailable", 0.0)
+        # A node saved before minAvailable existed carries the old
+        # operator/threshold pair. Reading only minAvailable would silently
+        # treat those as a minimum of zero, so the guard would pass on any
+        # balance - the exact bypass this field was added to prevent.
+        if "minAvailable" in node_data:
+            min_available = self.get_float(node_data, "minAvailable", 0.0)
+        elif "threshold" in node_data:
+            # This node only expresses "at least". A legacy less-than means the
+            # opposite, so treating its threshold as a minimum would invert the
+            # guard - refuse instead of guessing.
+            legacy_operator = str(node_data.get("operator") or "gt").strip().lower()
+            if legacy_operator not in ("gt", "gte", "ge", ">", ">="):
+                message = (
+                    f"Fund Check has a legacy '{legacy_operator}' comparison, which this "
+                    "node cannot express - it only supports a minimum. Open the node and "
+                    "set Minimum Available."
+                )
+                self.log(message, "error")
+                return {"status": "error", "message": message}
+            min_available = self.get_float(node_data, "threshold", 0.0)
+            self.log(
+                f"Fund Check is using its legacy threshold of {min_available}. "
+                "Re-save the node to store it as Minimum Available.",
+                "warning",
+            )
+        else:
+            min_available = 0.0
 
         self.log("Checking funds")
         result = self.client.funds()
@@ -2488,6 +2835,8 @@ def execute_node_chain(
         result = executor.execute_open_position(node_data)
     elif node_type == "history":
         result = executor.execute_history(node_data)
+    elif node_type == "strategyPnl":
+        result = executor.execute_strategy_pnl(node_data)
     elif node_type == "priorPeriodOhlc":
         result = executor.execute_prior_period_ohlc(node_data)
     elif node_type == "barOffset":
@@ -2508,6 +2857,8 @@ def execute_node_chain(
         result = executor.execute_option_chain(node_data)
     elif node_type == "syntheticFuture":
         result = executor.execute_synthetic_future(node_data)
+    elif node_type == "calendar":
+        result = executor.execute_calendar(node_data)
     elif node_type == "holidays":
         result = executor.execute_holidays(node_data)
     elif node_type == "timings":
@@ -2678,6 +3029,33 @@ def execute_workflow(
         if not workflow:
             return {"status": "error", "message": "Workflow not found"}
 
+        # Every trigger converges here - schedules, price alerts, order updates,
+        # webhooks and Run Now - so this is the only place that can guarantee an
+        # incomplete graph never reaches the broker. Guarding the HTTP routes
+        # alone left the background triggers unchecked, and saving deliberately
+        # accepts a half-built graph. Checked before the execution record exists,
+        # so a rejected run is not logged as one that started.
+        from services.flow_workflow_validator import validate_workflow
+
+        validation_errors = validate_workflow(
+            {
+                "name": workflow.name,
+                "nodes": workflow.nodes or [],
+                "edges": workflow.edges or [],
+            },
+            strict=True,
+        )
+        if validation_errors:
+            message = validation_errors[0]["message"]
+            logger.error(
+                f"Workflow {workflow_id} ({workflow.name}) is not runnable: {message}"
+            )
+            return {
+                "status": "error",
+                "message": f"Workflow cannot be executed: {message}",
+                "errors": validation_errors,
+            }
+
         execution = create_execution(workflow_id, status="running")
         if not execution:
             return {"status": "error", "message": "Failed to create execution record"}
@@ -2694,7 +3072,7 @@ def execute_workflow(
                 raise Exception("API key required for workflow execution")
 
             client = get_flow_client(api_key)
-            executor = NodeExecutor(client, context, logs)
+            executor = NodeExecutor(client, context, logs, default_strategy=workflow.name)
             logger.info(f"Starting workflow: {workflow.name}")
             executor.log(f"Starting workflow: {workflow.name}")
 

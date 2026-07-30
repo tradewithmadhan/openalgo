@@ -12,6 +12,119 @@ flat declarative style suitable for that purpose.
 
 ---
 
+## 0. Output contract — read before generating anything
+
+**Emit exactly this shape. Nothing else imports.**
+
+```jsonc
+// shape only - see the runnable example below
+{ "name": "...", "nodes": [ ... ], "edges": [ ... ] }
+```
+
+* `name` (string), `nodes` (array), `edges` (array) are **required at the top
+  level**. Any other top-level shape is rejected with *"Invalid workflow
+  format. Must have name, nodes, and edges."*
+* Every node must be `{ "id", "type", "position": {"x","y"}, "data": {} }`.
+* **`type` must be copied verbatim from the list below.** Do not invent node
+  types, and do not translate a strategy description into your own schema.
+  If a requirement has no matching node, say so in prose — do not fabricate
+  one.
+* Emit the JSON object alone: no ``` fences, no commentary, no comments, no
+  trailing commas.
+
+### The only valid `type` values
+
+```
+Triggers   start · priceAlert · webhookTrigger · orderUpdateTrigger
+Actions    placeOrder · smartOrder · optionsOrder · optionsMultiOrder ·
+           basketOrder · splitOrder · modifyOrder · cancelOrder ·
+           cancelAllOrders · closePositions
+Conditions positionCheck · fundCheck · priceCondition · varCondition ·
+           timeWindow · timeCondition · andGate · orGate · notGate
+Data       getQuote · multiQuotes · getDepth · history · indicator ·
+           priorPeriodOhlc · barOffset · strategyPnl · openPosition ·
+           getOrderStatus ·
+           orderBook · tradeBook · positionBook · holdings · funds · margin ·
+           symbol · optionSymbol · expiry · intervals · optionChain ·
+           syntheticFuture · holidays · timings · calendar
+Streaming  subscribeLtp · subscribeQuote · subscribeDepth · unsubscribe
+Utility    log · telegramAlert · whatsappAlert · variable · mathExpression ·
+           httpRequest · delay · waitUntil · group
+```
+
+### Capabilities Flow does NOT have
+
+Do not emit nodes for these; restructure the strategy instead.
+
+| Not available | What to do instead |
+|---|---|
+| Variables that persist between runs (flags, counters, "already traded today") | Ask the broker, which is the real record of what you did: `positionCheck` for an open position, or `orderBook` statistics for orders already placed today (the order book resets daily). |
+| Remembering that price *reached* a level earlier today ("the gap has filled", "it already tagged VWAP") | The quote's session `high`/`low` are the running extremes of today's session, so `day_low <= PDH` proves price traded down to PDH at some point today. This records where price has been, **not** what you have traded - do not use it to infer your own activity. |
+| Loops / iteration / "monitor from 09:20 to 12:30" | Use `start` with `scheduleType: "interval"` plus a `timeWindow` condition. One run per tick. |
+| Waiting inside a run for a target or stop | A separate workflow on its own schedule. Entry, exit and square-off are different workflows. |
+| Iterating a list of symbols | One workflow per symbol, or drive it from `webhookTrigger` using `{{webhook.symbol}}`. |
+| Structured trade logs, backtesting, string manipulation, date arithmetic | Not Flow. Order Book / Trade Book / P&L Tracker hold the trade record. |
+| `crossover` / `crossunder` / `correlation` / `beta` as an `indicator` | Two `indicator` nodes plus an `andGate` — see §8.14. |
+
+### Worked example of the required shape
+
+```json
+{
+  "name": "Buy RELIANCE if RSI below 30",
+  "nodes": [
+    { "id": "n1", "type": "start", "position": { "x": 0, "y": 0 },
+      "data": { "scheduleType": "interval", "intervalValue": 5, "intervalUnit": "minutes", "marketHoursOnly": true } },
+    { "id": "n2", "type": "indicator", "position": { "x": 0, "y": 100 },
+      "data": { "symbol": "RELIANCE", "exchange": "NSE", "interval": "D", "source": "api",
+                "indicatorName": "rsi", "params": "{\"period\": 14}", "outputVariable": "rsi" } },
+    { "id": "n3", "type": "varCondition", "position": { "x": 0, "y": 200 },
+      "data": { "leftValue": "{{rsi.latest.value}}", "operator": "<", "rightValue": "30" } },
+    { "id": "n4", "type": "placeOrder", "position": { "x": 0, "y": 300 },
+      "data": { "symbol": "RELIANCE", "exchange": "NSE", "action": "BUY", "quantity": 1,
+                "priceType": "MARKET", "product": "MIS", "outputVariable": "ord" } }
+  ],
+  "edges": [
+    { "id": "e1", "source": "n1", "target": "n2" },
+    { "id": "e2", "source": "n2", "target": "n3" },
+    { "id": "e3", "source": "n3", "sourceHandle": "true", "target": "n4" }
+  ]
+}
+```
+
+### Shapes that are rejected
+
+```jsonc
+{ "strategy": {...}, "settings": {...}, "flow": [...] }   // no name/nodes/edges
+{ "workflow": { "name": "...", "nodes": [], "edges": [] } } // nested one level too deep
+{ "name": "x", "nodes": [ { "type": "Decision" } ] }        // invented type, and no id/position/data
+{ "name": "x", "nodes": [], "edges": [], }                  // trailing comma
+```
+
+---
+
+## 0.1 Updating a workflow that already exists
+
+Importing always creates a **new** workflow, so iterating on a strategy as JSON
+leaves a trail of copies and a new webhook URL each time.
+
+To replace an existing workflow's graph in place, keeping its id, webhook token
+and active state:
+
+* **In the editor** - the workflow menu, **Replace from JSON**. Paste or pick a
+  file.
+* **From a terminal** - `uv run python scripts/update_flow_workflow.py --id <id> --file strategy.json`
+  (add `--dry-run` to see what would change first).
+* **Over HTTP** - `POST /flow/api/workflows/<id>/replace` with the same body an
+  import takes.
+
+All three apply the rules in this document, so a graph that would be rejected at
+import is not written through a side door. If the **trigger** configuration
+changes on an active workflow, deactivate and reactivate it: the schedule and any
+price or order watch are registered at activation, not read per run. Node changes
+apply from the next run without any action.
+
+---
+
 ## 1. Workflow shape
 
 A workflow is a JSON object with the following top-level keys (the snippet
@@ -137,6 +250,13 @@ the node fires:
 | `{{weekday}}` | `Wednesday` |
 | `{{iso_timestamp}}` | `2026-04-29T09:15:42.123456` |
 
+Calendar built-ins: `{{weekday_num}}` (1 = Monday, for numeric comparison -
+`{{weekday}}` is a name like `"Thursday"`), `{{quarter}}`, `{{week_of_year}}`,
+`{{day_of_year}}`, and `{{session_date}}` (the trading session date, which
+differs from `{{date}}` between midnight and the 03:00 IST rollover).
+
+For "has a new period started", use the `calendar` node rather than comparing
+these - see 7.4.
 ### Output variables
 
 Most data and action nodes accept an `outputVariable` field in their `data`
@@ -197,10 +317,18 @@ gate needs a working else-branch:
 Gates wait until every wired input has been evaluated, then fire exactly
 once per run.
 
-`andGate` / `orGate` source handles are not bool branches — they emit a single
-`condition` value to whatever connects to them downstream. Their **incoming**
-edges do use `targetHandle` to pin a specific input slot:
+`andGate` / `orGate` **do** branch: both render `true` and `false` source
+handles, and the executor routes their result through the same truthy/falsy
+edge filter as a condition node. Set `sourceHandle: "true"` or `"false"` on a
+gate's outgoing edges exactly as you would for a condition. An edge with no
+`sourceHandle` is followed unconditionally, which is rarely what you want from
+a gate.
+
+Their **incoming** edges use `targetHandle` to pin a specific input slot:
 `targetHandle: "input-0"`, `"input-1"`, ... up to `inputCount - 1`.
+
+`notGate` emits `yes` / `no` handles, which the executor treats as synonyms of
+`true` / `false`.
 
 ---
 
@@ -227,6 +355,17 @@ the `nodes` array.
 A workflow must contain exactly one trigger node, and that node must be one
 of: `start`, `priceAlert`, `webhookTrigger`, `orderUpdateTrigger`. Every
 other path of execution flows from there.
+
+> **A second trigger is silently ignored.** The executor takes the *first*
+> trigger node it finds and walks the graph from there, so any additional
+> trigger - and every node downstream of it - never runs, with no error. If a
+> strategy needs two schedules (say entries each minute and a square-off at
+> 14:00), either express the second as a `timeWindow`-gated branch on the
+> same trigger, or split it into a second workflow.
+>
+> Note that splitting costs broker calls: branches sharing one trigger also
+> share their data nodes, whereas separate workflows each re-fetch. Quotes and
+> the order book are **not** de-duplicated by the history cache.
 
 #### start — Schedule Trigger
 
@@ -825,7 +964,7 @@ schemas.
 
 #### indicator — Technical Indicator
 
-Runs any of 118 `openalgo.ta` indicators over a symbol's history, or over
+Runs any of 116 `openalgo.ta` indicators over a symbol's history, or over
 another indicator's output series.
 
 | Field | Type | Default | Notes |
@@ -887,6 +1026,70 @@ Exposes `{{name.open/high/low/close/volume}}` plus aliases `{{name.pdh}}`,
   "type": "priorPeriodOhlc",
   "position": { "x": 100, "y": 100 },
   "data": { "symbol": "NIFTY", "exchange": "NSE_INDEX", "period": "previous_day", "source": "api", "outputVariable": "pd" }
+}
+```
+
+#### calendar — Calendar
+
+Trading-day facts for a date, and the stateless answer to "has a new day,
+week, month, quarter or year started". Flow keeps no state between runs, so a
+workflow cannot remember the last run's date - it does not need to, because
+"a new month started" is the same statement as "today is the first trading day
+of this month", which the exchange calendar answers on its own.
+
+| Field | Type | Default | Notes |
+|---|---|---|---|
+| `date` | `"YYYY-MM-DD"` | current trading session date | Blank uses the session date, which differs from the calendar date between midnight and the 03:00 IST rollover. |
+| `outputVariable` | string | — | |
+
+Not exchange-aware: a date is a trading holiday if the exchange calendar lists
+one. MCX differs from NSE on a few days a year.
+
+Use `{{cal.is_new_month}}` rather than `{{month}}`-based arithmetic or
+`{{day}} == 1`. The 1st can fall on a Sunday, and a week's Monday can be a
+holiday; the flags handle both, those tests do not.
+
+```json
+{
+  "id": "node_2",
+  "type": "calendar",
+  "position": { "x": 100, "y": 100 },
+  "data": { "outputVariable": "cal" }
+}
+```
+
+#### strategyPnl — Strategy P&L
+
+Realized / unrealized / total P&L for **one strategy**, not the whole account.
+The broker nets positions per `(symbol, exchange, product)` and carries no
+strategy label, so this is the only way a workflow can exit on its own
+performance while another strategy holds the same contract.
+
+| Field | Type | Default | Notes |
+|---|---|---|---|
+| `strategy` | string | the workflow's own name | Matches the tag this workflow's order nodes apply. Leave blank in almost every case. |
+| `outputVariable` | string | — | |
+
+Exposes `{{name.realized}}`, `{{name.today_realized}}`, `{{name.unrealized}}`,
+`{{name.total}}`, `{{name.today_total}}`, `{{name.open_quantity}}`,
+`{{name.unpriced_legs}}` and a per-leg `{{name.legs[0].*}}` breakdown.
+
+The book is fed from orders placed **through OpenAlgo carrying a strategy
+tag**; a position opened by hand in the broker terminal is invisible to it.
+`unpriced_legs` counts open legs with no live price, which are excluded from
+`unrealized` — a non-zero value means `total` is understated. If the position
+book or the strategy book cannot be read, the node returns `status: "error"`
+rather than a zero, because a zero is indistinguishable from a flat strategy.
+
+Guard on `open_quantity` before acting, or an exit re-fires every run once the
+position is already flat and realized P&L still exceeds the target.
+
+```json
+{
+  "id": "node_2",
+  "type": "strategyPnl",
+  "position": { "x": 100, "y": 100 },
+  "data": { "outputVariable": "pnl" }
 }
 ```
 
@@ -1291,6 +1494,14 @@ resolve. Shapes below were captured from live responses, not inferred.
 | `indicator` | `{status, indicator, nested, inputs, params, outputs, latest, previous, at_offset, series, offset_bars, bars_used}` | `{{r.latest.value}}`, `{{r.previous.value}}`, `{{r.at_offset.out0}}`, `{{r.series[0].value}}` |
 | `priorPeriodOhlc` | `{status, symbol, exchange, period, date, open, high, low, close, volume, pdh, pdl, pdc}` | `{{pd.pdh}}`, `{{pd.pdl}}`, `{{pd.close}}` |
 | `barOffset` | `{status, symbol, exchange, offsetBars, timestamp, open, high, low, close, volume}` | `{{b.close}}`, `{{b.high}}` |
+| `calendar` | `{status, date, is_trading_day, is_trading_holiday, is_weekend, weekday, weekday_num, day, month, quarter, year, week_of_year, day_of_year, is_new_day, is_new_week, is_new_month, is_new_quarter, is_new_year, is_last_day_of_week, is_last_day_of_month, is_last_day_of_quarter, is_last_day_of_year, prev_trading_day, next_trading_day, first_trading_day_of_week, first_trading_day_of_month, first_trading_day_of_quarter, last_trading_day_of_week, last_trading_day_of_month, last_trading_day_of_quarter}` | `{{cal.is_new_month}}`, `{{cal.is_trading_day}}`, `{{cal.prev_trading_day}}` |
+| `strategyPnl` | `{status, strategy, realized, today_realized, unrealized, total, today_total, open_quantity, unpriced_legs, legs: [{symbol, exchange, product, quantity, average_price, ltp, realized, today_realized, unrealized}]}` | `{{pnl.total}}`, `{{pnl.today_total}}`, `{{pnl.today_realized}}`, `{{pnl.open_quantity}}` |
+
+`strategyPnl` reports **only this strategy's** legs, not the account's. It
+defaults to the workflow's own name, which is the same tag its order nodes
+apply, so the usual case needs no configuration. `unpriced_legs` counts open
+legs with no live price - those are excluded from `unrealized`, so treat a
+non-zero value as "this total is incomplete" before acting on it.
 
 Single-output indicators expose `value`; multi-output expose `out0`, `out1`,
 … (macd: line/signal/histogram, supertrend: level/direction, bbands:

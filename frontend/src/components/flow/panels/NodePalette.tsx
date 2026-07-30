@@ -9,6 +9,7 @@ import {
   Calculator,
   Calendar,
   CalendarClock,
+  CalendarRange,
   CalendarX,
   ClipboardList,
   Clock,
@@ -294,6 +295,13 @@ export function NodePalette({ onDragStart }: NodePaletteProps) {
       color: 'bg-cyan-500/10',
     },
     {
+      type: 'strategyPnl',
+      label: 'Strategy P&L',
+      description: 'Per-strategy realized/unrealized',
+      icon: <Wallet className="h-3.5 w-3.5 text-cyan-500" />,
+      color: 'bg-cyan-500/10',
+    },
+    {
       type: 'priorPeriodOhlc',
       label: 'Prior Period OHLC',
       description: 'Prev hour/day/week/month',
@@ -320,6 +328,20 @@ export function NodePalette({ onDragStart }: NodePaletteProps) {
       description: 'F&O expiry',
       icon: <Calendar className="h-3.5 w-3.5 text-pink-500" />,
       color: 'bg-pink-500/10',
+    },
+    {
+      type: 'intervals',
+      label: 'Intervals',
+      description: 'Broker timeframes',
+      icon: <Clock className="h-3.5 w-3.5 text-pink-500" />,
+      color: 'bg-pink-500/10',
+    },
+    {
+      type: 'calendar',
+      label: 'Calendar',
+      description: 'New day / week / month',
+      icon: <CalendarRange className="h-3.5 w-3.5 text-purple-400" />,
+      color: 'bg-purple-400/10',
     },
     {
       type: 'multiQuotes',
