@@ -212,6 +212,8 @@ export default function EzayChart() {
   const [peSymbol, setPeSymbol] = useState('')
   const [liveSpot, setLiveSpot] = useState(0)
   const liveSpotRef = useRef(0)
+  const [ceLtpDisplay, setCeLtpDisplay] = useState(0)
+  const [peLtpDisplay, setPeLtpDisplay] = useState(0)
   const [isBacktest, setIsBacktest] = useState(false)
   const [backtestDate, setBacktestDate] = useState('')
   const [visibleStrategies, setVisibleStrategies] = useState<Set<string>>(new Set())
@@ -283,12 +285,14 @@ export default function EzayChart() {
   const [fetcherRunning, setFetcherRunning] = useState(false)
 
   const wsSymbols = useMemo(() => {
-    if (isBacktest || !fetcherRunning) return []
+    if (isBacktest) return []
     const syms: Array<{ symbol: string; exchange: string }> = [
       { symbol: 'NIFTY', exchange: 'NSE_INDEX' },
     ]
-    if (ceSymbol) syms.push({ symbol: ceSymbol, exchange: 'NFO' })
-    if (peSymbol) syms.push({ symbol: peSymbol, exchange: 'NFO' })
+    if (fetcherRunning) {
+      if (ceSymbol) syms.push({ symbol: ceSymbol, exchange: 'NFO' })
+      if (peSymbol) syms.push({ symbol: peSymbol, exchange: 'NFO' })
+    }
     return syms
   }, [ceSymbol, peSymbol, isBacktest, fetcherRunning])
 
@@ -960,6 +964,8 @@ export default function EzayChart() {
     ceTradeMarkersRef.current?.setMarkers([])
     peTradeMarkersRef.current?.setMarkers([])
     apiCandleVolRef.current.clear()
+    setCeLtpDisplay(0)
+    setPeLtpDisplay(0)
   }, [selectedStrike])
 
   // Clear volume baselines when symbols change — prevents race where WS seeds
@@ -1033,6 +1039,9 @@ export default function EzayChart() {
     const peLtp = peEntry?.data?.ltp || 0
     const ceDayVol = ceEntry?.data?.volume || 0
     const peDayVol = peEntry?.data?.volume || 0
+
+    if (ceLtp) setCeLtpDisplay(ceLtp)
+    if (peLtp) setPeLtpDisplay(peLtp)
 
     if (!ceDayVol && !peDayVol) return
 
@@ -1362,6 +1371,16 @@ export default function EzayChart() {
           {liveSpot > 0 && (
             <span className="text-[11px] font-mono font-semibold" style={{ color: t.text }}>
               NIFTY {liveSpot.toFixed(2)}
+            </span>
+          )}
+          {ceLtpDisplay > 0 && (
+            <span className="text-[11px] font-mono font-semibold" style={{ color: '#00C851' }}>
+              CE: {ceLtpDisplay.toFixed(2)}
+            </span>
+          )}
+          {peLtpDisplay > 0 && (
+            <span className="text-[11px] font-mono font-semibold" style={{ color: '#E040FB' }}>
+              PE: {peLtpDisplay.toFixed(2)}
             </span>
           )}
           <div className="flex items-center gap-1">
