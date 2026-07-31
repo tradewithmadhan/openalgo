@@ -25,6 +25,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { BarChart3, Home, Menu, Sun, Moon, Zap, ChevronLeft, ChevronRight, Wifi, WifiOff } from 'lucide-react'
+import { toast } from 'sonner'
 import { useMarketData } from '@/hooks/useMarketData'
 import { useThemeStore } from '@/stores/themeStore'
 import { useAuthStore } from '@/stores/authStore'
@@ -36,6 +37,7 @@ import { chartTheme } from './chartTheme'
 import { PositionLinePrimitive, type PositionDatum, OrderLinePrimitive, type OrderLineDatum } from './chartPrimitives'
 import RealtimeTable from './RealtimeTable'
 import EzaySignals, { type FirstSignalInfo, type BackendSignals } from './components/EzaySignals'
+import QuickTradePanel from './components/QuickTradePanel'
 
 type OptionDataResponse = {
   status: string
@@ -258,6 +260,7 @@ export default function EzayChart() {
   const currentOhlcRef = useRef<Map<string, { time: number; open: number; high: number; low: number; close: number }>>(new Map())
   const apiCandleVolRef = useRef<Map<number, number>>(new Map())
   const strikeNumRef = useRef(0)
+  const tradePanelClickRef = useRef<(clickY: number) => void>(() => {})
 
   const { mode: themeMode, toggleMode, appMode, toggleAppMode, isTogglingMode } = useThemeStore()
   const t = chartTheme[themeMode]
@@ -305,6 +308,8 @@ export default function EzayChart() {
   }, [])
 
   const [fetcherRunning, setFetcherRunning] = useState(false)
+  const [isPlacingOrder, setIsPlacingOrder] = useState(false)
+  const isPlacingOrderRef = useRef(false)
 
   const wsSymbols = useMemo(() => {
     if (isBacktest) return []
@@ -927,6 +932,74 @@ export default function EzayChart() {
   }, [fetchOrders])
   handleModifyOrderRef.current = handleModifyOrder
 
+  const pollOrderStatus = useCallback(async (orderid: string) => {
+    const apiKey = useAuthStore.getState().apiKey
+    if (!apiKey) return
+    const poll = async (attempts: number) => {
+      if (attempts > 30) return
+      try {
+        const res = await tradingApi.getOrders(apiKey)
+        const orders = res.data?.orders || []
+        const order = orders.find(o => o.orderid === orderid)
+        if (!order) { setTimeout(() => poll(attempts + 1), 1000); return }
+        if (order.order_status === 'complete') {
+          toast.success(`Order executed: ${order.symbol} ${order.action} ${order.quantity}`)
+          fetchOrders()
+          fetchPositions()
+          setIsPlacingOrder(false)
+          isPlacingOrderRef.current = false
+          return
+        }
+        if (order.order_status === 'rejected' || order.order_status === 'cancelled') {
+          toast.error(`Order ${order.order_status}: ${order.symbol}`)
+          setIsPlacingOrder(false)
+          isPlacingOrderRef.current = false
+          return
+        }
+        setTimeout(() => poll(attempts + 1), 1000)
+      } catch {
+        setTimeout(() => poll(attempts + 1), 1000)
+      }
+    }
+    poll(0)
+  }, [fetchOrders, fetchPositions])
+
+  const handlePlaceOrder = useCallback(async (req: any) => {
+    if (isPlacingOrderRef.current) return
+    setIsPlacingOrder(true)
+    isPlacingOrderRef.current = true
+    try {
+      const apiKey = useAuthStore.getState().apiKey
+      if (!apiKey) { toast.error('No API key'); setIsPlacingOrder(false); isPlacingOrderRef.current = false; return }
+      const orderReq = { ...req, apikey: apiKey }
+      const res = await tradingApi.placeOrder(orderReq)
+      if (res.status === 'success' && res.data?.orderid) {
+        toast.success(`Order placed: ${res.data.orderid}`)
+        pollOrderStatus(res.data.orderid)
+      } else {
+        toast.error(res.message || 'Order failed')
+        setIsPlacingOrder(false)
+        isPlacingOrderRef.current = false
+      }
+    } catch (e) {
+      toast.error('Order placement failed')
+      setIsPlacingOrder(false)
+      isPlacingOrderRef.current = false
+    }
+  }, [pollOrderStatus])
+
+  const [tradePanelSide, setTradePanelSide] = useState<'CE' | 'PE'>('CE')
+  const [tradePanelPrice, setTradePanelPrice] = useState(0)
+
+  const handleTradePanelClick = useCallback((clickY: number) => {
+    const ceY = ceSeriesRef.current?.priceToCoordinate(ceLtpDisplay) ?? 0
+    const peY = peSeriesRef.current?.priceToCoordinate(peLtpDisplay) ?? 0
+    const isCloserToCE = Math.abs(clickY - ceY) < Math.abs(clickY - peY)
+    setTradePanelSide(isCloserToCE ? 'CE' : 'PE')
+    const rawPrice = ceSeriesRef.current?.coordinateToPrice(clickY) ?? 0
+    setTradePanelPrice(Math.round(rawPrice * 20) / 20)
+  }, [ceLtpDisplay, peLtpDisplay])
+
   useEffect(() => {
     if (!chartContainerRef.current) return
     const colors = getChartColors()
@@ -993,6 +1066,7 @@ export default function EzayChart() {
         handleCancelOrderRef.current(hitPeOrd as string)
         return
       }
+      tradePanelClickRef.current(y)
     })
 
     const resizeObserver = new ResizeObserver(() => {
@@ -1740,6 +1814,18 @@ export default function EzayChart() {
               style={{ backgroundColor: themeMode === 'dark' ? 'rgba(0,0,0,0.85)' : 'rgba(255,255,255,0.9)', color: themeMode === 'dark' ? '#e5e7eb' : '#1f2937', border: `1px solid ${themeMode === 'dark' ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.1)'}`, right: 80 }}>
               {candleCountdown}
             </div>
+          )}
+          {!isBacktest && ceSymbol && peSymbol && (
+            <QuickTradePanel
+              ceSymbol={ceSymbol}
+              peSymbol={peSymbol}
+              ceLtp={ceLtpDisplay}
+              peLtp={peLtpDisplay}
+              onPlaceOrder={handlePlaceOrder}
+              isPlacing={isPlacingOrder}
+              clickSide={tradePanelSide}
+              clickPrice={tradePanelPrice}
+            />
           )}
           {backtestSummary && (
             <div className="absolute top-2 left-2 z-10 rounded-md px-3 py-2 text-[10px] font-mono max-h-[60%] overflow-y-auto" style={{ backgroundColor: 'rgba(0,0,0,0.85)', color: '#d1d4dc', minWidth: 360, scrollbarWidth: 'thin' }}>
