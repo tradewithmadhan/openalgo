@@ -310,6 +310,8 @@ export default function EzayChart() {
   const [fetcherRunning, setFetcherRunning] = useState(false)
   const [isPlacingOrder, setIsPlacingOrder] = useState(false)
   const isPlacingOrderRef = useRef(false)
+  const isClosingRef = useRef(false)
+  const isCancellingRef = useRef(false)
   const [orderStatus, setOrderStatus] = useState<'idle' | 'placing' | 'executing'>('idle')
 
   const wsSymbols = useMemo(() => {
@@ -878,26 +880,72 @@ export default function EzayChart() {
   }, [])
 
   const handleClosePosition = useCallback(async (symbol: string, exchange: string, product: string) => {
-    cePositionRef.current?.hidePosition(symbol)
-    pePositionRef.current?.hidePosition(symbol)
-    cePositionDataRef.current = null
-    pePositionDataRef.current = null
-    cePositionRef.current?.setData([])
-    pePositionRef.current?.setData([])
+    if (isClosingRef.current) return
+    isClosingRef.current = true
     try {
-      await tradingApi.closePosition(symbol, exchange, product)
-      fetchPositions()
-    } catch { fetchPositions() }
+      const apiKey = useAuthStore.getState().apiKey
+      if (!apiKey) { isClosingRef.current = false; return }
+      const res = await tradingApi.closePosition(symbol, exchange, product, 'EzayChart Close Position')
+      const orderId = (res as any).orderid || (res as any).data?.orderid
+      if (!orderId) { fetchPositions(); isClosingRef.current = false; return }
+      let attempts = 0
+      const poll = async () => {
+        attempts++
+        if (attempts > 30) { fetchPositions(); isClosingRef.current = false; return }
+        try {
+          const oRes = await fetch('/api/v1/orderbook', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ apikey: apiKey }),
+          })
+          const oJson = await oRes.json()
+          const orders = oJson.data?.orders || []
+          const order = orders.find((o: any) => o.orderid === orderId)
+          if (order && (order.order_status === 'complete' || order.order_status === 'rejected' || order.order_status === 'cancelled')) {
+            fetchPositions()
+            setTimeout(fetchPositions, 1500)
+            setTimeout(fetchPositions, 3500)
+            isClosingRef.current = false
+            return
+          }
+          setTimeout(poll, 1000)
+        } catch { setTimeout(poll, 1000) }
+      }
+      poll()
+    } catch { fetchPositions(); isClosingRef.current = false }
   }, [fetchPositions])
   handleClosePositionRef.current = handleClosePosition
 
   const handleCancelOrder = useCallback(async (orderId: string) => {
-    ceOrderRef.current?.hideOrder(orderId)
-    peOrderRef.current?.hideOrder(orderId)
+    if (isCancellingRef.current) return
+    isCancellingRef.current = true
     try {
-      await tradingApi.cancelOrder(orderId)
-      fetchOrders()
-    } catch { fetchOrders() }
+      const apiKey = useAuthStore.getState().apiKey
+      if (!apiKey) { isCancellingRef.current = false; return }
+      await tradingApi.cancelOrder(orderId, 'EzayChart Cancellation')
+      let attempts = 0
+      const poll = async () => {
+        attempts++
+        if (attempts > 30) { fetchOrders(); isCancellingRef.current = false; return }
+        try {
+          const oRes = await fetch('/api/v1/orderbook', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ apikey: apiKey }),
+          })
+          const oJson = await oRes.json()
+          const orders = oJson.data?.orders || []
+          const order = orders.find((o: any) => o.orderid === orderId)
+          if (order && (order.order_status === 'cancelled' || order.order_status === 'rejected')) {
+            fetchOrders()
+            isCancellingRef.current = false
+            return
+          }
+          setTimeout(poll, 1000)
+        } catch { setTimeout(poll, 1000) }
+      }
+      poll()
+    } catch { fetchOrders(); isCancellingRef.current = false }
   }, [fetchOrders])
   handleCancelOrderRef.current = handleCancelOrder
 
@@ -909,17 +957,18 @@ export default function EzayChart() {
     try {
       const isSl = ord.orderType === 'SL' || ord.orderType === 'SL-M'
       const isLimit = ord.orderType === 'LIMIT'
-      // Round to nearest 0.05 with minimum 0.05 gap from trigger
       const round005 = (v: number, up: boolean) => {
         const step = 0.05
-        return up ? Math.ceil(v / step) * step : Math.floor(v / step) * step
+        const rounded = up ? Math.ceil(v / step) * step : Math.floor(v / step) * step
+        return Math.round(rounded * 100) / 100
       }
-      const triggerPrice = isSl ? newPrice : 0
+      const cleanPrice = Math.round(newPrice * 100) / 100
+      const triggerPrice = isSl ? cleanPrice : 0
       const limitPrice = isSl
         ? (ord.side === 'BUY'
-            ? round005(newPrice + 0.05, true)   // BUY SL: limit above trigger
-            : round005(newPrice - 0.05, false)) // SELL SL: limit below trigger
-        : (isLimit ? newPrice : 0)
+            ? round005(cleanPrice + 0.05, true)
+            : round005(cleanPrice - 0.05, false))
+        : (isLimit ? cleanPrice : 0)
       const res = await tradingApi.modifyOrder(orderId, {
         symbol: ord.symbol,
         exchange: ord.exchange,
@@ -930,6 +979,7 @@ export default function EzayChart() {
         price: limitPrice,
         trigger_price: triggerPrice,
         disclosed_quantity: 0,
+        strategy: 'EzayChart Modification',
       })
       if (res.status === 'success') {
         fetchOrders()

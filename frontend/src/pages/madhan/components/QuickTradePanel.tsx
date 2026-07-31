@@ -112,7 +112,8 @@ export default function QuickTradePanel({
 
   const round005 = (v: number, up: boolean) => {
     const step = 0.05
-    return up ? Math.ceil(v / step) * step : Math.floor(v / step) * step
+    const rounded = up ? Math.ceil(v / step) * step : Math.floor(v / step) * step
+    return Math.round(rounded * 100) / 100
   }
 
   const handleTriggerChange = (val: number) => {

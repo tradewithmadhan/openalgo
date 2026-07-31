@@ -183,23 +183,78 @@ For SL orders, price and trigger automatically maintain a 0.05 minimum gap:
 
 ---
 
-## API Endpoints Used
+## API Calls Used
 
-### Position & Order Lines
-| Endpoint | Method | Body | Purpose |
-|----------|--------|------|---------|
-| `/api/v1/positionbook` | POST | `{apikey}` | Fetch positions for chart lines |
-| `/api/v1/orderbook` | POST | `{apikey}` | Fetch orders for chart lines |
-| `/close_position` | POST | `{apikey, symbol, exchange, product}` | Close position from chart |
-| `/cancel_order` | POST | `{apikey, orderid}` | Cancel order from chart |
-| `/modify_order` | POST | `{apikey, strategy, exchange, symbol, product, orderid, order_type, trigger_price, quantity, price, validity, disclosed_quantity}` | Modify order price via drag |
+### Place Order
+```js
+tradingApi.placeOrder({
+  apikey, strategy: 'QuickTrade', exchange: 'NFO', symbol,
+  action, quantity, pricetype, product, price?, trigger_price?
+})
+// → POST /api/v1/placeorder
+// Response: { status: 'success', orderid: '...' }
+```
+Then polls orderbook based on order type:
+- **MARKET**: polls until `complete` → fetchPositions with retries (1.5s, 3.5s)
+- **LIMIT/SL/SL-M**: polls until `open`/`pending` → fetchOrders (no execution wait)
 
-### Quick Trade Panel
-| Endpoint | Method | Body | Purpose |
-|----------|--------|------|---------|
-| `/api/v1/placeorder` | POST | `{apikey, strategy, exchange, symbol, action, quantity, pricetype, product, price?, trigger_price?}` | Place new order |
-| `/api/v1/orderbook` | POST | `{apikey}` | Poll order status after placement |
-| `/api/v1/positionbook` | POST | `{apikey}` | Fetch positions after order fill |
+### Modify Order
+```js
+tradingApi.modifyOrder(orderid, {
+  symbol, exchange, action, product, pricetype, quantity,
+  price, trigger_price, disclosed_quantity: 0, strategy: 'EzayChart Modification'
+})
+// → POST /modify_order (webClient, session + CSRF)
+// Response: { status: 'success', orderid: '...' }
+```
+
+### Cancel Order
+```js
+tradingApi.cancelOrder(orderid)
+// → POST /cancel_order (webClient, session + CSRF)
+// Response: { status: 'success', orderid: '...' }
+```
+Then polls orderbook until `cancelled`/`rejected` → fetchOrders
+
+### Close Position
+```js
+tradingApi.closePosition(symbol, exchange, product)
+// → POST /close_position (webClient, session + CSRF)
+// Response: { status: 'success', orderid: '...' }
+```
+Backend uses smart order logic: gets current position → places opposite order (LONG→SELL, SHORT→BUY) with quantity = position size.
+Then polls orderbook until `complete`/`rejected`/`cancelled` → fetchPositions with retries (1.5s, 3.5s)
+
+### Poll Order Status (after place)
+```js
+fetch('/api/v1/orderbook', { method: 'POST', body: JSON.stringify({ apikey }) })
+// → polls until terminal status
+```
+
+### Fetch Positions
+```js
+fetch('/api/v1/positionbook', { method: 'POST', body: JSON.stringify({ apikey }) })
+// → POST /api/v1/positionbook
+// Returns positions matched to CE/PE via robust symbol matching
+```
+
+### Fetch Orders
+```js
+fetch('/api/v1/orderbook', { method: 'POST', body: JSON.stringify({ apikey }) })
+// → POST /api/v1/orderbook
+// Returns open/pending/trigger pending orders matched to CE/PE
+```
+
+### Symbol Matching (positions & orders)
+```js
+matchSym(a, b) → a === b || a.endsWith(b) || b.endsWith(a) || a.replace(/^.*:/, '') === b.replace(/^.*:/, '')
+```
+Handles broker prefix differences (e.g. `NSE:NIFTY25JUL25000CE` vs `NIFTY25JUL25000CE`)
+
+### Guards (prevent duplicate API calls)
+- `isPlacingOrderRef` — place order
+- `isClosingRef` — close position
+- `isCancellingRef` — cancel order
 
 ---
 
