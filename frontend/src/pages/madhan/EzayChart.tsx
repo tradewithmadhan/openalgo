@@ -943,7 +943,6 @@ export default function EzayChart() {
         const order = orders.find(o => o.orderid === orderid)
         if (!order) { setTimeout(() => poll(attempts + 1), 1000); return }
         if (order.order_status === 'complete') {
-          toast.success(`Order executed: ${order.symbol} ${order.action} ${order.quantity}`)
           fetchOrders()
           fetchPositions()
           setIsPlacingOrder(false)
@@ -951,7 +950,6 @@ export default function EzayChart() {
           return
         }
         if (order.order_status === 'rejected' || order.order_status === 'cancelled') {
-          toast.error(`Order ${order.order_status}: ${order.symbol}`)
           setIsPlacingOrder(false)
           isPlacingOrderRef.current = false
           return
@@ -970,19 +968,16 @@ export default function EzayChart() {
     isPlacingOrderRef.current = true
     try {
       const apiKey = useAuthStore.getState().apiKey
-      if (!apiKey) { toast.error('No API key'); setIsPlacingOrder(false); isPlacingOrderRef.current = false; return }
+      if (!apiKey) { setIsPlacingOrder(false); isPlacingOrderRef.current = false; return }
       const orderReq = { ...req, apikey: apiKey }
       const res = await tradingApi.placeOrder(orderReq)
       if (res.status === 'success' && res.data?.orderid) {
-        toast.success(`Order placed: ${res.data.orderid}`)
         pollOrderStatus(res.data.orderid)
       } else {
-        toast.error(res.message || 'Order failed')
         setIsPlacingOrder(false)
         isPlacingOrderRef.current = false
       }
-    } catch (e) {
-      toast.error('Order placement failed')
+    } catch {
       setIsPlacingOrder(false)
       isPlacingOrderRef.current = false
     }
