@@ -15,6 +15,7 @@ interface QuickTradePanelProps {
   peLtp: number
   onPlaceOrder: (req: PlaceOrderRequest) => void
   isPlacing: boolean
+  orderStatus?: 'idle' | 'placing' | 'executing'
   clickSide?: 'CE' | 'PE'
   clickPrice?: number
 }
@@ -34,6 +35,7 @@ export default function QuickTradePanel({
   peLtp,
   onPlaceOrder,
   isPlacing,
+  orderStatus = 'idle',
   clickSide,
   clickPrice,
 }: QuickTradePanelProps) {
@@ -51,7 +53,6 @@ export default function QuickTradePanel({
   const [visible, setVisible] = useState(true)
 
   const [pos, setPos] = useState(loadPos)
-  const dragRef = useRef<{ startX: number; startY: number } | null>(null)
 
   const ltp = side === 'CE' ? ceLtp : peLtp
   const symbol = side === 'CE' ? ceSymbol : peSymbol
@@ -81,19 +82,17 @@ export default function QuickTradePanel({
 
   const handleDragStart = useCallback((e: React.MouseEvent) => {
     e.preventDefault()
-    dragRef.current = { startX: e.clientX - pos.x, startY: e.clientY - pos.y }
+    const startY = e.clientY - pos.y
     const onMove = (me: MouseEvent) => {
-      if (!dragRef.current) return
-      setPos({ x: me.clientX - dragRef.current.startX, y: me.clientY - dragRef.current.startY })
+      setPos(prev => ({ ...prev, y: me.clientY - startY }))
     }
     const onUp = () => {
-      dragRef.current = null
       window.removeEventListener('mousemove', onMove)
       window.removeEventListener('mouseup', onUp)
     }
     window.addEventListener('mousemove', onMove)
     window.addEventListener('mouseup', onUp)
-  }, [pos])
+  }, [pos.y])
 
   const handlePlace = () => {
     if (!symbol || qty <= 0) return
@@ -331,11 +330,11 @@ export default function QuickTradePanel({
           disabled={isPlacing || !symbol || qty <= 0}
           className="ml-auto px-3 py-1 text-[11px] font-bold rounded transition-colors disabled:opacity-40"
           style={{
-            backgroundColor: action === 'BUY' ? '#22c55e' : '#ef4444',
+            backgroundColor: orderStatus === 'executing' ? '#f59e0b' : action === 'BUY' ? '#22c55e' : '#ef4444',
             color: '#fff',
           }}
         >
-          {isPlacing ? 'Placing...' : `${action} ${side}`}
+          {orderStatus === 'placing' ? 'Placing...' : orderStatus === 'executing' ? 'Executing...' : `${action} ${side}`}
         </button>
       </div>
     </div>

@@ -310,6 +310,7 @@ export default function EzayChart() {
   const [fetcherRunning, setFetcherRunning] = useState(false)
   const [isPlacingOrder, setIsPlacingOrder] = useState(false)
   const isPlacingOrderRef = useRef(false)
+  const [orderStatus, setOrderStatus] = useState<'idle' | 'placing' | 'executing'>('idle')
 
   const wsSymbols = useMemo(() => {
     if (isBacktest) return []
@@ -935,23 +936,26 @@ export default function EzayChart() {
   const pollOrderStatus = useCallback(async (orderid: string) => {
     const apiKey = useAuthStore.getState().apiKey
     if (!apiKey) return
+    setOrderStatus('executing')
     const poll = async (attempts: number) => {
-      if (attempts > 30) return
+      if (attempts > 60) { setOrderStatus('idle'); setIsPlacingOrder(false); isPlacingOrderRef.current = false; return }
       try {
-        const res = await tradingApi.getOrders(apiKey)
-        const orders = res.data?.orders || []
-        const order = orders.find(o => o.orderid === orderid)
+        const res = await fetch('/api/v1/orderbook', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ apikey: apiKey }),
+        })
+        const json = await res.json()
+        const orders = json.data?.orders || []
+        const order = orders.find((o: any) => o.orderid === orderid)
         if (!order) { setTimeout(() => poll(attempts + 1), 1000); return }
-        if (order.order_status === 'complete') {
+        const st = order.order_status
+        if (st === 'complete' || st === 'rejected' || st === 'cancelled') {
+          setOrderStatus('idle')
+          setIsPlacingOrder(false)
+          isPlacingOrderRef.current = false
           fetchOrders()
           fetchPositions()
-          setIsPlacingOrder(false)
-          isPlacingOrderRef.current = false
-          return
-        }
-        if (order.order_status === 'rejected' || order.order_status === 'cancelled') {
-          setIsPlacingOrder(false)
-          isPlacingOrderRef.current = false
           return
         }
         setTimeout(() => poll(attempts + 1), 1000)
@@ -966,18 +970,21 @@ export default function EzayChart() {
     if (isPlacingOrderRef.current) return
     setIsPlacingOrder(true)
     isPlacingOrderRef.current = true
+    setOrderStatus('placing')
     try {
       const apiKey = useAuthStore.getState().apiKey
-      if (!apiKey) { setIsPlacingOrder(false); isPlacingOrderRef.current = false; return }
+      if (!apiKey) { setOrderStatus('idle'); setIsPlacingOrder(false); isPlacingOrderRef.current = false; return }
       const orderReq = { ...req, apikey: apiKey }
       const res = await tradingApi.placeOrder(orderReq)
       if (res.status === 'success' && res.data?.orderid) {
         pollOrderStatus(res.data.orderid)
       } else {
+        setOrderStatus('idle')
         setIsPlacingOrder(false)
         isPlacingOrderRef.current = false
       }
     } catch {
+      setOrderStatus('idle')
       setIsPlacingOrder(false)
       isPlacingOrderRef.current = false
     }
@@ -1818,6 +1825,7 @@ export default function EzayChart() {
               peLtp={peLtpDisplay}
               onPlaceOrder={handlePlaceOrder}
               isPlacing={isPlacingOrder}
+              orderStatus={orderStatus}
               clickSide={tradePanelSide}
               clickPrice={tradePanelPrice}
             />
