@@ -805,8 +805,10 @@ export default function EzayChart() {
       const positions: any[] = json.data
       const curCe = ceSymbolRef.current
       const curPe = peSymbolRef.current
+      if (!curCe && !curPe) return
       let foundCe: PositionDatum | null = null
       let foundPe: PositionDatum | null = null
+      const matchSym = (a: string, b: string) => a === b || a.endsWith(b) || b.endsWith(a) || a.replace(/^.*:/, '') === b.replace(/^.*:/, '')
       for (const p of positions) {
         if (Number(p.quantity) === 0) continue
         const sym = p.symbol
@@ -814,10 +816,10 @@ export default function EzayChart() {
         const avg = Number(p.average_price)
         const pnl = Number(p.pnl) || 0
         const side: 'LONG' | 'SHORT' = net > 0 ? 'LONG' : 'SHORT'
-        if (sym === curCe) {
-          foundCe = { side, type: 'CE', qty: Math.abs(net), entryPrice: avg, pnl, symbol: sym, exchange: p.exchange, product: p.product }
-        } else if (sym === curPe) {
-          foundPe = { side, type: 'PE', qty: Math.abs(net), entryPrice: avg, pnl, symbol: sym, exchange: p.exchange, product: p.product }
+        if (matchSym(sym, curCe)) {
+          foundCe = { side, type: 'CE', qty: Math.abs(net), entryPrice: avg, pnl, symbol: curCe, exchange: p.exchange, product: p.product }
+        } else if (matchSym(sym, curPe)) {
+          foundPe = { side, type: 'PE', qty: Math.abs(net), entryPrice: avg, pnl, symbol: curPe, exchange: p.exchange, product: p.product }
         }
       }
       cePositionDataRef.current = foundCe
@@ -841,31 +843,34 @@ export default function EzayChart() {
       const rawOrders: any[] = json.data.orders || []
       const curCe = ceSymbolRef.current
       const curPe = peSymbolRef.current
+      if (!curCe && !curPe) return
       const ceOrders: OrderLineDatum[] = []
       const peOrders: OrderLineDatum[] = []
+      const matchSym = (a: string, b: string) => a === b || a.endsWith(b) || b.endsWith(a) || a.replace(/^.*:/, '') === b.replace(/^.*:/, '')
+      const isCE = (sym: string) => curCe && matchSym(sym, curCe)
+      const isPE = (sym: string) => curPe && matchSym(sym, curPe)
       for (const o of rawOrders) {
         const status = o.order_status
         if (status !== 'open' && status !== 'pending' && status !== 'trigger pending') continue
-        if (o.pricetype === 'MARKET') continue
         const sym = o.symbol
+        if (!isCE(sym) && !isPE(sym)) continue
         const ord: OrderLineDatum = {
           side: o.action,
-          type: sym === curCe ? 'CE' : 'PE',
+          type: isCE(sym) ? 'CE' : 'PE',
           orderType: o.pricetype,
           qty: Math.abs(Number(o.quantity)),
-          // For SL/SL-M: line at trigger price; for LIMIT: line at limit price
           price: (o.pricetype === 'SL' || o.pricetype === 'SL-M')
             ? (Number(o.trigger_price) || 0)
             : (Number(o.price) || 0),
           triggerPrice: Number(o.trigger_price) || 0,
-          symbol: sym,
+          symbol: isCE(sym) ? curCe : curPe,
           exchange: o.exchange,
           product: o.product,
           orderId: o.orderid,
         }
         if (ord.price <= 0) continue
-        if (sym === curCe) ceOrders.push(ord)
-        else if (sym === curPe) peOrders.push(ord)
+        if (isCE(sym)) ceOrders.push(ord)
+        else peOrders.push(ord)
       }
       ceOrderRef.current?.setData(ceOrders)
       peOrderRef.current?.setData(peOrders)
@@ -933,9 +938,10 @@ export default function EzayChart() {
   }, [fetchOrders])
   handleModifyOrderRef.current = handleModifyOrder
 
-  const pollOrderStatus = useCallback(async (orderid: string) => {
+  const pollOrderStatus = useCallback(async (orderid: string, pricetype: string) => {
     const apiKey = useAuthStore.getState().apiKey
     if (!apiKey) return
+    const isMarket = pricetype === 'MARKET'
     setOrderStatus('executing')
     const poll = async (attempts: number) => {
       if (attempts > 60) { setOrderStatus('idle'); setIsPlacingOrder(false); isPlacingOrderRef.current = false; return }
@@ -950,15 +956,36 @@ export default function EzayChart() {
         const order = orders.find((o: any) => o.orderid === orderid)
         if (!order) { setTimeout(() => poll(attempts + 1), 1000); return }
         const st = order.order_status
-        if (st === 'complete' || st === 'rejected' || st === 'cancelled') {
+        if (st === 'rejected' || st === 'cancelled') {
           setOrderStatus('idle')
           setIsPlacingOrder(false)
           isPlacingOrderRef.current = false
           fetchOrders()
-          fetchPositions()
           return
         }
-        setTimeout(() => poll(attempts + 1), 1000)
+        if (isMarket) {
+          if (st === 'complete') {
+            setOrderStatus('idle')
+            setIsPlacingOrder(false)
+            isPlacingOrderRef.current = false
+            fetchOrders()
+            fetchPositions()
+            setTimeout(fetchPositions, 1500)
+            setTimeout(fetchPositions, 3500)
+            setTimeout(fetchOrders, 1500)
+            return
+          }
+          setTimeout(() => poll(attempts + 1), 1000)
+        } else {
+          if (st === 'open' || st === 'pending' || st === 'trigger pending') {
+            setOrderStatus('idle')
+            setIsPlacingOrder(false)
+            isPlacingOrderRef.current = false
+            fetchOrders()
+            return
+          }
+          setTimeout(() => poll(attempts + 1), 1000)
+        }
       } catch {
         setTimeout(() => poll(attempts + 1), 1000)
       }
@@ -978,7 +1005,7 @@ export default function EzayChart() {
       const res = await tradingApi.placeOrder(orderReq)
       const orderId = res.data?.orderid || (res as any).orderid
       if (res.status === 'success' && orderId) {
-        pollOrderStatus(orderId)
+        pollOrderStatus(orderId, req.pricetype || 'MARKET')
       } else {
         setOrderStatus('idle')
         setIsPlacingOrder(false)

@@ -23,9 +23,13 @@ interface QuickTradePanelProps {
 function loadPos() {
   try {
     const v = localStorage.getItem('ezay_tradePanelPos')
-    if (v) return JSON.parse(v) as { x: number; y: number }
+    if (v) {
+      const p = JSON.parse(v) as { x: number; y: number }
+      if (p.x > -100 && p.y > 0) return p
+    }
   } catch {}
-  return { x: -1, y: 80 }
+  const w = typeof window !== 'undefined' ? window.innerWidth : 1200
+  return { x: Math.max(10, w - 380), y: 80 }
 }
 
 export default function QuickTradePanel({
@@ -51,6 +55,7 @@ export default function QuickTradePanel({
   const [product, setProduct] = useState<'MIS' | 'NRML'>('MIS')
   const [minimized, setMinimized] = useState(false)
   const [visible, setVisible] = useState(true)
+  const [orderError, setOrderError] = useState('')
 
   const [pos, setPos] = useState(loadPos)
 
@@ -64,9 +69,19 @@ export default function QuickTradePanel({
   }, [ltp])
 
   useEffect(() => {
-    if (ceLtp > 0 && side === 'CE') setPrice(Math.round(ceLtp * 20) / 20)
-    else if (peLtp > 0 && side === 'PE') setPrice(Math.round(peLtp * 20) / 20)
-  }, [ceLtp, peLtp, side])
+    setPrice(0)
+  }, [side])
+
+  const prevStatusRef = useRef(orderStatus)
+  useEffect(() => {
+    if (prevStatusRef.current !== 'idle' && orderStatus === 'idle') {
+      setAction('BUY')
+      setOrderType('MARKET')
+      setProduct('MIS')
+      setOrderError('')
+    }
+    prevStatusRef.current = orderStatus
+  }, [orderStatus])
 
   useEffect(() => {
     try { localStorage.setItem('ezay_tradePanelPos', JSON.stringify(pos)) } catch {}
@@ -82,9 +97,10 @@ export default function QuickTradePanel({
 
   const handleDragStart = useCallback((e: React.MouseEvent) => {
     e.preventDefault()
+    const startX = e.clientX - pos.x
     const startY = e.clientY - pos.y
     const onMove = (me: MouseEvent) => {
-      setPos(prev => ({ ...prev, y: me.clientY - startY }))
+      setPos({ x: me.clientX - startX, y: me.clientY - startY })
     }
     const onUp = () => {
       window.removeEventListener('mousemove', onMove)
@@ -92,12 +108,53 @@ export default function QuickTradePanel({
     }
     window.addEventListener('mousemove', onMove)
     window.addEventListener('mouseup', onUp)
-  }, [pos.y])
+  }, [pos.x, pos.y])
+
+  const round005 = (v: number, up: boolean) => {
+    const step = 0.05
+    return up ? Math.ceil(v / step) * step : Math.floor(v / step) * step
+  }
+
+  const handleTriggerChange = (val: number) => {
+    setTriggerPrice(val)
+    if (orderType === 'SL' && val > 0) {
+      setPrice(action === 'BUY'
+        ? round005(val + 0.05, true)
+        : round005(val - 0.05, false))
+    }
+  }
+
+  const handlePriceChange = (val: number) => {
+    setPrice(val)
+    if (orderType === 'SL' && val > 0) {
+      setTriggerPrice(action === 'BUY'
+        ? round005(val - 0.05, false)
+        : round005(val + 0.05, true))
+    }
+  }
 
   const handlePlace = () => {
     if (!symbol || qty <= 0) return
+    setOrderError('')
     const needsPrice = orderType === 'LIMIT' || orderType === 'SL'
     const needsTrigger = orderType === 'SL-M' || orderType === 'SL'
+    if (ltp <= 0) { setOrderError('LTP not available'); return }
+    if (needsPrice && price <= 0) { setOrderError('Enter price'); return }
+    if (needsTrigger && triggerPrice <= 0) { setOrderError('Enter trigger price'); return }
+    if (orderType === 'LIMIT') {
+      if (action === 'BUY' && price > ltp) { setOrderError('Buy limit must be <= LTP'); return }
+      if (action === 'SELL' && price < ltp) { setOrderError('Sell limit must be >= LTP'); return }
+    }
+    if (orderType === 'SL') {
+      if (action === 'BUY' && triggerPrice < ltp) { setOrderError('Buy SL trigger must be >= LTP'); return }
+      if (action === 'SELL' && triggerPrice > ltp) { setOrderError('Sell SL trigger must be <= LTP'); return }
+      const diff = Math.abs(price - triggerPrice)
+      if (diff < 0.04) { setOrderError('Price & trigger must differ by >= 0.05'); return }
+    }
+    if (orderType === 'SL-M') {
+      if (action === 'BUY' && triggerPrice < ltp) { setOrderError('Buy SL-M trigger must be >= LTP'); return }
+      if (action === 'SELL' && triggerPrice > ltp) { setOrderError('Sell SL-M trigger must be <= LTP'); return }
+    }
     onPlaceOrder({
       apikey: '',
       strategy: 'QuickTrade',
@@ -118,9 +175,7 @@ export default function QuickTradePanel({
         onClick={() => setVisible(true)}
         className="absolute z-50 flex items-center gap-1 px-2 py-1 rounded text-[10px] font-semibold cursor-pointer select-none"
         style={{
-          top: pos.y,
-          left: pos.x < 0 ? undefined : pos.x,
-          right: pos.x < 0 ? 10 : undefined,
+          transform: `translate(${pos.x}px, ${pos.y}px)`,
           backgroundColor: mode === 'dark' ? 'rgba(30,30,30,0.95)' : 'rgba(255,255,255,0.95)',
           border: `1px solid ${t.border}`,
           color: t.text,
@@ -135,11 +190,9 @@ export default function QuickTradePanel({
   if (minimized) {
     return (
       <div
-        className="absolute z-50 flex items-center gap-1.5 px-2 py-1 rounded text-[10px] font-semibold select-none"
+        className="absolute z-50 flex items-center gap-2 px-3 py-1.5 rounded text-[11px] font-semibold select-none"
         style={{
-          top: pos.y,
-          left: pos.x < 0 ? undefined : pos.x,
-          right: pos.x < 0 ? 10 : undefined,
+          transform: `translate(${pos.x}px, ${pos.y}px)`,
           backgroundColor: mode === 'dark' ? 'rgba(30,30,30,0.95)' : 'rgba(255,255,255,0.95)',
           border: `1px solid ${t.border}`,
           color: t.text,
@@ -150,16 +203,16 @@ export default function QuickTradePanel({
           className="cursor-grab active:cursor-grabbing flex items-center"
           style={{ color: t.textSecondary }}
         >
-          <GripVertical className="h-3 w-3" />
+          <GripVertical className="h-4 w-4" />
         </span>
         <span style={{ color: side === 'CE' ? '#00C851' : '#E040FB' }}>{side}</span>
         <span style={{ color: action === 'BUY' ? '#22c55e' : '#ef4444' }}>{action}</span>
         <span style={{ color: t.textSecondary }}>{lots}L</span>
         <button onClick={() => setMinimized(false)} className="hover:opacity-70" title="Expand">
-          <Square className="h-3 w-3" style={{ color: t.textSecondary }} />
+          <Square className="h-4 w-4" style={{ color: t.textSecondary }} />
         </button>
         <button onClick={() => setVisible(false)} className="hover:opacity-70" title="Hide">
-          <X className="h-3 w-3" style={{ color: t.textSecondary }} />
+          <X className="h-4 w-4" style={{ color: t.textSecondary }} />
         </button>
       </div>
     )
@@ -170,39 +223,44 @@ export default function QuickTradePanel({
 
   return (
     <div
-      className="absolute z-50 rounded-md text-[11px] select-none"
+      className="absolute z-50 rounded-md text-[12px] select-none"
       style={{
-        top: pos.y,
-        left: pos.x < 0 ? undefined : pos.x,
-        right: pos.x < 0 ? 10 : undefined,
+        transform: `translate(${pos.x}px, ${pos.y}px)`,
         backgroundColor: mode === 'dark' ? 'rgba(20,20,20,0.97)' : 'rgba(255,255,255,0.97)',
         border: `1px solid ${t.border}`,
-        minWidth: 340,
+        whiteSpace: 'nowrap',
       }}
     >
+      {/* Header / drag handle */}
       <div
         onMouseDown={handleDragStart}
-        className="flex items-center gap-1.5 px-2 py-1 cursor-grab active:cursor-grabbing rounded-t"
-        style={{ borderBottom: `1px solid ${t.border}`, backgroundColor: mode === 'dark' ? 'rgba(40,40,40,0.9)' : 'rgba(240,240,240,0.9)' }}
+        className="flex items-center gap-2 px-3 py-1.5 cursor-grab active:cursor-grabbing rounded-t"
+        style={{
+          borderBottom: `1px solid ${t.border}`,
+          backgroundColor: mode === 'dark'
+            ? (side === 'CE' ? 'rgba(0,200,81,0.15)' : 'rgba(224,64,251,0.15)')
+            : (side === 'CE' ? 'rgba(0,200,81,0.1)' : 'rgba(224,64,251,0.1)'),
+        }}
       >
-        <GripVertical className="h-3 w-3" style={{ color: t.textSecondary }} />
-        <span className="font-semibold text-[10px]" style={{ color: t.text }}>Quick Trade</span>
-        <span className="text-[9px] ml-1" style={{ color: t.textSecondary }}>{symbol}</span>
-        <div className="ml-auto flex items-center gap-1">
+        <GripVertical className="h-4 w-4" style={{ color: t.textSecondary }} />
+        <span className="font-semibold text-[11px]" style={{ color: t.text }}>Quick Trade</span>
+        <span className="text-[10px] ml-1" style={{ color: t.textSecondary }}>{symbol}</span>
+        <div className="ml-auto flex items-center gap-1.5">
           <button onClick={() => setMinimized(true)} className="hover:opacity-70" title="Minimize">
-            <Minus className="h-3 w-3" style={{ color: t.textSecondary }} />
+            <Minus className="h-4 w-4" style={{ color: t.textSecondary }} />
           </button>
           <button onClick={() => setVisible(false)} className="hover:opacity-70" title="Hide">
-            <X className="h-3 w-3" style={{ color: t.textSecondary }} />
+            <X className="h-4 w-4" style={{ color: t.textSecondary }} />
           </button>
         </div>
       </div>
 
-      <div className="px-2 py-1.5 flex flex-wrap items-center gap-1.5">
+      {/* Row 1: CE/PE, BUY/SELL, Product, Order Type, Price/Trigger */}
+      <div className="px-2.5 py-2 flex flex-wrap items-center gap-2">
         <div className="flex rounded overflow-hidden" style={{ border: `1px solid ${t.border}` }}>
           <button
             onClick={() => setSide('CE')}
-            className="px-2 py-0.5 text-[10px] font-semibold transition-colors"
+            className="px-2.5 py-1 text-[11px] font-semibold transition-colors"
             style={{
               backgroundColor: side === 'CE' ? '#00C851' : 'transparent',
               color: side === 'CE' ? '#fff' : '#00C851',
@@ -210,7 +268,7 @@ export default function QuickTradePanel({
           >CE</button>
           <button
             onClick={() => setSide('PE')}
-            className="px-2 py-0.5 text-[10px] font-semibold transition-colors"
+            className="px-2.5 py-1 text-[11px] font-semibold transition-colors"
             style={{
               backgroundColor: side === 'PE' ? '#E040FB' : 'transparent',
               color: side === 'PE' ? '#fff' : '#E040FB',
@@ -221,7 +279,7 @@ export default function QuickTradePanel({
         <div className="flex rounded overflow-hidden" style={{ border: `1px solid ${t.border}` }}>
           <button
             onClick={() => setAction('BUY')}
-            className="px-2 py-0.5 text-[10px] font-semibold transition-colors"
+            className="px-2.5 py-1 text-[11px] font-semibold transition-colors"
             style={{
               backgroundColor: action === 'BUY' ? '#22c55e' : 'transparent',
               color: action === 'BUY' ? '#fff' : '#22c55e',
@@ -229,7 +287,7 @@ export default function QuickTradePanel({
           >BUY</button>
           <button
             onClick={() => setAction('SELL')}
-            className="px-2 py-0.5 text-[10px] font-semibold transition-colors"
+            className="px-2.5 py-1 text-[11px] font-semibold transition-colors"
             style={{
               backgroundColor: action === 'SELL' ? '#ef4444' : 'transparent',
               color: action === 'SELL' ? '#fff' : '#ef4444',
@@ -237,36 +295,12 @@ export default function QuickTradePanel({
           >SELL</button>
         </div>
 
-        <div className="flex items-center gap-1">
-          <input
-            type="number"
-            value={lots}
-            min={1}
-            onChange={(e) => setLots(Math.max(1, parseInt(e.target.value) || 1))}
-            className="w-10 px-1 py-0.5 text-center text-[11px] font-mono rounded outline-none"
-            style={{
-              backgroundColor: mode === 'dark' ? '#1a1a1a' : '#f5f5f5',
-              border: `1px solid ${t.border}`,
-              color: t.text,
-            }}
-          />
-          <span className="text-[9px] whitespace-nowrap" style={{ color: t.textSecondary }}>
-            lots = {qty} qty
-          </span>
-        </div>
-
-        {ltp > 0 && (
-          <span className="text-[10px] font-mono" style={{ color: t.textSecondary }}>
-            LTP {ltp.toFixed(2)}
-          </span>
-        )}
-
         <div className="flex rounded overflow-hidden" style={{ border: `1px solid ${t.border}` }}>
           {PRODUCTS.map((p) => (
             <button
               key={p}
               onClick={() => setProduct(p)}
-              className="px-1.5 py-0.5 text-[9px] font-semibold transition-colors"
+              className="px-2 py-1 text-[10px] font-semibold transition-colors"
               style={{
                 backgroundColor: product === p ? (mode === 'dark' ? '#555' : '#ddd') : 'transparent',
                 color: t.text,
@@ -278,7 +312,7 @@ export default function QuickTradePanel({
         <select
           value={orderType}
           onChange={(e) => setOrderType(e.target.value as typeof orderType)}
-          className="px-1 py-0.5 text-[10px] rounded outline-none cursor-pointer"
+          className="px-1.5 py-1 text-[11px] rounded outline-none cursor-pointer"
           style={{
             backgroundColor: mode === 'dark' ? '#1a1a1a' : '#f5f5f5',
             border: `1px solid ${t.border}`,
@@ -293,8 +327,8 @@ export default function QuickTradePanel({
             type="number"
             value={price}
             step={0.05}
-            onChange={(e) => setPrice(parseFloat(e.target.value) || 0)}
-            className="w-16 px-1 py-0.5 text-center text-[11px] font-mono rounded outline-none"
+            onChange={(e) => handlePriceChange(parseFloat(e.target.value) || 0)}
+            className="w-20 px-1.5 py-1 text-center text-[12px] font-mono rounded outline-none"
             style={{
               backgroundColor: mode === 'dark' ? '#1a1a1a' : '#f5f5f5',
               border: `1px solid ${t.border}`,
@@ -309,8 +343,8 @@ export default function QuickTradePanel({
             type="number"
             value={triggerPrice}
             step={0.05}
-            onChange={(e) => setTriggerPrice(parseFloat(e.target.value) || 0)}
-            className="w-16 px-1 py-0.5 text-center text-[11px] font-mono rounded outline-none"
+            onChange={(e) => handleTriggerChange(parseFloat(e.target.value) || 0)}
+            className="w-20 px-1.5 py-1 text-center text-[12px] font-mono rounded outline-none"
             style={{
               backgroundColor: mode === 'dark' ? '#1a1a1a' : '#f5f5f5',
               border: `1px solid ${t.border}`,
@@ -321,14 +355,46 @@ export default function QuickTradePanel({
         )}
       </div>
 
-      <div className="px-2 pb-1.5 flex items-center gap-2">
-        <span className="text-[10px] font-mono" style={{ color: t.textSecondary }}>
-          Amt: ₹{amount > 0 ? amount.toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 0 }) : '0'}
+      {/* Row 2: Lots, Qty, LTP, Amount, Place */}
+      <div className="px-2.5 pb-2 flex items-center gap-2" style={{ borderTop: `1px solid ${t.border}` }}>
+        <div className="flex items-center gap-1">
+          <input
+            type="number"
+            value={lots}
+            min={1}
+            onChange={(e) => setLots(Math.max(1, parseInt(e.target.value) || 1))}
+            className="w-12 px-1.5 py-1 text-center text-[12px] font-mono rounded outline-none"
+            style={{
+              backgroundColor: mode === 'dark' ? '#1a1a1a' : '#f5f5f5',
+              border: `1px solid ${t.border}`,
+              color: t.text,
+            }}
+          />
+          <span className="text-[10px] whitespace-nowrap" style={{ color: t.text }}>lots</span>
+        </div>
+
+        <span className="text-[11px] font-mono font-semibold" style={{ color: t.text }}>
+          Qty {qty}
         </span>
+        {ltp > 0 && (
+          <span className="text-[11px] font-mono font-semibold" style={{ color: t.text }}>
+            LTP {ltp.toFixed(2)}
+          </span>
+        )}
+        <span className="text-[11px] font-mono font-semibold" style={{ color: t.text }}>
+          ₹{amount > 0 ? amount.toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 0 }) : '0'}
+        </span>
+
+        {orderError && (
+          <span className="text-[10px] font-semibold" style={{ color: '#ef4444' }}>
+            {orderError}
+          </span>
+        )}
+
         <button
           onClick={handlePlace}
           disabled={isPlacing || !symbol || qty <= 0}
-          className="ml-auto px-3 py-1 text-[11px] font-bold rounded transition-colors disabled:opacity-40"
+          className="ml-auto px-4 py-1.5 text-[12px] font-bold rounded transition-colors disabled:opacity-40"
           style={{
             backgroundColor: orderStatus === 'executing' ? '#f59e0b' : action === 'BUY' ? '#22c55e' : '#ef4444',
             color: '#fff',
