@@ -976,8 +976,9 @@ export default function EzayChart() {
       if (!apiKey) { setOrderStatus('idle'); setIsPlacingOrder(false); isPlacingOrderRef.current = false; return }
       const orderReq = { ...req, apikey: apiKey }
       const res = await tradingApi.placeOrder(orderReq)
-      if (res.status === 'success' && res.data?.orderid) {
-        pollOrderStatus(res.data.orderid)
+      const orderId = res.data?.orderid || (res as any).orderid
+      if (res.status === 'success' && orderId) {
+        pollOrderStatus(orderId)
       } else {
         setOrderStatus('idle')
         setIsPlacingOrder(false)
