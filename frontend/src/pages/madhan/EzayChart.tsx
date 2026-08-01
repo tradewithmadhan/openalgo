@@ -159,6 +159,27 @@ function aggregateCombined(data: AggCombined[], intervalMin: number): AggCombine
   return Array.from(buckets.values()).sort((a, b) => a.time - b.time)
 }
 
+type TotalVolEntry = { time: number; ce: number; pe: number; combined: number; is_spike: boolean }
+
+function aggregateTotalVolume(data: TotalVolEntry[], intervalMin: number): TotalVolEntry[] {
+  if (intervalMin <= 1 || !data.length) return data
+  const bucketSec = intervalMin * 60
+  const buckets = new Map<number, TotalVolEntry>()
+  for (const d of data) {
+    const bucket = Math.floor(d.time / 1000 / bucketSec) * bucketSec * 1000
+    const existing = buckets.get(bucket)
+    if (existing) {
+      existing.ce += d.ce
+      existing.pe += d.pe
+      existing.combined += d.combined
+      if (d.is_spike) existing.is_spike = true
+    } else {
+      buckets.set(bucket, { ...d, time: bucket })
+    }
+  }
+  return Array.from(buckets.values()).sort((a, b) => a.time - b.time)
+}
+
 export default function EzayChart() {
   const chartContainerRef = useRef<HTMLDivElement | null>(null)
   const chartRef = useRef<IChartApi | null>(null)
@@ -173,6 +194,8 @@ export default function EzayChart() {
   const peExtrinsicRef = useRef<ISeriesApi<any> | null>(null)
   const combinedExtrinsicRef = useRef<ISeriesApi<any> | null>(null)
   const volumeRef = useRef<ISeriesApi<any> | null>(null)
+  const totalVolumeRef = useRef<ISeriesApi<any> | null>(null)
+  const totalVolumeDataRef = useRef<Array<{ time: number; ce: number; pe: number; combined: number; is_spike: boolean }>>([])
   const ceMarkersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null)
   const peMarkersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null)
   const cpCeMarkersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null)
@@ -224,6 +247,7 @@ export default function EzayChart() {
   const [atmStrike, setAtmStrike] = useState<number | null>(null)
   const [strikePanelOpen, setStrikePanelOpen] = useState(() => loadSetting('strikePanelOpen', true))
   const [showRealtime, setShowRealtime] = useState(() => loadSetting('showRealtime', false))
+  const [volumeMode, setVolumeMode] = useState<'strike' | 'total'>(() => loadSetting('volumeMode', 'strike'))
   const [showEzaySignals, setShowEzaySignals] = useState(() => loadSetting('showEzaySignals', false))
   const [irStrikes, setIrStrikes] = useState<number[]>([])
   const [semiTransparent, setSemiTransparent] = useState(() => loadSetting('semiTransparent', true))
@@ -347,7 +371,7 @@ export default function EzayChart() {
     const refs = [
       ceSeriesRef, peSeriesRef, combinedSeriesRef, llpSeriesRef,
       ceIntrinsicRef, peIntrinsicRef, ceExtrinsicRef, peExtrinsicRef,
-      combinedExtrinsicRef, volumeRef,
+      combinedExtrinsicRef, volumeRef, totalVolumeRef,
     ]
     for (const ref of refs) {
       if (ref.current) {
@@ -428,10 +452,16 @@ export default function EzayChart() {
       color: '#ef5350', lineWidth: 1, title: 'PE Extrinsic',
       priceLineVisible: false, lastValueVisible: false,
     })
-    combinedExtrinsicRef.current = chart.addSeries(LineSeries, {
-      color: '#ffeb3b', lineWidth: 2, title: 'Combined Extrinsic',
-      priceLineVisible: false, lastValueVisible: false,
-    })
+    combinedExtrinsicRef.current = getIntervalMinutes(intervalRef.current) > 1
+      ? chart.addSeries(CandlestickSeries, {
+          upColor: '#ffeb3b', downColor: '#f57f17', borderVisible: false,
+          wickUpColor: '#ffeb3b', wickDownColor: '#f57f17',
+          priceLineVisible: false, lastValueVisible: false, title: 'Combined Extrinsic',
+        })
+      : chart.addSeries(LineSeries, {
+          color: '#ffeb3b', lineWidth: 2, title: 'Combined Extrinsic',
+          priceLineVisible: false, lastValueVisible: false,
+        })
 
     volumeRef.current = chart.addSeries(HistogramSeries, {
       color: '#26a69a',
@@ -439,6 +469,15 @@ export default function EzayChart() {
       lastValueVisible: false,
       priceFormat: { type: 'volume' },
       priceScaleId: 'volume',
+    })
+
+    totalVolumeRef.current = chart.addSeries(HistogramSeries, {
+      color: '#26a69a',
+      priceLineVisible: false,
+      lastValueVisible: false,
+      priceFormat: { type: 'volume' },
+      priceScaleId: 'volume',
+      visible: false,
     })
 
     chart.priceScale('volume').applyOptions({
@@ -548,7 +587,27 @@ export default function EzayChart() {
       peExtrinsicRef.current.setData(combinedData.map((item) => ({ time: item.time, value: item.pe_extrinsic })))
     }
     if (combinedExtrinsicRef.current) {
-      combinedExtrinsicRef.current.setData(combinedData.map((item) => ({ time: item.time, value: item.combined_extrinsic })))
+      if (intervalMin > 1) {
+        const rawCombined = d.combined_data || []
+        const bucketSec = intervalMin * 60
+        const ohlcBuckets = new Map<number, { time: number; open: number; high: number; low: number; close: number }>()
+        for (const item of rawCombined) {
+          const bucket = Math.floor(item.time / bucketSec) * bucketSec
+          const val = item.combined_extrinsic
+          const existing = ohlcBuckets.get(bucket)
+          if (existing) {
+            if (val > existing.high) existing.high = val
+            if (val < existing.low) existing.low = val
+            existing.close = val
+          } else {
+            ohlcBuckets.set(bucket, { time: bucket, open: val, high: val, low: val, close: val })
+          }
+        }
+        const ohlcData = Array.from(ohlcBuckets.values()).sort((a, b) => a.time - b.time)
+        combinedExtrinsicRef.current.setData(ohlcData)
+      } else {
+        combinedExtrinsicRef.current.setData(combinedData.map((item) => ({ time: item.time, value: item.combined_extrinsic })))
+      }
     }
 
     if (volumeRef.current) {
@@ -1232,9 +1291,65 @@ export default function EzayChart() {
     applyData()
   }, [showSignals, showHC, applyData])
 
+  // Volume mode: toggle series visibility + fetch total volume data when needed
+  useEffect(() => {
+    const isTotal = volumeMode === 'total'
+    if (volumeRef.current) volumeRef.current.applyOptions({ visible: !isTotal })
+    if (totalVolumeRef.current) totalVolumeRef.current.applyOptions({ visible: isTotal })
+    if (!isTotal || isBacktestRef.current) return
+    const controller = new AbortController()
+    const fetchTotal = async () => {
+      try {
+        const res = await fetch(`/madhan/api/nifty/ce-pe-volume-changes?strike_selection_mode=option1&upside_strikes=10&downside_strikes=10&_=${Date.now()}`, { signal: controller.signal })
+        const json = await res.json()
+        if (json.status !== 'success' || !json.data) return
+        const { timestamps, ce_changes, pe_changes, vol_spike } = json.data
+        if (!timestamps?.length) return
+        const dark = madhanMode === 'dark'
+        const raw = timestamps.map((ts: number, i: number) => ({
+          time: ts,
+          ce: ce_changes[i],
+          pe: pe_changes[i],
+          combined: Math.abs(ce_changes[i]) + Math.abs(pe_changes[i]),
+          is_spike: vol_spike?.[i] || false,
+        }))
+        const intervalMin = getIntervalMinutes(intervalRef.current)
+        const data = intervalMin > 1 ? aggregateTotalVolume(raw, intervalMin) : raw
+        totalVolumeDataRef.current = data
+        if (totalVolumeRef.current) {
+          totalVolumeRef.current.setData(data.map((d) => ({
+            time: Math.floor(d.time / 1000) as Time,
+            value: d.combined,
+            color: d.is_spike
+              ? (dark ? 'rgba(250,204,21,0.7)' : 'rgba(234,179,8,0.7)')
+              : (dark ? 'rgba(38,166,154,0.5)' : 'rgba(38,166,154,0.6)'),
+          })))
+        }
+      } catch {}
+    }
+    fetchTotal()
+    return () => controller.abort()
+  }, [volumeMode, madhanMode, interval])
+
   useEffect(() => {
     intervalRef.current = interval
-    applyData()
+    if (chartReadyRef.current && chartRef.current) {
+      createAllSeries()
+      applyData()
+      if (ceIntrinsicRef.current) ceIntrinsicRef.current.applyOptions({ visible: showIntrinsic })
+      if (peIntrinsicRef.current) peIntrinsicRef.current.applyOptions({ visible: showIntrinsic })
+      if (ceExtrinsicRef.current) ceExtrinsicRef.current.applyOptions({ visible: showExtrinsic })
+      if (peExtrinsicRef.current) peExtrinsicRef.current.applyOptions({ visible: showExtrinsic })
+      if (combinedSeriesRef.current) combinedSeriesRef.current.applyOptions({ visible: showCombinedAll })
+      if (llpSeriesRef.current) llpSeriesRef.current.applyOptions({ visible: showCombinedAll })
+      if (combinedExtrinsicRef.current) combinedExtrinsicRef.current.applyOptions({ visible: showCombinedAll })
+      if (ceSeriesRef.current) ceSeriesRef.current.applyOptions({ visible: showCE })
+      if (peSeriesRef.current) peSeriesRef.current.applyOptions({ visible: showPE })
+      // Restore volume mode visibility
+      const isTotal = volumeMode === 'total'
+      if (volumeRef.current) volumeRef.current.applyOptions({ visible: !isTotal })
+      if (totalVolumeRef.current) totalVolumeRef.current.applyOptions({ visible: isTotal })
+    }
   }, [interval, applyData])
 
   useEffect(() => {
@@ -1520,13 +1635,29 @@ export default function EzayChart() {
     if (peIntrinsicRef.current) updateLine('peIntrinsic', peIntrinsicRef.current, peIntrinsic)
     if (ceExtrinsicRef.current) updateLine('ceExtrinsic', ceExtrinsicRef.current, ceExtrinsic)
     if (peExtrinsicRef.current) updateLine('peExtrinsic', peExtrinsicRef.current, peExtrinsic)
-    if (combinedExtrinsicRef.current) updateLine('combinedExtrinsic', combinedExtrinsicRef.current, combinedExtrinsic)
+    if (combinedExtrinsicRef.current) {
+      if (intervalMin > 1) {
+        const key = 'combinedExtrinsic'
+        const existing = currentOhlcRef.current.get(key)
+        if (existing && time === existing.time) {
+          if (combinedExtrinsic > existing.high) existing.high = combinedExtrinsic
+          if (combinedExtrinsic < existing.low) existing.low = combinedExtrinsic
+          existing.close = combinedExtrinsic
+        } else {
+          currentOhlcRef.current.set(key, { time: time as number, open: combinedExtrinsic, high: combinedExtrinsic, low: combinedExtrinsic, close: combinedExtrinsic })
+        }
+        const c = currentOhlcRef.current.get(key)!
+        combinedExtrinsicRef.current.update({ time: c.time as Time, open: c.open, high: c.high, low: c.low, close: c.close })
+      } else {
+        updateLine('combinedExtrinsic', combinedExtrinsicRef.current, combinedExtrinsic)
+      }
+    }
 
-    if (volumeRef.current && totalDayVol > 0) {
+    if (volumeRef.current && totalDayVol > 0 && volumeMode === 'strike') {
       const dark = madhanMode === 'dark'
       volumeRef.current.update({ time: time as Time, value: currentCandleVol, color: dark ? 'rgba(38,166,154,0.5)' : 'rgba(38,166,154,0.6)' })
     }
-  }, [wsData, ceSymbol, peSymbol])
+  }, [wsData, ceSymbol, peSymbol, volumeMode])
 
   const loadStrikes = async () => {
     try {
@@ -1688,6 +1819,10 @@ export default function EzayChart() {
           <div className="flex items-center gap-1">
             <Checkbox checked={semiTransparent} onCheckedChange={(v) => { setSemiTransparent(!!v); saveSetting('semiTransparent', !!v) }} />
             <Label className="text-[11px]" style={{ color: t.textSecondary }}>50% Candles</Label>
+          </div>
+          <div className="flex items-center rounded border overflow-hidden" style={{ borderColor: t.border }}>
+            <Button size="sm" variant="ghost" className="h-6 px-2 text-[10px] rounded-none" style={{ backgroundColor: volumeMode === 'strike' ? (madhanMode === 'dark' ? 'rgba(41,98,255,0.25)' : 'rgba(37,99,235,0.2)') : undefined, color: volumeMode === 'strike' ? (madhanMode === 'dark' ? '#60a5fa' : '#2563eb') : t.textSecondary }} onClick={() => { setVolumeMode('strike'); saveSetting('volumeMode', 'strike') }}>Strike Vol</Button>
+            <Button size="sm" variant="ghost" className="h-6 px-2 text-[10px] rounded-none" style={{ backgroundColor: volumeMode === 'total' ? (madhanMode === 'dark' ? 'rgba(41,98,255,0.25)' : 'rgba(37,99,235,0.2)') : undefined, color: volumeMode === 'total' ? (madhanMode === 'dark' ? '#60a5fa' : '#2563eb') : t.textSecondary }} onClick={() => { setVolumeMode('total'); saveSetting('volumeMode', 'total') }}>Total Vol</Button>
           </div>
           <div className="h-4 w-px" style={{ backgroundColor: t.border }} />
           <div className="flex items-center gap-1.5">

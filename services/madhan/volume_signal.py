@@ -128,13 +128,13 @@ def _compute_spike_flags(combined_values, nifty_highs=None, nifty_lows=None):
             if highs_valid and vols_valid:
                 price_peak = nifty_highs[i] > max(highs_window)
                 vol_peak = combined_values[i] > max(vols_window)
-                if price_peak and vol_peak and combined_values[i] > avg * 1.5:
+                if price_peak and vol_peak and combined_values[i] > avg * 1.8:
                     new_pattern = True
 
             if not new_pattern and lows_valid and vols_valid:
                 price_valley = nifty_lows[i] < min(lows_window)
                 vol_peak = combined_values[i] > max(vols_window)
-                if price_valley and vol_peak and combined_values[i] > avg * 1.5:
+                if price_valley and vol_peak and combined_values[i] > avg * 1.8:
                     new_pattern = True
 
         is_spike_now = existing_spike or new_pattern
