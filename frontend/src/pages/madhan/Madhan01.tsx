@@ -96,7 +96,7 @@ interface UnifiedStrikeRow {
 export default function Madhan01() {
   const navigate = useNavigate()
   const { user } = useAuthStore()
-  const { mode, toggleMode, appMode, toggleAppMode, isTogglingMode } = useThemeStore()
+  const { appMode, toggleAppMode, isTogglingMode } = useThemeStore()
   const { mode: madhanMode, toggleMode: toggleMadhanMode, style: madhanStyle } = useMadhanTheme()
   const alertStore = useAlertStore()
   const { atp_ltp_signal, volume_spike, setToggle } = useMadhanSignalStore()

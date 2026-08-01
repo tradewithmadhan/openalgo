@@ -234,7 +234,7 @@ export default function NiftyChart() {
     mode: 'LTP',
     enabled: true,
   })
-  const { mode: themeMode, toggleMode, appMode, toggleAppMode, isTogglingMode } = useThemeStore()
+  const { appMode, toggleAppMode, isTogglingMode } = useThemeStore()
   const { mode: madhanMode, toggleMode: toggleMadhanMode, style: madhanStyle } = useMadhanTheme()
   const t = chartTheme[madhanMode]
   const navigate = useNavigate()

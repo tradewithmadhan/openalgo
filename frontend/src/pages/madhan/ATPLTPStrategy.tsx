@@ -146,7 +146,7 @@ interface ATPLTPData {
 export default function ATPLTPStrategy() {
   const navigate = useNavigate()
   const { user } = useAuthStore()
-  const { mode, toggleMode, appMode, toggleAppMode, isTogglingMode } = useThemeStore()
+  const { appMode, toggleAppMode, isTogglingMode } = useThemeStore()
   const { mode: madhanMode, toggleMode: toggleMadhanMode, style: madhanStyle } = useMadhanTheme()
   const profileMenuItems = useProfileMenuItems()
   

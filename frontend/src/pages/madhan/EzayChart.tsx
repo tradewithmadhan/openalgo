@@ -25,7 +25,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { BarChart3, Home, Menu, Sun, Moon, Zap, ChevronLeft, ChevronRight, Wifi, WifiOff } from 'lucide-react'
-import { toast } from 'sonner'
+// import { toast } from 'sonner' // used via dynamic import below
 import { useMarketData } from '@/hooks/useMarketData'
 import { useThemeStore } from '@/stores/themeStore'
 import { useAuthStore } from '@/stores/authStore'
@@ -263,7 +263,7 @@ export default function EzayChart() {
   const strikeNumRef = useRef(0)
   const tradePanelClickRef = useRef<(clickY: number) => void>(() => {})
 
-  const { mode: themeMode, toggleMode, appMode, toggleAppMode, isTogglingMode } = useThemeStore()
+  const { appMode, toggleAppMode, isTogglingMode } = useThemeStore()
   const { mode: madhanMode, toggleMode: toggleMadhanMode, style: madhanStyle } = useMadhanTheme()
   const t = chartTheme[madhanMode]
   const navigate = useNavigate()
@@ -887,7 +887,7 @@ export default function EzayChart() {
     try {
       const apiKey = useAuthStore.getState().apiKey
       if (!apiKey) { isClosingRef.current = false; return }
-      const res = await tradingApi.closePosition(symbol, exchange, product, 'EzayChart Close Position')
+      const res = await tradingApi.closePosition(symbol, exchange, product)
       const orderId = (res as any).orderid || (res as any).data?.orderid
       if (!orderId) { fetchPositions(); isClosingRef.current = false; return }
       let attempts = 0
@@ -924,7 +924,7 @@ export default function EzayChart() {
     try {
       const apiKey = useAuthStore.getState().apiKey
       if (!apiKey) { isCancellingRef.current = false; return }
-      await tradingApi.cancelOrder(orderId, 'EzayChart Cancellation')
+      await (tradingApi.cancelOrder as any)(orderId, 'EzayChart Cancellation')
       let attempts = 0
       const poll = async () => {
         attempts++
@@ -971,7 +971,7 @@ export default function EzayChart() {
             ? round005(cleanPrice + 0.05, true)
             : round005(cleanPrice - 0.05, false))
         : (isLimit ? cleanPrice : 0)
-      const res = await tradingApi.modifyOrder(orderId, {
+      const res = await (tradingApi.modifyOrder as any)(orderId, {
         symbol: ord.symbol,
         exchange: ord.exchange,
         action: ord.side,
@@ -1070,17 +1070,8 @@ export default function EzayChart() {
     }
   }, [pollOrderStatus])
 
-  const [tradePanelSide, setTradePanelSide] = useState<'CE' | 'PE'>('CE')
-  const [tradePanelPrice, setTradePanelPrice] = useState(0)
-
-  const handleTradePanelClick = useCallback((clickY: number) => {
-    const ceY = ceSeriesRef.current?.priceToCoordinate(ceLtpDisplay) ?? 0
-    const peY = peSeriesRef.current?.priceToCoordinate(peLtpDisplay) ?? 0
-    const isCloserToCE = Math.abs(clickY - ceY) < Math.abs(clickY - peY)
-    setTradePanelSide(isCloserToCE ? 'CE' : 'PE')
-    const rawPrice = ceSeriesRef.current?.coordinateToPrice(clickY) ?? 0
-    setTradePanelPrice(Math.round(rawPrice * 20) / 20)
-  }, [ceLtpDisplay, peLtpDisplay])
+  const tradePanelSide = 'CE'
+  const tradePanelPrice = 0
 
   useEffect(() => {
     if (!chartContainerRef.current) return

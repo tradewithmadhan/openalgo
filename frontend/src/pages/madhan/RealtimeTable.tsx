@@ -70,7 +70,7 @@ export default function RealtimeTable({ onClose, standalone = false }: Props) {
     return Math.max(28, avail / tableData.length)
   }, [availHeight, tableData.length])
 
-  const { mode: themeMode, toggleMode, appMode, toggleAppMode, isTogglingMode } = useThemeStore()
+  const { appMode, toggleAppMode, isTogglingMode } = useThemeStore()
   const { mode: madhanMode, toggleMode: toggleMadhanMode, style: madhanStyle } = useMadhanTheme()
   const t = chartTheme[madhanMode]
 
