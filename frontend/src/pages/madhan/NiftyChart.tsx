@@ -38,6 +38,7 @@ import { Zap, ZapOff, RefreshCw, Sun, Moon, Menu, BarChart3, Home } from 'lucide
 import { useThemeStore } from '@/stores/themeStore'
 import { useAuthStore } from '@/stores/authStore'
 import { useProfileMenuItems } from '@/hooks/useProfileMenuItems'
+import { useMadhanTheme } from './useMadhanTheme'
 import { cn } from '@/lib/utils'
 import { setTimeOffset, getTimeOffset } from '@/utils/timeSync'
 import { chartTheme } from './chartTheme'
@@ -234,7 +235,8 @@ export default function NiftyChart() {
     enabled: true,
   })
   const { mode: themeMode, toggleMode, appMode, toggleAppMode, isTogglingMode } = useThemeStore()
-  const t = chartTheme[themeMode]
+  const { mode: madhanMode, toggleMode: toggleMadhanMode, style: madhanStyle } = useMadhanTheme()
+  const t = chartTheme[madhanMode]
   const navigate = useNavigate()
   const { user } = useAuthStore()
   const profileMenuItems = useProfileMenuItems()
@@ -299,7 +301,7 @@ export default function NiftyChart() {
   useEffect(() => {
     if (!chartContainerRef.current) return
 
-    const isDark = document.documentElement.classList.contains('dark')
+    const isDark = madhanMode === 'dark'
     const chart = createChart(chartContainerRef.current, {
       width: chartContainerRef.current.clientWidth,
       height: Math.max(320, chartContainerRef.current.clientHeight),
@@ -2682,7 +2684,7 @@ export default function NiftyChart() {
   }, [indicatorPanelResizing])
 
   return (
-    <div className="h-full w-full p-0 flex flex-col">
+    <div className={cn("h-full w-full p-0 flex flex-col madhan-theme", madhanMode === 'dark' ? 'dark' : 'madhan-light')} style={madhanStyle}>
       {/* Header */}
       <div className="h-12 border-b border-border flex items-center px-4 bg-card/50 shrink-0 justify-between">
           <div className="flex items-center gap-2">
@@ -2776,10 +2778,10 @@ export default function NiftyChart() {
                 variant="ghost"
                 size="icon"
                 className="h-8 w-8"
-                onClick={toggleMode}
-                title={themeMode === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+                onClick={toggleMadhanMode}
+                title={madhanMode === "dark" ? "Switch to light mode" : "Switch to dark mode"}
             >
-                {themeMode === "light" ? (
+                {madhanMode === "light" ? (
                 <Sun className="h-4 w-4" />
                 ) : (
                 <Moon className="h-4 w-4" />
@@ -2949,7 +2951,7 @@ export default function NiftyChart() {
                 fontSize: 13,
                 fontWeight: 700,
                 letterSpacing: '0.03em',
-                ...(themeMode === 'dark'
+                ...(madhanMode === 'dark'
                   ? { backgroundColor: 'rgba(15,15,15,0.88)', color: '#e5e5e5', border: '1px solid rgba(255,255,255,0.12)' }
                   : { backgroundColor: 'rgba(255,255,255,0.88)', color: '#1a1a1a', border: '1px solid rgba(0,0,0,0.12)' }),
               }}

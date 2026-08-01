@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { getToolRegistry } from 'lightweight-charts-drawing'
 import { Trash2, ChevronRight } from 'lucide-react'
-import { useThemeStore } from '@/stores/themeStore'
+import { useMadhanTheme } from './useMadhanTheme'
 import { chartTheme } from './chartTheme'
 
 interface DrawingToolbarProps {
@@ -258,7 +258,7 @@ export default function DrawingToolbar({
   onToggleCollapse,
 }: DrawingToolbarProps) {
   const registry = getToolRegistry()
-  const { mode } = useThemeStore()
+  const { mode } = useMadhanTheme()
   const t = chartTheme[mode]
   const [openFlyout, setOpenFlyout] = useState<string | null>(null)
   const flyoutRef = useRef<HTMLDivElement>(null)

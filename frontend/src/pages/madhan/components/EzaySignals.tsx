@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
-import { useThemeStore } from '@/stores/themeStore'
+import { useMadhanTheme } from '../useMadhanTheme'
 import { chartTheme } from '../chartTheme'
 import { cn } from '@/lib/utils'
 
@@ -46,7 +46,7 @@ const formatTime = (ts: number) => {
 }
 
 export default function EzaySignals({ className, style, backtestDate, refreshTrigger, onFirstSignal, onSignals }: EzaySignalsProps) {
-  const { mode: themeMode } = useThemeStore()
+  const { mode: themeMode } = useMadhanTheme()
   const t = chartTheme[themeMode]
   const [data, setData] = useState<SignalRow[]>([])
   const [signals, setSignals] = useState<BackendSignals>({ ce_pe: { time: 0, type: '', strike: 0 }, ce_pe_hc: { time: 0, type: '', strike: 0 }, cp: { time: 0, strike: 0 }, cp_open: { time: 0, strike: 0 }, th: { time: 0, type: '', strike: 0 }, ir: [] })
@@ -68,7 +68,6 @@ export default function EzaySignals({ className, style, backtestDate, refreshTri
       setData([])
       setSignals({ ce_pe: { time: 0, type: '', strike: 0 }, ce_pe_hc: { time: 0, type: '', strike: 0 }, cp: { time: 0, strike: 0 }, cp_open: { time: 0, strike: 0 }, th: { time: 0, type: '', strike: 0 }, ir: [] })
       setLastTime(0)
-      // Use backtest endpoint when backtestDate is provided
       const url = backtestDate
         ? `/madhan/api/nifty/backtest_signals?date=${backtestDate}&_=${Date.now()}`
         : `/madhan/api/ezayChart_signals?_=${Date.now()}`
@@ -90,11 +89,8 @@ export default function EzaySignals({ className, style, backtestDate, refreshTri
 
   useEffect(() => {
     fetchData()
-    // Disable auto-refresh in backtest mode (historical data doesn't change)
     if (backtestDate) return
-    // When refreshTrigger is provided (from parent EzayChart), rely on it instead of own timer
     if (refreshTrigger !== undefined) return
-    // Standalone fallback: align to minute boundary
     let timer: ReturnType<typeof setTimeout>
     const scheduleNextMinute = () => {
       const now = new Date()
@@ -219,7 +215,7 @@ export default function EzaySignals({ className, style, backtestDate, refreshTri
         <span className="text-center">TH</span>
       </div>
 
-      <div ref={scrollRef} className="flex-1 overflow-y-auto min-h-0" style={{ scrollbarWidth: 'thin' }}>
+      <div ref={scrollRef} className="flex-1 overflow-y-auto min-h-0" style={{ scrollbarWidth: 'thin', scrollbarColor: `${t.border} transparent` }}>
         {loading && data.length === 0 && (
           <div className="flex items-center justify-center py-4 text-[11px]" style={{ color: t.textMuted }}>Loading signals...</div>
         )}

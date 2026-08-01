@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { Minus, Square, X, GripVertical } from 'lucide-react'
-import { useThemeStore } from '@/stores/themeStore'
+import { useMadhanTheme } from '../useMadhanTheme'
 import { chartTheme } from '../chartTheme'
 import type { PlaceOrderRequest } from '@/types/trading'
 
@@ -43,7 +43,7 @@ export default function QuickTradePanel({
   clickSide,
   clickPrice,
 }: QuickTradePanelProps) {
-  const { mode } = useThemeStore()
+  const { mode } = useMadhanTheme()
   const t = chartTheme[mode]
 
   const [side, setSide] = useState<'CE' | 'PE'>('CE')

@@ -30,6 +30,7 @@ import { useMarketData } from '@/hooks/useMarketData'
 import { useThemeStore } from '@/stores/themeStore'
 import { useAuthStore } from '@/stores/authStore'
 import { useProfileMenuItems } from '@/hooks/useProfileMenuItems'
+import { useMadhanTheme } from './useMadhanTheme'
 import { cn } from '@/lib/utils'
 import { tradingApi } from '@/api/trading'
 import { setTimeOffset, getTimeOffset } from '@/utils/timeSync'
@@ -263,7 +264,8 @@ export default function EzayChart() {
   const tradePanelClickRef = useRef<(clickY: number) => void>(() => {})
 
   const { mode: themeMode, toggleMode, appMode, toggleAppMode, isTogglingMode } = useThemeStore()
-  const t = chartTheme[themeMode]
+  const { mode: madhanMode, toggleMode: toggleMadhanMode, style: madhanStyle } = useMadhanTheme()
+  const t = chartTheme[madhanMode]
   const navigate = useNavigate()
   const { user } = useAuthStore()
   const profileMenuItems = useProfileMenuItems()
@@ -329,7 +331,7 @@ export default function EzayChart() {
   const { data: wsData, isConnected } = useMarketData({ symbols: wsSymbols, mode: 'LTP' })
 
   const getChartColors = useCallback(() => {
-    const dark = document.documentElement.classList.contains('dark')
+    const dark = madhanMode === 'dark'
     return {
       background: dark ? '#131722' : '#ffffff',
       textColor: dark ? '#a6adbb' : '#333',
@@ -337,7 +339,7 @@ export default function EzayChart() {
       gridHorz: dark ? 'rgba(166,173,187,0.1)' : 'rgba(0,0,0,0.05)',
       borderColor: dark ? 'rgba(166,173,187,0.2)' : 'rgba(0,0,0,0.2)',
     }
-  }, [])
+  }, [madhanMode])
 
   const removeAllSeries = useCallback(() => {
     const chart = chartRef.current
@@ -550,7 +552,7 @@ export default function EzayChart() {
     }
 
     if (volumeRef.current) {
-      const dark = document.documentElement.classList.contains('dark')
+      const dark = madhanMode === 'dark'
       volumeRef.current.setData(combinedData.map((item) => {
         apiCandleVolRef.current.set(item.time, item.combined_volume || 0)
         return {
@@ -1177,7 +1179,7 @@ export default function EzayChart() {
       grid: { vertLines: { color: colors.gridVert }, horzLines: { color: colors.gridHorz } },
       rightPriceScale: { borderColor: colors.borderColor },
     })
-  }, [themeMode, getChartColors])
+  }, [madhanMode, getChartColors])
 
   useEffect(() => {
     if (chartReadyRef.current && chartRef.current) {
@@ -1530,7 +1532,7 @@ export default function EzayChart() {
     if (combinedExtrinsicRef.current) updateLine('combinedExtrinsic', combinedExtrinsicRef.current, combinedExtrinsic)
 
     if (volumeRef.current && totalDayVol > 0) {
-      const dark = document.documentElement.classList.contains('dark')
+      const dark = madhanMode === 'dark'
       volumeRef.current.update({ time: time as Time, value: currentCandleVol, color: dark ? 'rgba(38,166,154,0.5)' : 'rgba(38,166,154,0.6)' })
     }
   }, [wsData, ceSymbol, peSymbol])
@@ -1570,7 +1572,7 @@ export default function EzayChart() {
   }
 
   return (
-    <div className="h-full w-full p-0 flex flex-col">
+    <div className={cn("h-full w-full p-0 flex flex-col madhan-theme", madhanMode === 'dark' ? 'dark' : 'madhan-light')} style={madhanStyle}>
       <div className="h-12 border-b border-border flex items-center px-4 bg-card/50 shrink-0 justify-between">
         <div className="flex items-center gap-2">
           <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-foreground hover:bg-accent md:hidden">
@@ -1616,8 +1618,8 @@ export default function EzayChart() {
             {isTogglingMode ? <div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
               : appMode === 'live' ? <Zap className="h-4 w-4" /> : <BarChart3 className="h-4 w-4" />}
           </Button>
-          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={toggleMode} title={themeMode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}>
-            {themeMode === 'light' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={toggleMadhanMode} title={madhanMode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}>
+            {madhanMode === 'light' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
           </Button>
           <Button variant="ghost" size="sm" className="h-7 text-xs hidden sm:flex" asChild>
             <Link to="/dashboard"><Home className="h-3.5 w-3.5 mr-1.5" />Dashboard</Link>
@@ -1862,16 +1864,16 @@ export default function EzayChart() {
                       )}
                       style={{
                         color: isSelected
-                          ? (themeMode === 'dark' ? '#2962ff' : '#2563eb')
+                          ? (madhanMode === 'dark' ? '#2962ff' : '#2563eb')
                           : isCurrentAtm
                             ? '#854d0e'
                             : isOpen
-                              ? (themeMode === 'dark' ? '#d1d4dc' : '#1f2937')
+                              ? (madhanMode === 'dark' ? '#d1d4dc' : '#1f2937')
                               : t.textSecondary,
                         backgroundColor: isSelected
-                          ? (themeMode === 'dark' ? 'rgba(41,98,255,0.2)' : 'rgba(37,99,235,0.15)')
+                          ? (madhanMode === 'dark' ? 'rgba(41,98,255,0.2)' : 'rgba(37,99,235,0.15)')
                           : isCurrentAtm
-                            ? (themeMode === 'dark' ? 'rgba(234,179,8,0.15)' : 'rgba(234,179,8,0.12)')
+                            ? (madhanMode === 'dark' ? 'rgba(234,179,8,0.15)' : 'rgba(234,179,8,0.12)')
                             : undefined,
                         borderBottom: `1px solid ${t.border}`,
                       }}
@@ -1879,7 +1881,7 @@ export default function EzayChart() {
                       {irStrikes.includes(s) && <span className="mr-0.5 text-[8px] font-bold px-0.5 rounded" style={{ color: '#06b6d4', backgroundColor: 'rgba(6,182,212,0.15)' }}>IR</span>}
                       {s}
                       {isCurrentAtm && <span className="ml-1 text-[9px] font-bold" style={{ color: '#eab308' }}>C-ATM</span>}
-                      {isOpen && !isCurrentAtm && <span className="ml-1 text-[9px] font-bold" style={{ color: themeMode === 'dark' ? '#2962ff' : '#2563eb' }}>Open</span>}
+                      {isOpen && !isCurrentAtm && <span className="ml-1 text-[9px] font-bold" style={{ color: madhanMode === 'dark' ? '#2962ff' : '#2563eb' }}>Open</span>}
                     </button>
                   )
                 })}
@@ -1891,7 +1893,7 @@ export default function EzayChart() {
           <div ref={chartContainerRef} className="absolute inset-0" />
           {candleCountdown && (
             <div className="absolute top-2 z-10 rounded px-3 py-1.5 text-[15px] font-bold font-mono tracking-wide"
-              style={{ backgroundColor: themeMode === 'dark' ? 'rgba(0,0,0,0.85)' : 'rgba(255,255,255,0.9)', color: themeMode === 'dark' ? '#e5e7eb' : '#1f2937', border: `1px solid ${themeMode === 'dark' ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.1)'}`, right: 80 }}>
+              style={{ backgroundColor: madhanMode === 'dark' ? 'rgba(0,0,0,0.85)' : 'rgba(255,255,255,0.9)', color: madhanMode === 'dark' ? '#e5e7eb' : '#1f2937', border: `1px solid ${madhanMode === 'dark' ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.1)'}`, right: 80 }}>
               {candleCountdown}
             </div>
           )}

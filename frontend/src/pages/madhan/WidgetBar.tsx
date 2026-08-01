@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Layers, Eye, BarChart3, Zap } from 'lucide-react'
-import { useThemeStore } from '@/stores/themeStore'
+import { useMadhanTheme } from './useMadhanTheme'
 import { chartTheme } from './chartTheme'
 
 interface WidgetTab {
@@ -23,7 +23,7 @@ interface WidgetBarProps {
 
 export default function WidgetBar({ children, ezaySignals }: WidgetBarProps) {
   const [activeTab, setActiveTab] = useState<string | null>(null)
-  const { mode } = useThemeStore()
+  const { mode } = useMadhanTheme()
   const t = chartTheme[mode]
 
   const toggleTab = (tabId: string) => {

@@ -33,6 +33,7 @@ import { useAlertStore } from '@/stores/alertStore'
 import { useMadhanSignalStore } from '@/stores/madhanSignalStore'
 import { useProfileMenuItems } from '@/hooks/useProfileMenuItems'
 import { useRef } from 'react'
+import { useMadhanTheme } from './useMadhanTheme'
 import { CoiTrendChart } from './components/CoiTrendChart'
 import { CePeChangesChart } from './components/CePeChangesChart'
 import { CePeStrikeChangesChart } from './components/CePeStrikeChangesChart'
@@ -96,6 +97,7 @@ export default function Madhan01() {
   const navigate = useNavigate()
   const { user } = useAuthStore()
   const { mode, toggleMode, appMode, toggleAppMode, isTogglingMode } = useThemeStore()
+  const { mode: madhanMode, toggleMode: toggleMadhanMode, style: madhanStyle } = useMadhanTheme()
   const alertStore = useAlertStore()
   const { atp_ltp_signal, volume_spike, setToggle } = useMadhanSignalStore()
   const profileMenuItems = useProfileMenuItems()
@@ -410,7 +412,7 @@ export default function Madhan01() {
   const { maxOi, maxSession, max3m, max6m } = computeMaxValues(unifiedRows)
 
   return (
-    <div className="h-full flex flex-col bg-background text-foreground">
+    <div className={cn("h-full flex flex-col bg-background text-foreground madhan-theme", madhanMode === 'dark' ? 'dark' : 'madhan-light')} style={madhanStyle}>
       {/* Header */}
       <div className="h-12 border-b border-border flex items-center px-4 bg-card/50 shrink-0 justify-between">
           <div className="flex items-center gap-2">
@@ -505,12 +507,12 @@ export default function Madhan01() {
                 variant="ghost"
                 size="icon"
                 className="h-8 w-8"
-                onClick={toggleMode}
+                onClick={toggleMadhanMode}
                 title={
-                mode === "light" ? "Switch to dark mode" : "Switch to light mode"
+                madhanMode === "light" ? "Switch to dark mode" : "Switch to light mode"
                 }
             >
-                {mode === "light" ? (
+                {madhanMode === "light" ? (
                 <Sun className="h-4 w-4" />
                 ) : (
                 <Moon className="h-4 w-4" />

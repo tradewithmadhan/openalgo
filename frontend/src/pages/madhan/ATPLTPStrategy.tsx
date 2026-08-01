@@ -38,6 +38,7 @@ import { useMarketData } from '@/hooks/useMarketData'
 import { useAuthStore } from '@/stores/authStore'
 import { useThemeStore } from '@/stores/themeStore'
 import { useProfileMenuItems } from '@/hooks/useProfileMenuItems'
+import { useMadhanTheme } from './useMadhanTheme'
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -146,6 +147,7 @@ export default function ATPLTPStrategy() {
   const navigate = useNavigate()
   const { user } = useAuthStore()
   const { mode, toggleMode, appMode, toggleAppMode, isTogglingMode } = useThemeStore()
+  const { mode: madhanMode, toggleMode: toggleMadhanMode, style: madhanStyle } = useMadhanTheme()
   const profileMenuItems = useProfileMenuItems()
   
   const [atpLtpData, setAtpLtpData] = useState<ATPLTPData[]>([])
@@ -202,15 +204,16 @@ export default function ATPLTPStrategy() {
   }
 
   const getFinalSignalClass = (value?: string) => {
+    const dark = madhanMode === 'dark'
     switch (value) {
       case 'Bullish':
-        return 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200'
+        return dark ? 'bg-green-900 text-green-200' : 'bg-green-100 text-green-800'
       case 'Bearish':
-        return 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200'
+        return dark ? 'bg-red-900 text-red-200' : 'bg-red-100 text-red-800'
       case 'Sideways':
-        return 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200'
+        return dark ? 'bg-yellow-900 text-yellow-200' : 'bg-yellow-100 text-yellow-800'
       case 'Neutral':
-        return 'bg-muted text-muted-foreground'
+        return madhanMode === 'dark' ? 'bg-[#1e2128] text-[#787b86]' : 'bg-[#f5f5f5] text-[#787b86]'
       default:
         return ''
     }
@@ -453,8 +456,8 @@ export default function ATPLTPStrategy() {
 
   const getChangeColor = (current: number | null | undefined, previous: number | null | undefined) => {
     if (previous === null || previous === undefined || current === null || current === undefined) return 'text-muted-foreground'
-    if (current > previous) return 'text-green-600 dark:text-green-400'
-    if (current < previous) return 'text-red-600 dark:text-red-400'
+    if (current > previous) return madhanMode === 'dark' ? 'text-green-400' : 'text-green-600'
+    if (current < previous) return madhanMode === 'dark' ? 'text-red-400' : 'text-red-600'
     return 'text-muted-foreground'
   }
 
@@ -466,7 +469,7 @@ export default function ATPLTPStrategy() {
   }
 
   return (
-    <div className="h-full flex flex-col bg-background text-foreground">
+    <div className={cn("h-full flex flex-col text-foreground madhan-theme", madhanMode === 'dark' ? 'dark' : 'madhan-light')} style={{ ...madhanStyle, backgroundColor: madhanMode === 'dark' ? '#131722' : '#ffffff', color: madhanMode === 'dark' ? '#d1d4dc' : '#131722' }}>
       {/* Header */}
       <div className="h-12 border-b border-border flex items-center px-4 bg-card/50 shrink-0 justify-between">
           <div className="flex items-center gap-2">
@@ -557,12 +560,12 @@ export default function ATPLTPStrategy() {
                 variant="ghost"
                 size="icon"
                 className="h-8 w-8"
-                onClick={toggleMode}
+                onClick={toggleMadhanMode}
                 title={
-                mode === "light" ? "Switch to dark mode" : "Switch to light mode"
+                madhanMode === "light" ? "Switch to dark mode" : "Switch to light mode"
                 }
             >
-                {mode === "light" ? (
+                {madhanMode === "light" ? (
                 <Sun className="h-4 w-4" />
                 ) : (
                 <Moon className="h-4 w-4" />
@@ -618,7 +621,7 @@ export default function ATPLTPStrategy() {
             </div>
             <span className="text-muted-foreground/30">|</span>
             <div className="flex items-center gap-1">
-               <span className={cn('text-sm', fetcherRunning ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400')}>
+               <span className={cn('text-sm', fetcherRunning ? (madhanMode === 'dark' ? 'text-green-400' : 'text-green-600') : (madhanMode === 'dark' ? 'text-red-400' : 'text-red-500'))}>
                  {statusMessage}
                </span>
             </div>
@@ -742,7 +745,7 @@ export default function ATPLTPStrategy() {
                           </TableCell>
                         )}
                         {visibleColumns.spot_sma_signal && (
-                          <TableCell className={cn("text-center font-mono", row.spot_sma_signal ? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200" : "")}>
+                          <TableCell className={cn("text-center font-mono", row.spot_sma_signal ? (madhanMode === 'dark' ? "bg-green-900 text-green-200" : "bg-green-100 text-green-800") : "")}>
                             {row.spot_sma_signal ? "TRUE" : ""}
                           </TableCell>
                         )}
@@ -779,12 +782,12 @@ export default function ATPLTPStrategy() {
                           </TableCell>
                         )}
                         {visibleColumns.call_atp_signal && (
-                          <TableCell className={cn("text-center font-mono", row.call_atp_signal ? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200" : "")}>
+                          <TableCell className={cn("text-center font-mono", row.call_atp_signal ? (madhanMode === 'dark' ? "bg-green-900 text-green-200" : "bg-green-100 text-green-800") : "")}>
                             {row.call_atp_signal ? "TRUE" : ""}
                           </TableCell>
                         )}
                         {visibleColumns.call_sma_signal && (
-                          <TableCell className={cn("text-center font-mono", row.call_sma_signal ? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200" : "")}>
+                          <TableCell className={cn("text-center font-mono", row.call_sma_signal ? (madhanMode === 'dark' ? "bg-green-900 text-green-200" : "bg-green-100 text-green-800") : "")}>
                             {row.call_sma_signal ? "TRUE" : ""}
                           </TableCell>
                         )}
@@ -813,12 +816,12 @@ export default function ATPLTPStrategy() {
                           </TableCell>
                         )}
                         {visibleColumns.put_atp_signal && (
-                          <TableCell className={cn("text-center font-mono", row.put_atp_signal ? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200" : "")}>
+                          <TableCell className={cn("text-center font-mono", row.put_atp_signal ? (madhanMode === 'dark' ? "bg-green-900 text-green-200" : "bg-green-100 text-green-800") : "")}>
                             {row.put_atp_signal ? "TRUE" : ""}
                           </TableCell>
                         )}
                         {visibleColumns.put_sma_signal && (
-                          <TableCell className={cn("text-center font-mono", row.put_sma_signal ? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200" : "")}>
+                          <TableCell className={cn("text-center font-mono", row.put_sma_signal ? (madhanMode === 'dark' ? "bg-green-900 text-green-200" : "bg-green-100 text-green-800") : "")}>
                             {row.put_sma_signal ? "TRUE" : ""}
                           </TableCell>
                         )}

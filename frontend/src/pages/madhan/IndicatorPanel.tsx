@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react'
 import { indicatorRegistry } from 'lightweight-charts-indicators'
 import { X, ChevronRight, Activity, Eye, EyeOff, GripVertical } from 'lucide-react'
-import { useThemeStore } from '@/stores/themeStore'
+import { useMadhanTheme } from './useMadhanTheme'
 import { chartTheme } from './chartTheme'
 import styles from './IndicatorPanel.module.css'
 
@@ -55,7 +55,7 @@ export default function IndicatorPanel({
   onClose,
   onDragStart,
 }: IndicatorPanelProps) {
-  const { mode } = useThemeStore()
+  const { mode } = useMadhanTheme()
   const t = chartTheme[mode]
   const [search, setSearch] = useState('')
 

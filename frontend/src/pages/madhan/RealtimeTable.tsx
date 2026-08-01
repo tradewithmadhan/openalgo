@@ -16,6 +16,7 @@ import { useThemeStore } from '@/stores/themeStore'
 import { useAuthStore } from '@/stores/authStore'
 import { useProfileMenuItems } from '@/hooks/useProfileMenuItems'
 import { cn } from '@/lib/utils'
+import { useMadhanTheme } from './useMadhanTheme'
 
 type StrikeSymbol = { symbol: string; exchange: string; strike: number; type: string }
 
@@ -70,7 +71,8 @@ export default function RealtimeTable({ onClose, standalone = false }: Props) {
   }, [availHeight, tableData.length])
 
   const { mode: themeMode, toggleMode, appMode, toggleAppMode, isTogglingMode } = useThemeStore()
-  const t = chartTheme[themeMode]
+  const { mode: madhanMode, toggleMode: toggleMadhanMode, style: madhanStyle } = useMadhanTheme()
+  const t = chartTheme[madhanMode]
 
   const handleToggleAll = useCallback((val: boolean) => {
     showAllRef.current = val
@@ -370,7 +372,7 @@ export default function RealtimeTable({ onClose, standalone = false }: Props) {
   }
 
   return (
-    <div className="h-screen w-full p-0 flex flex-col">
+    <div className={cn("h-screen w-full p-0 flex flex-col madhan-theme", madhanMode === 'dark' ? 'dark' : 'madhan-light')} style={madhanStyle}>
       <div className="h-12 border-b border-border flex items-center px-4 bg-card/50 shrink-0 justify-between">
         <div className="flex items-center gap-2">
           <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-foreground hover:bg-accent md:hidden">
@@ -416,8 +418,8 @@ export default function RealtimeTable({ onClose, standalone = false }: Props) {
             {isTogglingMode ? <div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
               : appMode === 'live' ? <Zap className="h-4 w-4" /> : <BarChart3 className="h-4 w-4" />}
           </Button>
-          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={toggleMode} title={themeMode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}>
-            {themeMode === 'light' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={toggleMadhanMode} title={madhanMode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}>
+            {madhanMode === 'light' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
           </Button>
           <Button variant="ghost" size="sm" className="h-7 text-xs hidden sm:flex" asChild>
             <Link to="/dashboard"><Home className="h-3.5 w-3.5 mr-1.5" />Dashboard</Link>

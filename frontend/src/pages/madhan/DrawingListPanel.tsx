@@ -1,6 +1,6 @@
 import { getToolRegistry, type IDrawing, type DrawingManager } from 'lightweight-charts-drawing'
 import { X, ChevronRight, Layers } from 'lucide-react'
-import { useThemeStore } from '@/stores/themeStore'
+import { useMadhanTheme } from './useMadhanTheme'
 import { chartTheme } from './chartTheme'
 
 interface DrawingListPanelProps {
@@ -17,7 +17,7 @@ export default function DrawingListPanel({
   onDelete,
 }: DrawingListPanelProps) {
   const registry = getToolRegistry()
-  const { mode } = useThemeStore()
+  const { mode } = useMadhanTheme()
   const t = chartTheme[mode]
   if (!drawingManager) return null
 

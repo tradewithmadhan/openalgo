@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import type { IDrawing } from 'lightweight-charts-drawing'
-import { useThemeStore } from '@/stores/themeStore'
+import { useMadhanTheme } from './useMadhanTheme'
 import { chartTheme } from './chartTheme'
 
 interface TextEditorModalProps {
@@ -42,7 +42,7 @@ const TYPE_TITLES: Record<string, string> = {
 export default function TextEditorModal({ drawing, onSave, onClose }: TextEditorModalProps) {
   const [text, setText] = useState('')
   const textareaRef = useRef<HTMLTextAreaElement>(null)
-  const { mode } = useThemeStore()
+  const { mode } = useMadhanTheme()
   const t = chartTheme[mode]
 
   useEffect(() => {
