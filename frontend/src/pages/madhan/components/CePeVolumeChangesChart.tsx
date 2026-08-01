@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { RefreshCw } from 'lucide-react';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
-import { useThemeStore } from '@/stores/themeStore';
+import { useMadhanTheme } from '../useMadhanTheme';
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -52,7 +52,7 @@ interface CePeVolumeChangesChartProps {
 }
 
 export function CePeVolumeChangesChart({ refreshTrigger }: CePeVolumeChangesChartProps) {
-  const { mode } = useThemeStore();
+  const { mode } = useMadhanTheme();
   const [data, setData] = useState<CePeVolumeChangesData | null>(null);
   const [spotData, setSpotData] = useState<SpotData | null>(null);
   const [isLoading, setIsLoading] = useState(false);

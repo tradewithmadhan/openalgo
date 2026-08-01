@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { RefreshCw } from 'lucide-react';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
-import { useThemeStore } from '@/stores/themeStore';
+import { useMadhanTheme } from '@/pages/madhan/useMadhanTheme';
 
 import { Zap, ZapOff } from 'lucide-react';
 import { toast } from 'sonner';
@@ -25,7 +25,7 @@ interface SupportResistanceChartProps {
 }
 
 export function SupportResistanceChart({ refreshTrigger }: SupportResistanceChartProps) {
-    const { mode } = useThemeStore();
+    const { mode: madhanMode } = useMadhanTheme();
     const chartContainerRef = useRef<HTMLDivElement>(null);
     const chartRef = useRef<IChartApi | null>(null);
     const oiSupportSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
@@ -205,13 +205,13 @@ export function SupportResistanceChart({ refreshTrigger }: SupportResistanceChar
     // Effect to update chart options when theme changes
     useEffect(() => {
         if (!chartRef.current) return;
-        applyTheme(chartRef.current, mode === 'dark');
+        applyTheme(chartRef.current, madhanMode === 'dark');
         
         if (spotSeriesRef.current) {
-            const spotColor = mode === 'dark' ? '#d1d5db' : '#4b5563';
+            const spotColor = madhanMode === 'dark' ? '#d1d5db' : '#4b5563';
             spotSeriesRef.current.applyOptions({ color: spotColor });
         }
-    }, [mode]);
+    }, [madhanMode]);
 
     const fetchData = async () => {
         setIsLoading(true);
@@ -251,11 +251,11 @@ export function SupportResistanceChart({ refreshTrigger }: SupportResistanceChar
         const chart = createChart(chartContainerRef.current, {
             layout: {
                 background: { type: ColorType.Solid, color: 'transparent' },
-                textColor: '#d1d5db',
+                textColor: madhanMode === 'dark' ? '#d1d5db' : '#374151',
             },
             grid: {
-                vertLines: { color: 'rgba(42, 46, 57, 0.5)' },
-                horzLines: { color: 'rgba(42, 46, 57, 0.5)' },
+                vertLines: { color: madhanMode === 'dark' ? 'rgba(42, 46, 57, 0.5)' : 'rgba(209, 213, 219, 0.5)' },
+                horzLines: { color: madhanMode === 'dark' ? 'rgba(42, 46, 57, 0.5)' : 'rgba(209, 213, 219, 0.5)' },
             },
             width: chartContainerRef.current.clientWidth,
             height: 500,
@@ -272,6 +272,9 @@ export function SupportResistanceChart({ refreshTrigger }: SupportResistanceChar
                     const date = new Date(time * 1000);
                     return date.toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: false });
                 },
+            },
+            rightPriceScale: {
+                borderColor: madhanMode === 'dark' ? 'rgba(42, 46, 57, 0.5)' : 'rgba(209, 213, 219, 0.5)',
             },
         });
 
@@ -325,9 +328,9 @@ export function SupportResistanceChart({ refreshTrigger }: SupportResistanceChar
         spotSeriesRef.current = spotSeries;
 
         // Apply initial theme
-        applyTheme(chart, mode === 'dark');
+        applyTheme(chart, madhanMode === 'dark');
         if (spotSeriesRef.current) {
-            const spotColor = mode === 'dark' ? '#d1d5db' : '#4b5563';
+            const spotColor = madhanMode === 'dark' ? '#d1d5db' : '#4b5563';
             spotSeriesRef.current.applyOptions({ color: spotColor });
         }
 

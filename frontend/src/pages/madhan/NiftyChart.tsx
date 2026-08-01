@@ -637,6 +637,19 @@ export default function NiftyChart() {
     }
   }, [])
 
+  useEffect(() => {
+    if (!chartRef.current) return
+    const isDark = madhanMode === 'dark'
+    chartRef.current.applyOptions({
+      layout: {
+        textColor: isDark ? '#a6adbb' : '#333',
+      },
+      rightPriceScale: {
+        borderColor: isDark ? 'rgba(166,173,187,0.2)' : 'rgba(0,0,0,0.2)',
+      },
+    })
+  }, [madhanMode])
+
   const calculateEMA = (data: Candle[], period: number) => {
     if (data.length < period) return []
     const result: Array<{ time: number; value: number }> = []

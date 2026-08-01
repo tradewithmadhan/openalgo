@@ -203,20 +203,26 @@ export default function ATPLTPStrategy() {
     setVisibleColumns((prev) => ({ ...prev, [key]: checked }))
   }
 
-  const getFinalSignalClass = (value?: string) => {
+  const getSignalStyle = (value?: string): React.CSSProperties => {
     const dark = madhanMode === 'dark'
     switch (value) {
       case 'Bullish':
-        return dark ? 'bg-green-900 text-green-200' : 'bg-green-100 text-green-800'
+        return dark ? { backgroundColor: '#14532d', color: '#bbf7d0' } : { backgroundColor: '#dcfce7', color: '#166534' }
       case 'Bearish':
-        return dark ? 'bg-red-900 text-red-200' : 'bg-red-100 text-red-800'
+        return dark ? { backgroundColor: '#7f1d1d', color: '#fecaca' } : { backgroundColor: '#fee2e2', color: '#991b1b' }
       case 'Sideways':
-        return dark ? 'bg-yellow-900 text-yellow-200' : 'bg-yellow-100 text-yellow-800'
+        return dark ? { backgroundColor: '#713f12', color: '#fef08a' } : { backgroundColor: '#fef9c3', color: '#854d0e' }
       case 'Neutral':
-        return madhanMode === 'dark' ? 'bg-[#1e2128] text-[#787b86]' : 'bg-[#f5f5f5] text-[#787b86]'
+        return dark ? { backgroundColor: '#1e2128', color: '#787b86' } : { backgroundColor: '#f5f5f5', color: '#787b86' }
       default:
-        return ''
+        return {}
     }
+  }
+
+  const getSignalTrueStyle = (isTrue: boolean): React.CSSProperties => {
+    if (!isTrue) return {}
+    const dark = madhanMode === 'dark'
+    return dark ? { backgroundColor: '#14532d', color: '#bbf7d0' } : { backgroundColor: '#dcfce7', color: '#166534' }
   }
 
   const fetchATPLTPData = useCallback(async () => {
@@ -435,16 +441,6 @@ export default function ATPLTPStrategy() {
           displayFormats: { minute: 'HH:mm' },
           tooltipFormat: 'HH:mm',
         },
-        min: (() => {
-          const d = new Date()
-          d.setHours(9, 15, 0, 0)
-          return d.getTime()
-        })(),
-        max: (() => {
-          const d = new Date()
-          d.setHours(15, 30, 0, 0)
-          return d.getTime()
-        })(),
         title: { display: true, text: 'Time' },
         ticks: { maxRotation: 45, autoSkip: true, maxTicksLimit: 30 },
       },
@@ -454,11 +450,12 @@ export default function ATPLTPStrategy() {
     },
   }
 
-  const getChangeColor = (current: number | null | undefined, previous: number | null | undefined) => {
-    if (previous === null || previous === undefined || current === null || current === undefined) return 'text-muted-foreground'
-    if (current > previous) return madhanMode === 'dark' ? 'text-green-400' : 'text-green-600'
-    if (current < previous) return madhanMode === 'dark' ? 'text-red-400' : 'text-red-600'
-    return 'text-muted-foreground'
+  const getChangeStyle = (current: number | null | undefined, previous: number | null | undefined): React.CSSProperties => {
+    if (previous === null || previous === undefined || current === null || current === undefined) return {}
+    const dark = madhanMode === 'dark'
+    if (current > previous) return { color: dark ? '#4ade80' : '#16a34a' }
+    if (current < previous) return { color: dark ? '#f87171' : '#dc2626' }
+    return {}
   }
 
   const getChangeIcon = (current: number | null | undefined, previous: number | null | undefined) => {
@@ -621,7 +618,7 @@ export default function ATPLTPStrategy() {
             </div>
             <span className="text-muted-foreground/30">|</span>
             <div className="flex items-center gap-1">
-               <span className={cn('text-sm', fetcherRunning ? (madhanMode === 'dark' ? 'text-green-400' : 'text-green-600') : (madhanMode === 'dark' ? 'text-red-400' : 'text-red-500'))}>
+               <span className="text-sm" style={{ color: fetcherRunning ? (madhanMode === 'dark' ? '#4ade80' : '#16a34a') : (madhanMode === 'dark' ? '#f87171' : '#dc2626') }}>
                  {statusMessage}
                </span>
             </div>
@@ -737,7 +734,7 @@ export default function ATPLTPStrategy() {
                           </TableCell>
                         )}
                         {visibleColumns.spot_ltp && (
-                          <TableCell className={cn("text-right font-mono", getChangeColor(row.spot_ltp, prevRow?.spot_ltp))}>
+                          <TableCell className="text-right font-mono" style={getChangeStyle(row.spot_ltp, prevRow?.spot_ltp)}>
                             {formatNumber(row.spot_ltp)}
                             <span className="ml-1 text-xs">
                               {getChangeIcon(row.spot_ltp, prevRow?.spot_ltp)}
@@ -745,12 +742,12 @@ export default function ATPLTPStrategy() {
                           </TableCell>
                         )}
                         {visibleColumns.spot_sma_signal && (
-                          <TableCell className={cn("text-center font-mono", row.spot_sma_signal ? (madhanMode === 'dark' ? "bg-green-900 text-green-200" : "bg-green-100 text-green-800") : "")}>
+                          <TableCell className="text-center font-mono" style={getSignalTrueStyle(!!row.spot_sma_signal)}>
                             {row.spot_sma_signal ? "TRUE" : ""}
                           </TableCell>
                         )}
                         {visibleColumns.atm_strike && (
-                          <TableCell className={cn("text-right font-mono", getChangeColor(row.atm_strike, prevRow?.atm_strike))}>
+                          <TableCell className="text-right font-mono" style={getChangeStyle(row.atm_strike, prevRow?.atm_strike)}>
                             {formatNumber(row.atm_strike)}
                             <span className="ml-1 text-xs">
                               {getChangeIcon(row.atm_strike, prevRow?.atm_strike)}
@@ -758,7 +755,7 @@ export default function ATPLTPStrategy() {
                           </TableCell>
                         )}
                         {visibleColumns.atm_call_atp && (
-                          <TableCell className={cn("text-right font-mono", getChangeColor(row.atm_call_atp, prevRow?.atm_call_atp))}>
+                          <TableCell className="text-right font-mono" style={getChangeStyle(row.atm_call_atp, prevRow?.atm_call_atp)}>
                             {formatNumber(row.atm_call_atp)}
                             <span className="ml-1 text-xs">
                               {getChangeIcon(row.atm_call_atp, prevRow?.atm_call_atp)}
@@ -766,7 +763,7 @@ export default function ATPLTPStrategy() {
                           </TableCell>
                         )}
                         {visibleColumns.atm_call_ltp && (
-                          <TableCell className={cn("text-right font-mono", getChangeColor(row.atm_call_ltp, prevRow?.atm_call_ltp))}>
+                          <TableCell className="text-right font-mono" style={getChangeStyle(row.atm_call_ltp, prevRow?.atm_call_ltp)}>
                             {formatNumber(row.atm_call_ltp)}
                             <span className="ml-1 text-xs">
                               {getChangeIcon(row.atm_call_ltp, prevRow?.atm_call_ltp)}
@@ -774,7 +771,7 @@ export default function ATPLTPStrategy() {
                           </TableCell>
                         )}
                         {visibleColumns.call_atp_diff && (
-                          <TableCell className={cn("text-right font-mono", getChangeColor(row.atm_call_atp_ltp_diff, prevRow?.atm_call_atp_ltp_diff))}>
+                          <TableCell className="text-right font-mono" style={getChangeStyle(row.atm_call_atp_ltp_diff, prevRow?.atm_call_atp_ltp_diff)}>
                             {formatNumber(row.atm_call_atp_ltp_diff)}
                             <span className="ml-1 text-xs">
                               {getChangeIcon(row.atm_call_atp_ltp_diff, prevRow?.atm_call_atp_ltp_diff)}
@@ -782,17 +779,17 @@ export default function ATPLTPStrategy() {
                           </TableCell>
                         )}
                         {visibleColumns.call_atp_signal && (
-                          <TableCell className={cn("text-center font-mono", row.call_atp_signal ? (madhanMode === 'dark' ? "bg-green-900 text-green-200" : "bg-green-100 text-green-800") : "")}>
+                          <TableCell className="text-center font-mono" style={getSignalTrueStyle(!!row.call_atp_signal)}>
                             {row.call_atp_signal ? "TRUE" : ""}
                           </TableCell>
                         )}
                         {visibleColumns.call_sma_signal && (
-                          <TableCell className={cn("text-center font-mono", row.call_sma_signal ? (madhanMode === 'dark' ? "bg-green-900 text-green-200" : "bg-green-100 text-green-800") : "")}>
+                          <TableCell className="text-center font-mono" style={getSignalTrueStyle(!!row.call_sma_signal)}>
                             {row.call_sma_signal ? "TRUE" : ""}
                           </TableCell>
                         )}
                         {visibleColumns.atm_put_atp && (
-                          <TableCell className={cn("text-right font-mono", getChangeColor(row.atm_put_atp, prevRow?.atm_put_atp))}>
+                          <TableCell className="text-right font-mono" style={getChangeStyle(row.atm_put_atp, prevRow?.atm_put_atp)}>
                             {formatNumber(row.atm_put_atp)}
                             <span className="ml-1 text-xs">
                               {getChangeIcon(row.atm_put_atp, prevRow?.atm_put_atp)}
@@ -800,7 +797,7 @@ export default function ATPLTPStrategy() {
                           </TableCell>
                         )}
                         {visibleColumns.atm_put_ltp && (
-                          <TableCell className={cn("text-right font-mono", getChangeColor(row.atm_put_ltp, prevRow?.atm_put_ltp))}>
+                          <TableCell className="text-right font-mono" style={getChangeStyle(row.atm_put_ltp, prevRow?.atm_put_ltp)}>
                             {formatNumber(row.atm_put_ltp)}
                             <span className="ml-1 text-xs">
                               {getChangeIcon(row.atm_put_ltp, prevRow?.atm_put_ltp)}
@@ -808,7 +805,7 @@ export default function ATPLTPStrategy() {
                           </TableCell>
                         )}
                         {visibleColumns.put_atp_diff && (
-                          <TableCell className={cn("text-right font-mono", getChangeColor(row.atm_put_atp_ltp_diff, prevRow?.atm_put_atp_ltp_diff))}>
+                          <TableCell className="text-right font-mono" style={getChangeStyle(row.atm_put_atp_ltp_diff, prevRow?.atm_put_atp_ltp_diff)}>
                             {formatNumber(row.atm_put_atp_ltp_diff)}
                             <span className="ml-1 text-xs">
                               {getChangeIcon(row.atm_put_atp_ltp_diff, prevRow?.atm_put_atp_ltp_diff)}
@@ -816,17 +813,17 @@ export default function ATPLTPStrategy() {
                           </TableCell>
                         )}
                         {visibleColumns.put_atp_signal && (
-                          <TableCell className={cn("text-center font-mono", row.put_atp_signal ? (madhanMode === 'dark' ? "bg-green-900 text-green-200" : "bg-green-100 text-green-800") : "")}>
+                          <TableCell className="text-center font-mono" style={getSignalTrueStyle(!!row.put_atp_signal)}>
                             {row.put_atp_signal ? "TRUE" : ""}
                           </TableCell>
                         )}
                         {visibleColumns.put_sma_signal && (
-                          <TableCell className={cn("text-center font-mono", row.put_sma_signal ? (madhanMode === 'dark' ? "bg-green-900 text-green-200" : "bg-green-100 text-green-800") : "")}>
+                          <TableCell className="text-center font-mono" style={getSignalTrueStyle(!!row.put_sma_signal)}>
                             {row.put_sma_signal ? "TRUE" : ""}
                           </TableCell>
                         )}
                         {visibleColumns.final_signal && (
-                          <TableCell className={cn("text-center font-mono", getFinalSignalClass(row.final_signal))}>
+                          <TableCell className="text-center font-mono" style={getSignalStyle(row.final_signal)}>
                             {row.final_signal || ""}
                           </TableCell>
                         )}

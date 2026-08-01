@@ -3,7 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { createChart, ColorType, type IChartApi, type ISeriesApi, LineSeries, CandlestickSeries, LineStyle, createSeriesMarkers } from 'lightweight-charts';
-import { useThemeStore } from '@/stores/themeStore';
+import { useMadhanTheme } from '@/pages/madhan/useMadhanTheme';
 import { useMarketData } from '@/hooks/useMarketData';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
@@ -115,7 +115,7 @@ const aggregateSpotData = (data: SpotData, period: number) => {
 }
 
 export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: MultiOptionsChartProps) {
-    const { mode } = useThemeStore();
+    const { mode: madhanMode } = useMadhanTheme();
     const chartContainerRef = useRef<HTMLDivElement>(null);
     const chartRef = useRef<IChartApi | null>(null);
 
@@ -320,7 +320,7 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
             optionSeriesRefs.current.clear();
         }
 
-        const isDark = mode === 'dark';
+        const isDark = madhanMode === 'dark';
         const gridColor = isDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)';
         const textColor = isDark ? '#d1d5db' : '#374151';
         const backgroundColor = 'transparent';
@@ -412,7 +412,7 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
             optionSeriesRefs.current.clear();
             optionSeriesTypes.current.clear();
         };
-    }, [mode]); // Re-create on mode change
+    }, [madhanMode]); // Re-create on mode change
 
     // Update Chart Data Effect
     useEffect(() => {
@@ -672,7 +672,7 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
             markersPluginRef.current.setMarkers([]);
         }
 
-    }, [spotData, optionsData, selectedStrikes, strikes, mode, showSpot, showOptions, timeframe, showSignals, backendSignals]); 
+    }, [spotData, optionsData, selectedStrikes, strikes, madhanMode, showSpot, showOptions, timeframe, showSignals, backendSignals]);  
 
     // WebSocket Real-time Updates Effect
     useEffect(() => {

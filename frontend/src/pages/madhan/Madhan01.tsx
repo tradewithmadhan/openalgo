@@ -582,11 +582,11 @@ export default function Madhan01() {
            <div className="flex items-center gap-2 bg-muted/50 p-1.5 rounded-lg border text-xs">
               <div className="px-2 py-0.5 rounded bg-background shadow-sm border">
                  <span className="text-muted-foreground mr-1">Open ATM:</span>
-                 <span className="font-bold text-amber-600 dark:text-amber-400">{status?.open_atm_strike || "-"}</span>
+                  <span className="font-bold" style={{ color: madhanMode === 'dark' ? '#fbbf24' : '#d97706' }}>{status?.open_atm_strike || "-"}</span>
               </div>
               <div className="px-2 py-0.5 rounded bg-background shadow-sm border animate-pulse-yellow">
                  <span className="text-muted-foreground mr-1">Current ATM:</span>
-                 <span className="font-bold text-amber-600 dark:text-amber-400">{status?.current_atm_strike || "-"}</span>
+                  <span className="font-bold" style={{ color: madhanMode === 'dark' ? '#fbbf24' : '#d97706' }}>{status?.current_atm_strike || "-"}</span>
               </div>
               <div className="px-2 py-0.5 rounded bg-background shadow-sm border">
                  <span className="text-muted-foreground mr-1">Tracked:</span>
@@ -753,18 +753,16 @@ export default function Madhan01() {
                         // Base row classes with alternating background
                         const rowClasses = [
                             'flex items-stretch rounded-md border px-1 py-1 text-xs transition-colors',
-                            index % 2 === 0 ? 'bg-muted/30' : 'bg-muted/10'
                         ]
 
                         if (isCurrentAtm) {
                             rowClasses.push('current-atm-row border-amber-400/50 shadow-[0_0_15px_rgba(251,191,36,0.15)]')
                         } else {
-                            rowClasses.push('border-transparent hover:bg-muted/50')
+                            rowClasses.push('border-transparent')
                         }
 
                         const strikeClasses = ['flex items-center justify-center font-bold text-sm rounded px-1']
-                        if (isOpenAtm) strikeClasses.push('bg-yellow-100 text-yellow-900 dark:bg-yellow-900/30 dark:text-yellow-100')
-                        if (isCurrentAtm) strikeClasses.push('text-amber-600 dark:text-amber-400 scale-110 transform transition-transform')
+                        if (isCurrentAtm) strikeClasses.push('scale-110 transform transition-transform')
                         
                         const gridCols = [
                             'minmax(80px,1fr)',
@@ -775,18 +773,27 @@ export default function Madhan01() {
                         ]
                             .filter(Boolean)
                             .join(' ')
+
+                        const rowStyle: React.CSSProperties = {
+                            display: 'grid',
+                            gridTemplateColumns: gridCols,
+                            gap: '0.25rem',
+                            alignItems: 'center',
+                            backgroundColor: index % 2 === 0 ? (madhanMode === 'dark' ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.03)') : (madhanMode === 'dark' ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.01)'),
+                        }
+
+                        const strikeStyle: React.CSSProperties = isOpenAtm
+                            ? { backgroundColor: madhanMode === 'dark' ? 'rgba(146,123,15,0.3)' : 'rgba(253,230,138,1)', color: madhanMode === 'dark' ? '#fbbf24' : '#a16207' }
+                            : isCurrentAtm
+                                ? { color: madhanMode === 'dark' ? '#fbbf24' : '#d97706' }
+                                : undefined
                         return (
                             <div
                             key={row.strike}
                             className={rowClasses.join(' ')}
-                            style={{
-                                display: 'grid',
-                                gridTemplateColumns: gridCols,
-                                gap: '0.25rem',
-                                alignItems: 'center',
-                            }}
+                            style={rowStyle}
                             >
-                            <div className={strikeClasses.join(' ')}>{row.strike}</div>
+                            <div className={strikeClasses.join(' ')} style={strikeStyle}>{row.strike}</div>
                             <div className="space-y-1">
                                 <div className="flex items-center gap-2">
                                 <span className="w-6 text-center text-[11px] font-semibold text-muted-foreground">
@@ -1185,8 +1192,8 @@ export default function Madhan01() {
                                 else if (isPut) rowClass += ' bg-red-500/5'
                                 else rowClass += ' bg-blue-500/5'
 
-                                const formatChangeClass = (value: number) =>
-                                value > 0 ? 'text-emerald-600 dark:text-emerald-400 font-medium' : value < 0 ? 'text-red-600 dark:text-red-400 font-medium' : 'text-muted-foreground'
+                                const formatChangeStyle = (value: number): React.CSSProperties =>
+                                value > 0 ? { color: madhanMode === 'dark' ? '#34d399' : '#059669', fontWeight: 500 } : value < 0 ? { color: madhanMode === 'dark' ? '#f87171' : '#dc2626', fontWeight: 500 } : { color: undefined }
                                 
                                 const formatChangeText = (value: number) => {
                                 if (!value) return '0'
@@ -1203,20 +1210,22 @@ export default function Madhan01() {
                                     <td className="p-2 px-3 text-right font-mono">
                                     {(row.current_oi || 0).toLocaleString('en-IN')}
                                     </td>
-                                    <td className={`p-2 px-3 text-right ${formatChangeClass(row.change_in_oi)}`}>
+                                    <td className="p-2 px-3 text-right" style={formatChangeStyle(row.change_in_oi)}>
                                     {formatChangeText(row.change_in_oi)}
                                     </td>
                                     <td
-                                    className={`p-2 px-3 text-right ${formatChangeClass(
+                                    className="p-2 px-3 text-right"
+                                    style={formatChangeStyle(
                                         row.change_in_oi_3min,
-                                    )}`}
+                                    )}
                                     >
                                     {formatChangeText(row.change_in_oi_3min)}
                                     </td>
                                     <td
-                                    className={`p-2 px-3 text-right ${formatChangeClass(
+                                    className="p-2 px-3 text-right"
+                                    style={formatChangeStyle(
                                         row.change_in_oi_6min,
-                                    )}`}
+                                    )}
                                     >
                                     {formatChangeText(row.change_in_oi_6min)}
                                     </td>

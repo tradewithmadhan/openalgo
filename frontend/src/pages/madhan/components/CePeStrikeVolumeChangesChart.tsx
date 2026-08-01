@@ -5,7 +5,7 @@ import { RefreshCw } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
-import { useThemeStore } from '@/stores/themeStore';
+import { useMadhanTheme } from '../useMadhanTheme';
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -54,7 +54,7 @@ interface CePeStrikeVolumeChangesChartProps {
 }
 
 export function CePeStrikeVolumeChangesChart({ refreshTrigger, atmStrike }: CePeStrikeVolumeChangesChartProps) {
-  const { mode } = useThemeStore();
+  const { mode } = useMadhanTheme();
   const [data, setData] = useState<CePeStrikeVolumeChangesData | null>(null);
   const [spotData, setSpotData] = useState<SpotData | null>(null);
   const [isLoading, setIsLoading] = useState(false);

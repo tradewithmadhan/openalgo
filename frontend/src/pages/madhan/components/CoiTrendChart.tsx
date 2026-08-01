@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { RefreshCw } from 'lucide-react';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
-import { useThemeStore } from '@/stores/themeStore';
+import { useMadhanTheme } from '@/pages/madhan/useMadhanTheme';
 import { Zap, ZapOff } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -20,7 +20,7 @@ interface CoiTrendChartProps {
 }
 
 export function CoiTrendChart({ refreshTrigger }: CoiTrendChartProps) {
-    const { mode } = useThemeStore();
+    const { mode: madhanMode } = useMadhanTheme();
     const chartContainerRef = useRef<HTMLDivElement>(null);
     const chartRef = useRef<IChartApi | null>(null);
     const coiSeriesRef = useRef<ISeriesApi<"Baseline"> | null>(null);
@@ -248,13 +248,13 @@ export function CoiTrendChart({ refreshTrigger }: CoiTrendChartProps) {
     // Effect to update chart options when theme changes
     useEffect(() => {
         if (!chartRef.current) return;
-        applyTheme(chartRef.current, mode === 'dark');
+        applyTheme(chartRef.current, madhanMode === 'dark');
         
         if (spotSeriesRef.current) {
-            const spotColor = mode === 'dark' ? '#d1d5db' : '#4b5563';
+            const spotColor = madhanMode === 'dark' ? '#d1d5db' : '#4b5563';
             spotSeriesRef.current.applyOptions({ color: spotColor });
         }
-    }, [mode]);
+    }, [madhanMode]);
 
     useEffect(() => {
         fetchData();
@@ -267,11 +267,11 @@ export function CoiTrendChart({ refreshTrigger }: CoiTrendChartProps) {
         const chart = createChart(chartContainerRef.current, {
             layout: {
                 background: { type: ColorType.Solid, color: 'transparent' },
-                textColor: '#d1d5db',
+                textColor: madhanMode === 'dark' ? '#d1d5db' : '#374151',
             },
             grid: {
-                vertLines: { color: 'rgba(42, 46, 57, 0.5)' },
-                horzLines: { color: 'rgba(42, 46, 57, 0.5)' },
+                vertLines: { color: madhanMode === 'dark' ? 'rgba(42, 46, 57, 0.5)' : 'rgba(209, 213, 219, 0.5)' },
+                horzLines: { color: madhanMode === 'dark' ? 'rgba(42, 46, 57, 0.5)' : 'rgba(209, 213, 219, 0.5)' },
             },
             width: chartContainerRef.current.clientWidth,
             height: chartContainerRef.current.clientHeight,
@@ -296,9 +296,11 @@ export function CoiTrendChart({ refreshTrigger }: CoiTrendChartProps) {
             },
             rightPriceScale: {
                 visible: true,
+                borderColor: madhanMode === 'dark' ? 'rgba(42, 46, 57, 0.5)' : 'rgba(209, 213, 219, 0.5)',
             },
             leftPriceScale: {
                 visible: true,
+                borderColor: madhanMode === 'dark' ? 'rgba(42, 46, 57, 0.5)' : 'rgba(209, 213, 219, 0.5)',
             },
         });
 
@@ -346,9 +348,9 @@ export function CoiTrendChart({ refreshTrigger }: CoiTrendChartProps) {
         chartActiveRef.current = true;
 
         // Apply initial theme
-        applyTheme(chart, mode === 'dark');
+        applyTheme(chart, madhanMode === 'dark');
         if (spotSeriesRef.current) {
-            const spotColor = mode === 'dark' ? '#d1d5db' : '#4b5563';
+            const spotColor = madhanMode === 'dark' ? '#d1d5db' : '#4b5563';
             spotSeriesRef.current.applyOptions({ color: spotColor });
         }
 
