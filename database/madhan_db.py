@@ -712,6 +712,8 @@ def get_current_day_historical_data(end_ts: int = None):
             literal_column("'NIFTY'").label("symbol"),
             NiftyData.timestamp,
             func.coalesce(NiftyData.oi, 0).label("oi"),
+            NiftyData.high,
+            NiftyData.low,
             NiftyData.close,
             func.coalesce(NiftyData.volume, 0).label("volume"),
         ).filter(*nifty_filter)

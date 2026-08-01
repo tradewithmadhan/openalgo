@@ -774,6 +774,8 @@ def nifty_ce_pe_volume_changes():
     timestamps_res = []
     ce_changes_res = []
     pe_changes_res = []
+    nifty_highs_res = []
+    nifty_lows_res = []
 
     for ts in sorted_timestamps:
         if len(data_by_ts[ts]) < expected_symbol_count:
@@ -782,12 +784,16 @@ def nifty_ce_pe_volume_changes():
 
         total_ce_volume = 0
         total_pe_volume = 0
+        nifty_high = None
+        nifty_low = None
 
         for item in data_by_ts[ts]:
             symbol = item['symbol']
             volume = item.get('volume', 0)
 
             if symbol == 'NIFTY':
+                nifty_high = item.get('high')
+                nifty_low = item.get('low')
                 continue
 
             if strike_selection_mode == 'option2':
@@ -811,9 +817,11 @@ def nifty_ce_pe_volume_changes():
         timestamps_res.append(ts * 1000)
         ce_changes_res.append(total_ce_volume)
         pe_changes_res.append(total_pe_volume)
+        nifty_highs_res.append(nifty_high)
+        nifty_lows_res.append(nifty_low)
 
     combined = [abs(ce_changes_res[i]) + abs(pe_changes_res[i]) for i in range(len(ce_changes_res))]
-    vol_spike = compute_spike_flags(combined)
+    vol_spike = compute_spike_flags(combined, nifty_highs=nifty_highs_res, nifty_lows=nifty_lows_res)
 
     return jsonify({'status': 'success', 'data': {'timestamps': timestamps_res, 'ce_changes': ce_changes_res, 'pe_changes': pe_changes_res, 'vol_spike': vol_spike}})
 
@@ -839,6 +847,8 @@ def nifty_ce_pe_strike_volume_changes():
     timestamps_res = []
     ce_changes_res = []
     pe_changes_res = []
+    nifty_highs_res = []
+    nifty_lows_res = []
 
     for ts in sorted(data_by_ts.keys()):
         rows = data_by_ts[ts]
@@ -847,12 +857,16 @@ def nifty_ce_pe_strike_volume_changes():
         total_pe_volume = 0
         found_ce = False
         found_pe = False
+        nifty_high = None
+        nifty_low = None
 
         for row in rows:
             symbol = row["symbol"]
             current_volume = row.get("volume", 0)
 
             if symbol == "NIFTY":
+                nifty_high = row.get("high")
+                nifty_low = row.get("low")
                 continue
 
             if extract_strike(symbol) != strike_price:
@@ -871,37 +885,11 @@ def nifty_ce_pe_strike_volume_changes():
         timestamps_res.append(ts * 1000)
         ce_changes_res.append(total_ce_volume)
         pe_changes_res.append(total_pe_volume)
+        nifty_highs_res.append(nifty_high)
+        nifty_lows_res.append(nifty_low)
 
     combined = [abs(ce_changes_res[i]) + abs(pe_changes_res[i]) for i in range(len(ce_changes_res))]
-    vol_spike = [False] * len(combined)
-    WARMUP = 5
-    WINDOW = 20
-    THRESHOLD = 2.0
-    for i in range(WARMUP, len(combined)):
-        start = max(0, i - WINDOW)
-        window = combined[start:i]
-        if not window:
-            continue
-        avg = sum(window) / len(window)
-        if avg > 0 and combined[i] > avg * THRESHOLD:
-            vol_spike[i] = True
-
-    # In consecutive spike runs, drop spikes where volume decreased from previous
-    i = 0
-    while i < len(vol_spike):
-        if not vol_spike[i]:
-            i += 1
-            continue
-        run_start = i
-        while i < len(vol_spike) and vol_spike[i]:
-            i += 1
-        run_end = i
-        prev_vol = combined[run_start]
-        for k in range(run_start + 1, run_end):
-            if combined[k] < prev_vol:
-                vol_spike[k] = False
-            else:
-                prev_vol = combined[k]
+    vol_spike = compute_spike_flags(combined, nifty_highs=nifty_highs_res, nifty_lows=nifty_lows_res)
 
     return jsonify({
         "timestamps": timestamps_res,
