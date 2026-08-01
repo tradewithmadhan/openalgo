@@ -2,7 +2,7 @@ import { useEffect, useState, useRef, useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { createChart, ColorType, type IChartApi, type ISeriesApi, LineSeries, CandlestickSeries, LineStyle, createSeriesMarkers } from 'lightweight-charts';
+import { createChart, ColorType, type IChartApi, type ISeriesApi, LineSeries, CandlestickSeries, HistogramSeries, LineStyle, createSeriesMarkers } from 'lightweight-charts';
 import { useMadhanTheme } from '@/pages/madhan/useMadhanTheme';
 import { useMarketData } from '@/hooks/useMarketData';
 import { Switch } from '@/components/ui/switch';
@@ -125,6 +125,104 @@ const computeRunningMaxHigh = (data: OptionOHLC[], period: number): { time: numb
     });
 };
 
+// Compute running minimum of low (step line that only goes down)
+const computeRunningMinLow = (data: OptionOHLC[], period: number): { time: number; value: number }[] => {
+    if (!data.length) return [];
+    const aggregated = aggregateData(data, period);
+    let runningMin = Number.POSITIVE_INFINITY;
+    return aggregated.map(d => {
+        runningMin = Math.min(runningMin, d.low);
+        return { time: d.timestamp, value: runningMin };
+    });
+};
+
+// Count how many strikes had a cross-line change at each timestamp
+interface CrossChangeStats {
+    timestamps: number[];
+    ceHxCounts: Map<number, number>;
+    peHxCounts: Map<number, number>;
+    ceLxCounts: Map<number, number>;
+    peLxCounts: Map<number, number>;
+}
+
+const computeCrossChangeStats = (
+    strikes: number[],
+    optionsData: Map<string, OptionOHLC[]>,
+    getSymbol: (strike: number, type: 'CE' | 'PE') => string | null,
+    timeframe: number,
+    showHighCross: boolean,
+    showLowCross: boolean,
+    showHighCrossCE: boolean,
+    showHighCrossPE: boolean,
+    showLowCrossCE: boolean,
+    showLowCrossPE: boolean,
+): CrossChangeStats => {
+    const ceHxData: { time: number; value: number }[][] = [];
+    const peHxData: { time: number; value: number }[][] = [];
+    const ceLxData: { time: number; value: number }[][] = [];
+    const peLxData: { time: number; value: number }[][] = [];
+
+    strikes.forEach(strike => {
+        const ceSymbol = getSymbol(strike, 'CE');
+        const peSymbol = getSymbol(strike, 'PE');
+
+        if (ceSymbol) {
+            const rawData = optionsData.get(ceSymbol);
+            if (rawData && rawData.length) {
+                if (showHighCross && showHighCrossCE) {
+                    ceHxData.push(computeRunningMaxHigh(rawData, timeframe));
+                }
+                if (showLowCross && showLowCrossCE) {
+                    ceLxData.push(computeRunningMinLow(rawData, timeframe));
+                }
+            }
+        }
+
+        if (peSymbol) {
+            const rawData = optionsData.get(peSymbol);
+            if (rawData && rawData.length) {
+                if (showHighCross && showHighCrossPE) {
+                    peHxData.push(computeRunningMaxHigh(rawData, timeframe));
+                }
+                if (showLowCross && showLowCrossPE) {
+                    peLxData.push(computeRunningMinLow(rawData, timeframe));
+                }
+            }
+        }
+    });
+
+    // Collect all unique timestamps sorted ascending
+    const timestampSet = new Set<number>();
+    [...ceHxData, ...peHxData, ...ceLxData, ...peLxData].forEach(arr => {
+        arr.forEach(d => timestampSet.add(d.time));
+    });
+    const timestamps = Array.from(timestampSet).sort((a, b) => a - b);
+
+    // For each type, count how many series had a value change at each timestamp
+    const countChanges = (seriesList: { time: number; value: number }[][]) => {
+        const counts = new Map<number, number>();
+        seriesList.forEach(series => {
+            if (series.length === 0) return;
+            let prevValue: number | null = null;
+            series.forEach(d => {
+                if (prevValue !== null && d.value !== prevValue) {
+                    counts.set(d.time, (counts.get(d.time) || 0) + 1);
+                }
+                prevValue = d.value;
+            });
+        });
+        return counts;
+    };
+
+    return {
+        timestamps,
+        ceHxCounts: countChanges(ceHxData),
+        peHxCounts: countChanges(peHxData),
+        ceLxCounts: countChanges(ceLxData),
+        peLxCounts: countChanges(peLxData),
+    };
+};
+
 export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: MultiOptionsChartProps) {
     const { mode: madhanMode } = useMadhanTheme();
     const chartContainerRef = useRef<HTMLDivElement>(null);
@@ -185,12 +283,19 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
     const [optionsData, setOptionsData] = useState<Map<string, OptionOHLC[]>>(new Map());
     const [backendSignals, setBackendSignals] = useState<any[]>([]);
     const [showSpot, setShowSpot] = useState(false);
-    const [showOptions, setShowOptions] = useState(true);
+    const [showOptions, setShowOptions] = useState(false);
     const [timeframe, setTimeframe] = useState<1 | 3 | 5 | 15>(1);
     const [isLive, setIsLive] = useState(true);
     const [showSignals, setShowSignals] = useState(true);
     const [showHighCross, setShowHighCross] = useState(false);
+    const [showHighCrossCE, setShowHighCrossCE] = useState(true);
+    const [showHighCrossPE, setShowHighCrossPE] = useState(true);
     const highCrossSeriesRefs = useRef<Map<string, ISeriesApi<"Line">>>(new Map());
+    const [showLowCross, setShowLowCross] = useState(false);
+    const [showLowCrossCE, setShowLowCrossCE] = useState(true);
+    const [showLowCrossPE, setShowLowCrossPE] = useState(true);
+    const lowCrossSeriesRefs = useRef<Map<string, ISeriesApi<"Line">>>(new Map());
+    const histogramSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
 
     // Symbols for WebSocket subscription
     const wsSymbols = useMemo(() => {
@@ -225,7 +330,7 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
     useEffect(() => {
         if (atmStrike && atmStrike > 0) {
             const newStrikes = [];
-            for (let i = -5; i <= 5; i++) {
+            for (let i = -10; i <= 10; i++) {
                 newStrikes.push(atmStrike + (i * 50));
             }
             newStrikes.sort((a, b) => b - a); // Higher strikes on top
@@ -385,6 +490,20 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
 
         chartRef.current = chart;
 
+        // Histogram series for cross-change counts (uses a dedicated price scale)
+        const histogramSeries = chart.addSeries(HistogramSeries, {
+            priceScaleId: 'histogram',
+            overlay: true,
+            priceLineVisible: false,
+            lastValueVisible: false,
+            title: 'Cross Changes',
+        });
+        chart.priceScale('histogram').applyOptions({
+            visible: false,
+            scaleMargins: { top: 0.7, bottom: 0 },
+        });
+        histogramSeriesRef.current = histogramSeries;
+
         // Spot Series (Left Scale)
         const spotColor = isDark ? '#94a3b8' : '#64748b'; // Slate gray
 
@@ -428,6 +547,14 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
                 try { chart.removeSeries(s); } catch {}
             });
             highCrossSeriesRefs.current.clear();
+            lowCrossSeriesRefs.current.forEach((s) => {
+                try { chart.removeSeries(s); } catch {}
+            });
+            lowCrossSeriesRefs.current.clear();
+            if (histogramSeriesRef.current) {
+                try { chart.removeSeries(histogramSeriesRef.current); } catch {}
+                histogramSeriesRef.current = null;
+            }
         };
     }, [madhanMode]); // Re-create on mode change
 
@@ -452,211 +579,208 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
         // Update Options Data
         const currentSeriesKeys = new Set(optionSeriesRefs.current.keys());
         
-        if (showOptions) {
-            strikes.forEach(strike => {
-                const ceSymbol = getSymbol(strike, 'CE');
-                const peSymbol = getSymbol(strike, 'PE');
-                if (!ceSymbol || !peSymbol) return;
+        // Always process selected strikes (show as candlesticks)
+        // Process non-selected as lines only when showOptions=true
+        strikes.forEach(strike => {
+            const ceSymbol = getSymbol(strike, 'CE');
+            const peSymbol = getSymbol(strike, 'PE');
+            if (!ceSymbol || !peSymbol) return;
 
-                const isSelected = selectedStrikes.has(strike);
-                const desiredType = isSelected ? 'Candlestick' : 'Line';
+            const isSelected = selectedStrikes.has(strike);
+            const desiredType = isSelected ? 'Candlestick' : (showOptions ? 'Line' : null);
 
-                // CE
-                const ceKey = ceSymbol;
-                let ceSeries = optionSeriesRefs.current.get(ceKey);
-                const currentCeType = optionSeriesTypes.current.get(ceKey);
+            // Skip non-selected strikes when options are hidden
+            if (desiredType === null) return;
 
-                if (ceSeries && currentCeType !== desiredType) {
-                    chartRef.current!.removeSeries(ceSeries);
-                    optionSeriesRefs.current.delete(ceKey);
-                    optionSeriesTypes.current.delete(ceKey);
-                    ceSeries = undefined;
-                }
+            // CE
+            const ceKey = ceSymbol;
+            let ceSeries = optionSeriesRefs.current.get(ceKey);
+            const currentCeType = optionSeriesTypes.current.get(ceKey);
 
-                if (!ceSeries) {
-                    if (desiredType === 'Candlestick') {
-                        ceSeries = chartRef.current!.addSeries(CandlestickSeries, {
-                            upColor: '#22c55e', 
-                            downColor: '#ef4444', 
-                            borderVisible: false, 
-                            wickUpColor: '#22c55e', 
-                            wickDownColor: '#ef4444',
-                            priceScaleId: 'right', 
-                            title: `${strike} CE`,
-                            lastValueVisible: true,
-                            priceLineVisible: true,
-                        });
-                    } else {
-                        ceSeries = chartRef.current!.addSeries(LineSeries, {
-                            color: '#22c55e', // Green
-                            lineWidth: 1,
-                            lineStyle: LineStyle.Dotted,
-                            priceScaleId: 'right', // Options on Right Scale
-                            title: `${strike} CE`,
-                            lastValueVisible: false,
-                            priceLineVisible: false,
-                        });
-                    }
-                    optionSeriesRefs.current.set(ceKey, ceSeries);
-                    optionSeriesTypes.current.set(ceKey, desiredType);
-                } else if (desiredType === 'Line') {
-                    // Ensure Line style is correct if it was already a Line
-                    ceSeries.applyOptions({
+            if (ceSeries && currentCeType !== desiredType) {
+                chartRef.current!.removeSeries(ceSeries);
+                optionSeriesRefs.current.delete(ceKey);
+                optionSeriesTypes.current.delete(ceKey);
+                ceSeries = undefined;
+            }
+
+            if (!ceSeries) {
+                if (desiredType === 'Candlestick') {
+                    ceSeries = chartRef.current!.addSeries(CandlestickSeries, {
+                        upColor: '#22c55e',
+                        downColor: '#ef4444',
+                        borderVisible: false,
+                        wickUpColor: '#22c55e',
+                        wickDownColor: '#ef4444',
+                        priceScaleId: 'right',
+                        title: `${strike} CE`,
+                        lastValueVisible: true,
+                        priceLineVisible: true,
+                    });
+                } else {
+                    ceSeries = chartRef.current!.addSeries(LineSeries, {
+                        color: '#22c55e',
                         lineWidth: 1,
                         lineStyle: LineStyle.Dotted,
+                        priceScaleId: 'right',
+                        title: `${strike} CE`,
+                        lastValueVisible: false,
+                        priceLineVisible: false,
                     });
                 }
+                optionSeriesRefs.current.set(ceKey, ceSeries);
+                optionSeriesTypes.current.set(ceKey, desiredType);
+            } else if (desiredType === 'Line') {
+                ceSeries.applyOptions({
+                    lineWidth: 1,
+                    lineStyle: LineStyle.Dotted,
+                });
+            }
 
-                // Set Data for CE
-                const ceDataRaw = optionsData.get(ceSymbol);
-                if (ceDataRaw) {
-                    const ceData = aggregateData(ceDataRaw, timeframe);
-                    if (desiredType === 'Candlestick') {
-                         const chartData = ceData.map(d => ({
-                            time: d.timestamp as any,
-                            open: d.open, 
-                            high: d.high, 
-                            low: d.low, 
-                            close: d.close
-                        }));
+            // Set Data for CE
+            const ceDataRaw = optionsData.get(ceSymbol);
+            if (ceDataRaw) {
+                const ceData = aggregateData(ceDataRaw, timeframe);
+                if (desiredType === 'Candlestick') {
+                    const chartData = ceData.map(d => ({
+                        time: d.timestamp as any,
+                        open: d.open,
+                        high: d.high,
+                        low: d.low,
+                        close: d.close
+                    }));
 
-                        // Keep real-time candle during refresh if it's newer than historical data
-                        const currentRealtime = currentOHLCRef.current.get(ceKey);
-                        if (currentRealtime && (chartData.length === 0 || currentRealtime.timestamp > chartData[chartData.length - 1].time)) {
-                            chartData.push({
-                                time: currentRealtime.timestamp as any,
-                                open: currentRealtime.open,
-                                high: currentRealtime.high,
-                                low: currentRealtime.low,
-                                close: currentRealtime.close
-                            });
-                        }
-
-                        (ceSeries as ISeriesApi<"Candlestick">).setData(chartData);
-                        if (chartData.length > 0) {
-                            const last = chartData[chartData.length - 1];
-                            lastUpdateTimeRef.current.set(ceKey, last.time as number);
-                            if (currentRealtime && last.time === currentRealtime.timestamp) {
-                                // Already in currentOHLCRef
-                            } else {
-                                // Seed from historical last
-                                const lastHistorical = ceData[ceData.length - 1];
-                                currentOHLCRef.current.set(ceKey, { ...lastHistorical });
-                            }
-                        }
-                    } else {
-                         const chartData = ceData.map(d => ({
-                            time: d.timestamp as any,
-                            value: d.close
-                        }));
-                        (ceSeries as ISeriesApi<"Line">).setData(chartData);
-                        if (chartData.length > 0) {
-                            const lastPoint = chartData[chartData.length - 1];
-                            lastUpdateTimeRef.current.set(ceKey, lastPoint.time as number);
-                        }
-                    }
-                }
-
-                // PE
-                const peKey = peSymbol;
-                let peSeries = optionSeriesRefs.current.get(peKey);
-                const currentPeType = optionSeriesTypes.current.get(peKey);
-
-                if (peSeries && currentPeType !== desiredType) {
-                    chartRef.current!.removeSeries(peSeries);
-                    optionSeriesRefs.current.delete(peKey);
-                    optionSeriesTypes.current.delete(peKey);
-                    peSeries = undefined;
-                }
-
-                if (!peSeries) {
-                    if (desiredType === 'Candlestick') {
-                        peSeries = chartRef.current!.addSeries(CandlestickSeries, {
-                            upColor: '#3b82f6', // Blue
-                            downColor: '#f97316', // Orange
-                            borderVisible: false, 
-                            wickUpColor: '#3b82f6', 
-                            wickDownColor: '#f97316',
-                            priceScaleId: 'right', 
-                            title: `${strike} PE`,
-                            lastValueVisible: true,
-                            priceLineVisible: true,
-                        });
-                    } else {
-                        peSeries = chartRef.current!.addSeries(LineSeries, {
-                            color: '#ef4444', // Red
-                            lineWidth: 1,
-                            lineStyle: LineStyle.Dotted,
-                            priceScaleId: 'right', // Options on Right Scale
-                            title: `${strike} PE`,
-                            lastValueVisible: false,
-                            priceLineVisible: false,
+                    const currentRealtime = currentOHLCRef.current.get(ceKey);
+                    if (currentRealtime && (chartData.length === 0 || currentRealtime.timestamp > chartData[chartData.length - 1].time)) {
+                        chartData.push({
+                            time: currentRealtime.timestamp as any,
+                            open: currentRealtime.open,
+                            high: currentRealtime.high,
+                            low: currentRealtime.low,
+                            close: currentRealtime.close
                         });
                     }
-                    optionSeriesRefs.current.set(peKey, peSeries);
-                    optionSeriesTypes.current.set(peKey, desiredType);
-                } else if (desiredType === 'Line') {
-                     // Ensure Line style is correct if it was already a Line
-                    peSeries.applyOptions({
+
+                    (ceSeries as ISeriesApi<"Candlestick">).setData(chartData);
+                    if (chartData.length > 0) {
+                        const last = chartData[chartData.length - 1];
+                        lastUpdateTimeRef.current.set(ceKey, last.time as number);
+                        if (currentRealtime && last.time === currentRealtime.timestamp) {
+                        } else {
+                            const lastHistorical = ceData[ceData.length - 1];
+                            currentOHLCRef.current.set(ceKey, { ...lastHistorical });
+                        }
+                    }
+                } else {
+                    const chartData = ceData.map(d => ({
+                        time: d.timestamp as any,
+                        value: d.close
+                    }));
+                    (ceSeries as ISeriesApi<"Line">).setData(chartData);
+                    if (chartData.length > 0) {
+                        const lastPoint = chartData[chartData.length - 1];
+                        lastUpdateTimeRef.current.set(ceKey, lastPoint.time as number);
+                    }
+                }
+            }
+
+            // PE
+            const peKey = peSymbol;
+            let peSeries = optionSeriesRefs.current.get(peKey);
+            const currentPeType = optionSeriesTypes.current.get(peKey);
+
+            if (peSeries && currentPeType !== desiredType) {
+                chartRef.current!.removeSeries(peSeries);
+                optionSeriesRefs.current.delete(peKey);
+                optionSeriesTypes.current.delete(peKey);
+                peSeries = undefined;
+            }
+
+            if (!peSeries) {
+                if (desiredType === 'Candlestick') {
+                    peSeries = chartRef.current!.addSeries(CandlestickSeries, {
+                        upColor: '#3b82f6',
+                        downColor: '#f97316',
+                        borderVisible: false,
+                        wickUpColor: '#3b82f6',
+                        wickDownColor: '#f97316',
+                        priceScaleId: 'right',
+                        title: `${strike} PE`,
+                        lastValueVisible: true,
+                        priceLineVisible: true,
+                    });
+                } else {
+                    peSeries = chartRef.current!.addSeries(LineSeries, {
+                        color: '#ef4444',
                         lineWidth: 1,
                         lineStyle: LineStyle.Dotted,
+                        priceScaleId: 'right',
+                        title: `${strike} PE`,
+                        lastValueVisible: false,
+                        priceLineVisible: false,
                     });
                 }
+                optionSeriesRefs.current.set(peKey, peSeries);
+                optionSeriesTypes.current.set(peKey, desiredType);
+            } else if (desiredType === 'Line') {
+                peSeries.applyOptions({
+                    lineWidth: 1,
+                    lineStyle: LineStyle.Dotted,
+                });
+            }
 
-                // Set Data for PE
-                const peDataRaw = optionsData.get(peSymbol);
-                if (peDataRaw) {
-                    const peData = aggregateData(peDataRaw, timeframe);
-                    if (desiredType === 'Candlestick') {
-                         const chartData = peData.map(d => ({
-                            time: d.timestamp as any,
-                            open: d.open, 
-                            high: d.high, 
-                            low: d.low, 
-                            close: d.close
-                        }));
+            // Set Data for PE
+            const peDataRaw = optionsData.get(peSymbol);
+            if (peDataRaw) {
+                const peData = aggregateData(peDataRaw, timeframe);
+                if (desiredType === 'Candlestick') {
+                    const chartData = peData.map(d => ({
+                        time: d.timestamp as any,
+                        open: d.open,
+                        high: d.high,
+                        low: d.low,
+                        close: d.close
+                    }));
 
-                        // Keep real-time candle during refresh if it's newer than historical data
-                        const currentRealtime = currentOHLCRef.current.get(peKey);
-                        if (currentRealtime && (chartData.length === 0 || currentRealtime.timestamp > chartData[chartData.length - 1].time)) {
-                            chartData.push({
-                                time: currentRealtime.timestamp as any,
-                                open: currentRealtime.open,
-                                high: currentRealtime.high,
-                                low: currentRealtime.low,
-                                close: currentRealtime.close
-                            });
-                        }
+                    const currentRealtime = currentOHLCRef.current.get(peKey);
+                    if (currentRealtime && (chartData.length === 0 || currentRealtime.timestamp > chartData[chartData.length - 1].time)) {
+                        chartData.push({
+                            time: currentRealtime.timestamp as any,
+                            open: currentRealtime.open,
+                            high: currentRealtime.high,
+                            low: currentRealtime.low,
+                            close: currentRealtime.close
+                        });
+                    }
 
-                        (peSeries as ISeriesApi<"Candlestick">).setData(chartData);
-                        if (chartData.length > 0) {
-                            const last = chartData[chartData.length - 1];
-                            lastUpdateTimeRef.current.set(peKey, last.time as number);
-                            if (currentRealtime && last.time === currentRealtime.timestamp) {
-                                // Already in currentOHLCRef
-                            } else {
-                                // Seed from historical last
-                                const lastHistorical = peData[peData.length - 1];
-                                currentOHLCRef.current.set(peKey, { ...lastHistorical });
-                            }
-                        }
-                    } else {
-                         const chartData = peData.map(d => ({
-                            time: d.timestamp as any,
-                            value: d.close
-                        }));
-                        (peSeries as ISeriesApi<"Line">).setData(chartData);
-                        if (chartData.length > 0) {
-                            const lastPoint = chartData[chartData.length - 1];
-                            lastUpdateTimeRef.current.set(peKey, lastPoint.time as number);
+                    (peSeries as ISeriesApi<"Candlestick">).setData(chartData);
+                    if (chartData.length > 0) {
+                        const last = chartData[chartData.length - 1];
+                        lastUpdateTimeRef.current.set(peKey, last.time as number);
+                        if (currentRealtime && last.time === currentRealtime.timestamp) {
+                        } else {
+                            const lastHistorical = peData[peData.length - 1];
+                            currentOHLCRef.current.set(peKey, { ...lastHistorical });
                         }
                     }
+                } else {
+                    const chartData = peData.map(d => ({
+                        time: d.timestamp as any,
+                        value: d.close
+                    }));
+                    (peSeries as ISeriesApi<"Line">).setData(chartData);
+                    if (chartData.length > 0) {
+                        const lastPoint = chartData[chartData.length - 1];
+                        lastUpdateTimeRef.current.set(peKey, lastPoint.time as number);
+                    }
                 }
-                
-                currentSeriesKeys.delete(ceKey);
-                currentSeriesKeys.delete(peKey);
-            });
-        }
+            }
+
+            currentSeriesKeys.delete(ceKey);
+            currentSeriesKeys.delete(peKey);
+        });
+
+        // Remove series not in the current strikes list or if options hidden
 
         // Remove series not in the current strikes list or if options hidden
         currentSeriesKeys.forEach(key => {
@@ -675,11 +799,22 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
                     const symbol = getSymbol(strike, type);
                     if (!symbol) return;
                     const key = symbol;
+                    const shouldShow = (type === 'CE' ? showHighCrossCE : showHighCrossPE);
+                    const existing = highCrossSeriesRefs.current.get(key);
+
+                    if (!shouldShow) {
+                        // Remove line if it exists and toggle is off
+                        if (existing) {
+                            chartRef.current!.removeSeries(existing);
+                            highCrossSeriesRefs.current.delete(key);
+                        }
+                        return;
+                    }
+
                     const rawData = optionsData.get(symbol);
                     if (!rawData || !rawData.length) return;
 
-                    // Remove existing series for this symbol
-                    const existing = highCrossSeriesRefs.current.get(key);
+                    // Remove existing series for this symbol (will recreate)
                     if (existing) {
                         chartRef.current!.removeSeries(existing);
                         highCrossSeriesRefs.current.delete(key);
@@ -689,7 +824,7 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
                     const series = chartRef.current!.addSeries(LineSeries, {
                         color: type === 'CE' ? '#ef4444' : '#3b82f6',
                         lineWidth: 1,
-                        lineStyle: type === 'CE' ? LineStyle.Dashed : LineStyle.Dotted,
+                        lineStyle: LineStyle.Solid,
                         priceScaleId: 'right',
                         priceLineVisible: false,
                         lastValueVisible: false,
@@ -707,6 +842,100 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
                 try { chartRef.current!.removeSeries(s); } catch {}
             });
             highCrossSeriesRefs.current.clear();
+        }
+
+        // LowCross lines - rolling lowest low per strike/CE/PE
+        if (showLowCross && chartRef.current) {
+            strikes.forEach(strike => {
+                (['CE', 'PE'] as const).forEach(type => {
+                    const symbol = getSymbol(strike, type);
+                    if (!symbol) return;
+                    const key = symbol;
+                    const shouldShow = (type === 'CE' ? showLowCrossCE : showLowCrossPE);
+                    const existing = lowCrossSeriesRefs.current.get(key);
+
+                    if (!shouldShow) {
+                        if (existing) {
+                            chartRef.current!.removeSeries(existing);
+                            lowCrossSeriesRefs.current.delete(key);
+                        }
+                        return;
+                    }
+
+                    const rawData = optionsData.get(symbol);
+                    if (!rawData || !rawData.length) return;
+
+                    if (existing) {
+                        chartRef.current!.removeSeries(existing);
+                        lowCrossSeriesRefs.current.delete(key);
+                    }
+
+                    const series = chartRef.current!.addSeries(LineSeries, {
+                        color: type === 'CE' ? '#f59e0b' : '#8b5cf6',
+                        lineWidth: 1,
+                        lineStyle: LineStyle.Solid,
+                        priceScaleId: 'right',
+                        priceLineVisible: false,
+                        lastValueVisible: false,
+                        title: `${strike} ${type} LowCross`,
+                    });
+
+                    const stepData = computeRunningMinLow(rawData, timeframe);
+                    series.setData(stepData);
+                    lowCrossSeriesRefs.current.set(key, series);
+                });
+            });
+        } else {
+            // Cleanup all LowCross lines
+            lowCrossSeriesRefs.current.forEach((s) => {
+                try { chartRef.current!.removeSeries(s); } catch {}
+            });
+            lowCrossSeriesRefs.current.clear();
+        }
+
+        // Update Histogram for cross-change counts
+        if (histogramSeriesRef.current) {
+            if (showHighCross || showLowCross) {
+                const stats = computeCrossChangeStats(
+                    strikes, optionsData, getSymbol, timeframe,
+                    showHighCross, showLowCross,
+                    showHighCrossCE, showHighCrossPE,
+                    showLowCrossCE, showLowCrossPE,
+                );
+                
+                // Combine counts from all visible rows
+                const combinedCounts = new Map<number, number>();
+                const visibleColors: { color: string; counts: Map<number, number> }[] = [];
+                if (showHighCross) {
+                    if (showHighCrossCE) visibleColors.push({ color: '#ef4444', counts: stats.ceHxCounts });
+                    if (showHighCrossPE) visibleColors.push({ color: '#3b82f6', counts: stats.peHxCounts });
+                }
+                if (showLowCross) {
+                    if (showLowCrossCE) visibleColors.push({ color: '#f59e0b', counts: stats.ceLxCounts });
+                    if (showLowCrossPE) visibleColors.push({ color: '#8b5cf6', counts: stats.peLxCounts });
+                }
+
+                stats.timestamps.forEach(ts => {
+                    let total = 0;
+                    visibleColors.forEach(r => {
+                        total += r.counts.get(ts) || 0;
+                    });
+                    if (total > 0) combinedCounts.set(ts, total);
+                });
+
+                const histogramData = stats.timestamps.map(ts => ({
+                    time: ts,
+                    value: combinedCounts.get(ts) || 0,
+                    color: combinedCounts.get(ts) > 0 ? '#eab33a' : 'rgba(100, 116, 126, 0.1)',
+                }));
+
+                histogramSeriesRef.current.setData(histogramData);
+                histogramSeriesRef.current.applyOptions({ visible: true });
+                chartRef.current!.priceScale('histogram').applyOptions({ visible: true });
+            } else {
+                histogramSeriesRef.current.applyOptions({ visible: false });
+                chartRef.current!.priceScale('histogram').applyOptions({ visible: false });
+            }
         }
 
         // Calculate Signals if enabled
@@ -730,7 +959,7 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
             markersPluginRef.current.setMarkers([]);
         }
 
-    }, [spotData, optionsData, selectedStrikes, strikes, madhanMode, showSpot, showOptions, timeframe, showSignals, backendSignals, showHighCross]);  
+    }, [spotData, optionsData, selectedStrikes, strikes, madhanMode, showSpot, showOptions, timeframe, showSignals, backendSignals, showHighCross, showHighCrossCE, showHighCrossPE, showLowCross, showLowCrossCE, showLowCrossPE]);
 
     // WebSocket Real-time Updates Effect
     useEffect(() => {
@@ -960,6 +1189,63 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
                                 className="scale-75"
                             />
                         </div>
+                        {showHighCross && (
+                            <>
+                                <div className="flex items-center space-x-1 ml-2">
+                                    <div className="w-2 h-2 rounded-sm bg-red-500" />
+                                    <Label htmlFor="show-highcross-ce" className="text-[10px]">CE</Label>
+                                    <Switch 
+                                        id="show-highcross-ce" 
+                                        checked={showHighCrossCE}
+                                        onCheckedChange={setShowHighCrossCE}
+                                        className="scale-75"
+                                    />
+                                </div>
+                                <div className="flex items-center space-x-1">
+                                    <div className="w-2 h-2 rounded-sm bg-blue-500" />
+                                    <Label htmlFor="show-highcross-pe" className="text-[10px]">PE</Label>
+                                    <Switch 
+                                        id="show-highcross-pe" 
+                                        checked={showHighCrossPE}
+                                        onCheckedChange={setShowHighCrossPE}
+                                        className="scale-75"
+                                    />
+                                </div>
+                            </>
+                        )}
+                        <div className="flex items-center space-x-2">
+                            <Label htmlFor="show-lowcross" className="text-[10px] font-semibold">LowCross</Label>
+                            <Switch 
+                                id="show-lowcross" 
+                                checked={showLowCross}
+                                onCheckedChange={setShowLowCross}
+                                className="scale-75"
+                            />
+                        </div>
+                        {showLowCross && (
+                            <>
+                                <div className="flex items-center space-x-1 ml-2">
+                                    <div className="w-2 h-2 rounded-sm bg-amber-500" />
+                                    <Label htmlFor="show-lowcross-ce" className="text-[10px]">CE</Label>
+                                    <Switch 
+                                        id="show-lowcross-ce" 
+                                        checked={showLowCrossCE}
+                                        onCheckedChange={setShowLowCrossCE}
+                                        className="scale-75"
+                                    />
+                                </div>
+                                <div className="flex items-center space-x-1">
+                                    <div className="w-2 h-2 rounded-sm bg-violet-500" />
+                                    <Label htmlFor="show-lowcross-pe" className="text-[10px]">PE</Label>
+                                    <Switch 
+                                        id="show-lowcross-pe" 
+                                        checked={showLowCrossPE}
+                                        onCheckedChange={setShowLowCrossPE}
+                                        className="scale-75"
+                                    />
+                                </div>
+                            </>
+                          )}
                     </div>
                 </CardHeader>
                 <CardContent className="p-0 flex-1 min-h-0">
