@@ -112,7 +112,8 @@ def _compute_spike_flags(combined_values, nifty_highs=None, nifty_lows=None):
             continue
         avg = sum(window) / len(window)
 
-        existing_spike = False  # Trigger 3 disabled temporarily
+        # existing_spike = avg > 0 and combined_values[i] > avg * THRESHOLD  # Trigger 3 disabled temporarily
+        existing_spike = False
 
         new_pattern = False
         if has_nifty_data and i >= LOOKBACK:
