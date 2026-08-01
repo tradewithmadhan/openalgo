@@ -114,6 +114,17 @@ const aggregateSpotData = (data: SpotData, period: number) => {
     return aggregated;
 }
 
+// Compute running maximum of high (step line that only goes up)
+const computeRunningMaxHigh = (data: OptionOHLC[], period: number): { time: number; value: number }[] => {
+    if (!data.length) return [];
+    const aggregated = aggregateData(data, period);
+    let runningMax = Number.NEGATIVE_INFINITY;
+    return aggregated.map(d => {
+        runningMax = Math.max(runningMax, d.high);
+        return { time: d.timestamp, value: runningMax };
+    });
+};
+
 export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: MultiOptionsChartProps) {
     const { mode: madhanMode } = useMadhanTheme();
     const chartContainerRef = useRef<HTMLDivElement>(null);
@@ -178,6 +189,8 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
     const [timeframe, setTimeframe] = useState<1 | 3 | 5 | 15>(1);
     const [isLive, setIsLive] = useState(true);
     const [showSignals, setShowSignals] = useState(true);
+    const [showHighCross, setShowHighCross] = useState(false);
+    const highCrossSeriesRefs = useRef<Map<string, ISeriesApi<"Line">>>(new Map());
 
     // Symbols for WebSocket subscription
     const wsSymbols = useMemo(() => {
@@ -411,6 +424,10 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
             markersPluginRef.current = null;
             optionSeriesRefs.current.clear();
             optionSeriesTypes.current.clear();
+            highCrossSeriesRefs.current.forEach((s) => {
+                try { chart.removeSeries(s); } catch {}
+            });
+            highCrossSeriesRefs.current.clear();
         };
     }, [madhanMode]); // Re-create on mode change
 
@@ -651,6 +668,47 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
             }
         });
 
+        // HighCross lines - rolling highest high per strike/CE/PE
+        if (showHighCross && chartRef.current) {
+            strikes.forEach(strike => {
+                (['CE', 'PE'] as const).forEach(type => {
+                    const symbol = getSymbol(strike, type);
+                    if (!symbol) return;
+                    const key = symbol;
+                    const rawData = optionsData.get(symbol);
+                    if (!rawData || !rawData.length) return;
+
+                    // Remove existing series for this symbol
+                    const existing = highCrossSeriesRefs.current.get(key);
+                    if (existing) {
+                        chartRef.current!.removeSeries(existing);
+                        highCrossSeriesRefs.current.delete(key);
+                    }
+
+                    // Create new line series for running max high
+                    const series = chartRef.current!.addSeries(LineSeries, {
+                        color: type === 'CE' ? '#ef4444' : '#3b82f6',
+                        lineWidth: 1,
+                        lineStyle: type === 'CE' ? LineStyle.Dashed : LineStyle.Dotted,
+                        priceScaleId: 'right',
+                        priceLineVisible: false,
+                        lastValueVisible: false,
+                        title: `${strike} ${type} HighCross`,
+                    });
+
+                    const stepData = computeRunningMaxHigh(rawData, timeframe);
+                    series.setData(stepData);
+                    highCrossSeriesRefs.current.set(key, series);
+                });
+            });
+        } else {
+            // Cleanup all HighCross lines
+            highCrossSeriesRefs.current.forEach((s) => {
+                try { chartRef.current!.removeSeries(s); } catch {}
+            });
+            highCrossSeriesRefs.current.clear();
+        }
+
         // Calculate Signals if enabled
         if (showSignals && spotSeriesRef.current && backendSignals.length > 0) {
             const markers = backendSignals.map(s => ({
@@ -672,7 +730,7 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
             markersPluginRef.current.setMarkers([]);
         }
 
-    }, [spotData, optionsData, selectedStrikes, strikes, madhanMode, showSpot, showOptions, timeframe, showSignals, backendSignals]);  
+    }, [spotData, optionsData, selectedStrikes, strikes, madhanMode, showSpot, showOptions, timeframe, showSignals, backendSignals, showHighCross]);  
 
     // WebSocket Real-time Updates Effect
     useEffect(() => {
@@ -884,12 +942,21 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
                                 className="scale-75"
                             />
                         </div>
-                        <div className="flex items-center space-x-2">
+                         <div className="flex items-center space-x-2">
                             <Label htmlFor="show-spot-multi" className="text-[10px] font-semibold">Spot</Label>
                             <Switch 
                                 id="show-spot-multi" 
                                 checked={showSpot}
                                 onCheckedChange={setShowSpot}
+                                className="scale-75"
+                            />
+                        </div>
+                        <div className="flex items-center space-x-2">
+                            <Label htmlFor="show-highcross" className="text-[10px] font-semibold">HighCross</Label>
+                            <Switch 
+                                id="show-highcross" 
+                                checked={showHighCross}
+                                onCheckedChange={setShowHighCross}
                                 className="scale-75"
                             />
                         </div>
