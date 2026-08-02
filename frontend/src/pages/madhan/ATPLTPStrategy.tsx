@@ -39,91 +39,7 @@ import { useAuthStore } from '@/stores/authStore'
 import { useThemeStore } from '@/stores/themeStore'
 import { useProfileMenuItems } from '@/hooks/useProfileMenuItems'
 import { useMadhanTheme } from './useMadhanTheme'
-import {
-  Chart as ChartJS,
-  CategoryScale,
-  LinearScale,
-  PointElement,
-  LineElement,
-  Title,
-  Tooltip,
-  Legend,
-  Filler,
-  TimeScale,
-} from 'chart.js'
-import { Line } from 'react-chartjs-2'
-import 'chartjs-adapter-date-fns'
-
-ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, Filler, TimeScale)
-
-type AnnotationPoint = {
-  index: number
-  label: string
-  yValue: number
-  color: string
-  direction: 'up' | 'down'
-}
-
-const signalArrowPlugin = {
-  id: 'signalArrow',
-  afterDraw(chart: any) {
-    const annotations: AnnotationPoint[] = chart.options?.plugins?.signalArrow?.annotations
-    if (!annotations || annotations.length === 0) return
-    const ctx = chart.ctx
-    const xScale = chart.scales.x
-    const yScale = chart.scales.y
-
-    for (const ann of annotations) {
-      const data = chart.data.datasets[0]?.data as Array<{ x: number; y: number | null }> | undefined
-      const xValue = data?.[ann.index]?.x ?? ann.index
-      const x = xScale.getPixelForValue(xValue)
-      const y = yScale.getPixelForValue(ann.yValue)
-      const arrowSize = 10
-
-      ctx.save()
-      ctx.fillStyle = ann.color
-      ctx.strokeStyle = ann.color
-      ctx.lineWidth = 2
-      ctx.font = 'bold 11px monospace'
-      ctx.textAlign = 'center'
-
-      const lines = ann.label.split('\n')
-      const lineGap = 13
-
-      if (ann.direction === 'up') {
-        // Arrow below the point pointing up
-        const tipY = y + 18
-        const baseY = tipY + arrowSize
-        ctx.beginPath()
-        ctx.moveTo(x, tipY)
-        ctx.lineTo(x - arrowSize / 2, baseY)
-        ctx.lineTo(x + arrowSize / 2, baseY)
-        ctx.closePath()
-        ctx.fill()
-        lines.forEach((line, li) => {
-          ctx.fillText(line, x, baseY + 14 + li * lineGap)
-        })
-      } else {
-        // Arrow above the point pointing down
-        const tipY = y - 18
-        const baseY = tipY - arrowSize
-        ctx.beginPath()
-        ctx.moveTo(x, tipY)
-        ctx.lineTo(x - arrowSize / 2, baseY)
-        ctx.lineTo(x + arrowSize / 2, baseY)
-        ctx.closePath()
-        ctx.fill()
-        lines.forEach((line, li) => {
-          ctx.fillText(line, x, baseY - 6 - (lines.length - 1 - li) * lineGap)
-        })
-      }
-
-      ctx.restore()
-    }
-  },
-}
-
-ChartJS.register(signalArrowPlugin)
+import Plot from '@/lib/Plot2D'
 
 interface ATPLTPData {
   time: string
@@ -345,110 +261,155 @@ export default function ATPLTPStrategy() {
     return bTime - aTime
   })
 
-  const chartData = (() => {
+  const { plotData, plotLayout } = useMemo(() => {
     const asc = [...atpLtpData].sort((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime())
-    const dataPoints = asc.map((r) => ({ x: new Date(r.time).getTime(), y: r.spot_ltp ?? null }))
-    const pointColors: string[] = asc.map((r) => {
-      switch (r.final_signal) {
+    const dark = madhanMode === 'dark'
+
+    // Build segments by grouping consecutive same-signal points
+    const segments: { x: number[]; y: (number|null)[]; color: string }[] = []
+    let currentSegment: { x: number[]; y: (number|null)[]; color: string } | null = null
+
+    const getLineColor = (signal?: string) => {
+      switch (signal) {
         case 'Bullish': return '#22c55e'
         case 'Bearish': return '#ef4444'
         case 'Sideways': return '#eab308'
         default: return '#6b7280'
       }
-    })
-
-    if (liveSpot > 0) {
-      const now = new Date(Date.now() + timeOffsetRef.current)
-      dataPoints.push({ x: now.getTime(), y: liveSpot })
-      pointColors.push('#3b82f6')
     }
 
-    // Trade signals come from backend (trade_signal: true/false per row)
-    const annotations: AnnotationPoint[] = []
-    const dotIndices = new Set<number>()
+    for (let i = 0; i < asc.length; i++) {
+      const ts = new Date(asc[i].time).getTime()
+      const val = asc[i].spot_ltp ?? null
+      const color = getLineColor(asc[i].final_signal)
+
+      if (!currentSegment || currentSegment.color !== color) {
+        if (currentSegment && currentSegment.x.length > 0) segments.push(currentSegment)
+        currentSegment = { x: [], y: [], color }
+      }
+      // Overlap last point of previous segment for continuity
+      if (currentSegment.x.length === 0 && segments.length > 0) {
+        const prev = segments[segments.length - 1]
+        currentSegment.x.push(prev.x[prev.x.length - 1])
+        currentSegment.y.push(prev.y[prev.y.length - 1])
+      }
+      currentSegment.x.push(ts)
+      currentSegment.y.push(val)
+    }
+    if (currentSegment && currentSegment.x.length > 0) segments.push(currentSegment)
+
+    // Build traces from segments
+    const traces: any[] = segments.map((seg, i) => ({
+      x: seg.x.map(t => new Date(t).toISOString()),
+      y: seg.y,
+      type: 'scatter',
+      mode: 'lines',
+      line: { color: seg.color, width: 2 },
+      showlegend: i === 0,
+      legendgroup: 'spot',
+      name: 'Spot LTP',
+      hoverinfo: 'x+y',
+    }))
+
+    // Signal dot markers (separate trace for all points with trade_signal)
+    const dotX: string[] = []
+    const dotY: (number|null)[] = []
+    const dotColors: string[] = []
+    const dotText: string[] = []
+
+    const annotations: any[] = []
 
     for (let i = 0; i < asc.length; i++) {
       if (!(asc[i] as any).trade_signal) continue
+      const ts = new Date(asc[i].time).toISOString()
       const sig = asc[i].final_signal
       const isBullish = sig === 'Bullish'
-      dotIndices.add(i)
+      dotX.push(ts)
+      dotY.push(asc[i].spot_ltp ?? 0)
+      dotColors.push(isBullish ? '#22c55e' : '#ef4444')
+
+      const label = `${asc[i].atm_strike} ${isBullish ? 'Call' : 'Put'}<br>${formatNumber(isBullish ? asc[i].atm_call_ltp : asc[i].atm_put_ltp)}<br>${(() => {
+        try { return new Date(asc[i].time).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) }
+        catch { return '' }
+      })()}`
+      const yVal = asc[i].spot_ltp ?? 0
+      const isUp = isBullish
+
       annotations.push({
-        index: i,
-        label: `${asc[i].atm_strike} ${isBullish ? 'Call' : 'Put'}\n${formatNumber(isBullish ? asc[i].atm_call_ltp : asc[i].atm_put_ltp)}\n${(() => {
-          try { return new Date(asc[i].time).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) }
-          catch { return '' }
-        })()}`,
-        yValue: asc[i].spot_ltp ?? 0,
-        color: isBullish ? '#22c55e' : '#ef4444',
-        direction: isBullish ? 'up' : 'down',
+        x: ts,
+        y: yVal,
+        xref: 'x',
+        yref: 'y',
+        text: label,
+        showarrow: true,
+        arrowhead: 2,
+        arrowsize: 1,
+        arrowwidth: 2,
+        arrowcolor: isBullish ? '#22c55e' : '#ef4444',
+        ax: 0,
+        ay: isUp ? 50 : -50,
+        font: { size: 10, color: isBullish ? '#22c55e' : '#ef4444', family: 'monospace' },
+        bgcolor: dark ? '#1e2128' : '#ffffff',
+        bordercolor: isBullish ? '#22c55e' : '#ef4444',
+        borderwidth: 1,
+        borderpad: 2,
       })
     }
 
-    return {
-      datasets: [
-        {
-          label: 'Spot LTP',
-          data: dataPoints,
-          borderColor: '#3b82f6',
-          backgroundColor: 'rgba(59,130,246,0.1)',
-          borderWidth: 2,
-          pointRadius: dataPoints.map((_, i) => dotIndices.has(i) ? 4 : 0),
-          pointBackgroundColor: pointColors,
-          pointBorderColor: pointColors,
-          pointHoverRadius: 5,
-          tension: 0.1,
-          fill: false,
-          segment: {
-            borderColor: (ctx: any) => {
-              const sig = asc[ctx.p0DataIndex]?.final_signal
-              switch (sig) {
-                case 'Bullish': return '#22c55e'
-                case 'Bearish': return '#ef4444'
-                case 'Sideways': return '#eab308'
-                default: return '#6b7280'
-              }
-            },
-          },
-        },
-      ],
-      _annotations: annotations,
+    if (dotX.length > 0) {
+      traces.push({
+        x: dotX,
+        y: dotY,
+        type: 'scatter',
+        mode: 'markers',
+        marker: { color: dotColors, size: 8, symbol: 'triangle-up' },
+        showlegend: false,
+        hoverinfo: 'text',
+        text: dotText.length > 0 ? dotText : undefined,
+      })
     }
-  })()
 
-  const chartOptions = {
-    responsive: true,
-    maintainAspectRatio: false,
-    plugins: {
-      legend: { display: true, position: 'top' as const },
-      signalArrow: { annotations: (chartData as any)._annotations || [] },
-      tooltip: {
-        callbacks: {
-          afterLabel: (ctx: any) => {
-            const idx = ctx.dataIndex
-            const asc = [...atpLtpData].sort((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime())
-            const row = asc[idx]
-            if (!row) return ''
-            return `Signal: ${row.final_signal || '-'}`
-          },
-        },
+    // Live spot point
+    if (liveSpot > 0) {
+      const now = new Date(Date.now() + timeOffsetRef.current).toISOString()
+      traces.push({
+        x: [now],
+        y: [liveSpot],
+        type: 'scatter',
+        mode: 'markers',
+        marker: { color: '#3b82f6', size: 6, symbol: 'circle' },
+        showlegend: false,
+        name: 'Live',
+        hoverinfo: 'x+y',
+      })
+    }
+
+    const layout: any = {
+      autosize: true,
+      margin: { l: 60, r: 20, t: 30, b: 50 },
+      paper_bgcolor: 'transparent',
+      plot_bgcolor: 'transparent',
+      font: { color: dark ? '#d1d4dc' : '#131722' },
+      xaxis: {
+        type: 'date',
+        tickformat: '%H:%M',
+        tickangle: -45,
+        title: { text: 'Time' },
+        gridcolor: dark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)',
+        nticks: 30,
       },
-    },
-    scales: {
-      x: {
-        type: 'time' as const,
-        time: {
-          unit: 'minute' as const,
-          displayFormats: { minute: 'HH:mm' },
-          tooltipFormat: 'HH:mm',
-        },
-        title: { display: true, text: 'Time' },
-        ticks: { maxRotation: 45, autoSkip: true, maxTicksLimit: 30 },
+      yaxis: {
+        title: { text: 'Spot LTP' },
+        gridcolor: dark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)',
+        automargin: true,
       },
-      y: {
-        title: { display: true, text: 'Spot LTP' },
-      },
-    },
-  }
+      hovermode: 'x unified',
+      legend: { orientation: 'h', y: 1.02, x: 0.5, xanchor: 'center' },
+      annotations,
+    }
+
+    return { plotData: traces, plotLayout: layout }
+  }, [atpLtpData, liveSpot, madhanMode, timeOffsetRef.current])
 
   const getChangeStyle = (current: number | null | undefined, previous: number | null | undefined): React.CSSProperties => {
     if (previous === null || previous === undefined || current === null || current === undefined) return {}
@@ -665,7 +626,13 @@ export default function ATPLTPStrategy() {
             {atpLtpData.length === 0 ? (
               <div className="text-center py-8 text-muted-foreground">No data available</div>
             ) : (
-              <Line data={chartData} options={chartOptions as any} />
+              <Plot
+                data={plotData}
+                layout={plotLayout}
+                config={{ responsive: true, displayModeBar: false }}
+                style={{ width: '100%', height: '100%' }}
+                useResizeHandler
+              />
             )}
           </CardContent>
         </Card>
