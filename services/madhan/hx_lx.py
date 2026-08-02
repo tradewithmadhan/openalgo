@@ -6,7 +6,7 @@ running-high (HighCross) or running-low (LowCross) change at each
 timestamp.
 
 Used by:
-  - blueprints/madhan.py  -> /api/nifty/hx-lx  endpoint
+  - blueprints/madhan.py  -> /api/nifty/hx_lx_vol  endpoint
 """
 from collections import defaultdict
 from utils.logging import get_logger
@@ -14,39 +14,27 @@ from utils.logging import get_logger
 logger = get_logger(__name__)
 
 
-def _aggregate_high_low(all_historical_data):
+def _aggregate_high_low(all_historical_data, all_symbols):
     """
     Group raw rows from get_current_day_historical_data() by timestamp.
 
     Returns:
-        sorted_ts     : list[int]  – ascending timestamps
-        ce_data       : dict[int, dict[symbol, dict]] – {ts: {sym: {'high':, 'low':, 'close':, 'volume':}}}
-        pe_data       : dict[int, dict[symbol, dict]] – same structure for PE symbols
-        nifty_highs   : dict[int, float|None]   – NIFTY high per timestamp
-        nifty_lows    : dict[int, float|None]   – NIFTY low per timestamp
+        sorted_ts      : list[int]  – ascending timestamps
+        ts_symbol_data : dict[int, dict[symbol, dict]] – {ts: {sym: {'high':, 'low':, 'volume':}}}
     """
-    data_by_ts = defaultdict(lambda: defaultdict(dict))
-    nifty_highs = {}
-    nifty_lows = {}
-
+    ts_symbol_data = defaultdict(lambda: defaultdict(dict))
     for row in all_historical_data:
         symbol = row['symbol']
-        ts = row['timestamp']
-        if symbol == 'NIFTY':
-            nifty_highs[ts] = row.get('high')
-            nifty_lows[ts] = row.get('low')
-            continue
-        data_by_ts[ts][symbol] = {
-            'high': row.get('high'),
-            'low': row.get('low'),
-            'close': row.get('close'),
-            'volume': row.get('volume', 0),
-        }
-
-    return sorted(data_by_ts.keys()), nifty_highs, nifty_lows
+        if symbol in all_symbols:
+            ts_symbol_data[row['timestamp']][symbol] = {
+                'high': row.get('high'),
+                'low': row.get('low'),
+                'volume': row.get('volume', 0),
+            }
+    return sorted(ts_symbol_data.keys()), ts_symbol_data
 
 
-def compute_hx_lx_counts(all_historical_data, strikes, get_symbol, timeframe=1):
+def compute_hx_lx_counts(all_historical_data, strikes, get_symbol):
     """
     Compute HighCross and LowCross change-counts per timestamp.
 
@@ -62,29 +50,24 @@ def compute_hx_lx_counts(all_historical_data, strikes, get_symbol, timeframe=1):
     get_symbol : callable
         ``get_symbol(strike: int, type: 'CE'|'PE') -> str|None``
 
-    timeframe : int
-        Aggregation period in minutes (1, 3, 5, 15).
-
     Returns
     -------
     list[dict]  – one element per timestamp, sorted ascending:
         {
-            'timestamp_ms': int,
-            'ce_hx': int,   # how many CE strikes had running-max(high) change
+            'timestamp': int,    # unix ms timestamp (consistent with other endpoints)
+            'ce_hx': int,
             'pe_hx': int,
-            'ce_lx': int,   # how many CE strikes had running-min(low) change
+            'ce_lx': int,
             'pe_lx': int,
+            'ce_changes': int,   # total CE volume across all strikes at this timestamp
+            'pe_changes': int,   # total PE volume across all strikes at this timestamp
         }
     """
     if not all_historical_data or not strikes:
         return []
 
-    sorted_ts, nifty_highs, nifty_lows = _aggregate_high_low(all_historical_data)
-    if not sorted_ts:
-        return []
-
     # ------------------------------------------------------------------
-    # Build symbol → strike lists for CE and PE
+    # Build symbol → lists for CE and PE
     # ------------------------------------------------------------------
     ce_symbols = []
     pe_symbols = []
@@ -96,49 +79,24 @@ def compute_hx_lx_counts(all_historical_data, strikes, get_symbol, timeframe=1):
         if pe:
             pe_symbols.append(pe)
 
-    # ------------------------------------------------------------------
-    # Collect per-symbol candle lists (aligned to sorted timestamps)
-    # ------------------------------------------------------------------
-    # symbol -> list of {ts, high, low}
-    all_symbols = ce_symbols + pe_symbols
-    symbol_candles = {s: [] for s in all_symbols}
+    all_symbols = set(ce_symbols + pe_symbols)
 
-    for ts in sorted_ts:
-        bucket = {}
-        # We iterate the raw data once instead of re-reading
-        # Actually we need to iterate all_historical_data per ts — optimize:
-        pass
-
-    # Optimised: build ts → symbol → candle in one pass
-    ts_symbol_candle = defaultdict(dict)   # {ts: {sym: {'high':, 'low':}}}
-    for row in all_historical_data:
-        symbol = row['symbol']
-        if symbol not in symbol_candles:
-            continue
-        ts_symbol_candle[row['timestamp']][symbol] = {
-            'high': row.get('high'),
-            'low': row.get('low'),
-        }
-
-    # Sort timestamps
-    sorted_timestamps = sorted(ts_symbol_candle.keys())
-    if not sorted_timestamps:
+    sorted_ts, ts_symbol_data = _aggregate_high_low(all_historical_data, all_symbols)
+    if not sorted_ts:
         return []
 
     # ------------------------------------------------------------------
-    # For each symbol, build aligned high/low arrays
+    # For each symbol, build aligned high/low/volume arrays
     # ------------------------------------------------------------------
     symbol_highs = {s: [] for s in all_symbols}
     symbol_lows = {s: [] for s in all_symbols}
-    for ts in sorted_timestamps:
+    symbol_volumes = {s: [] for s in all_symbols}
+    for ts in sorted_ts:
         for s in all_symbols:
-            candle = ts_symbol_candle[ts].get(s)
-            if candle:
-                symbol_highs[s].append(candle['high'])
-                symbol_lows[s].append(candle['low'])
-            else:
-                symbol_highs[s].append(None)
-                symbol_lows[s].append(None)
+            candle = ts_symbol_data[ts].get(s, {})
+            symbol_highs[s].append(candle.get('high'))
+            symbol_lows[s].append(candle.get('low'))
+            symbol_volumes[s].append(candle.get('volume', 0))
 
     # ------------------------------------------------------------------
     # Compute running max(high) and running min(low) per symbol
@@ -168,7 +126,7 @@ def compute_hx_lx_counts(all_historical_data, strikes, get_symbol, timeframe=1):
     symbol_running_lows = {s: _running_min(symbol_lows[s]) for s in all_symbols}
 
     # ------------------------------------------------------------------
-    # For each timestamp, count how many symbols had a change
+    # For each timestamp, count CE/PE changes and sum volumes
     # ------------------------------------------------------------------
     results = []
     prev_ce_highs = {}
@@ -176,22 +134,27 @@ def compute_hx_lx_counts(all_historical_data, strikes, get_symbol, timeframe=1):
     prev_ce_lows = {}
     prev_pe_lows = {}
 
-    for idx, ts in enumerate(sorted_timestamps):
+    for idx, ts in enumerate(sorted_ts):
         ce_hx_count = 0
         pe_hx_count = 0
         ce_lx_count = 0
         pe_lx_count = 0
+        ce_total_volume = 0
+        pe_total_volume = 0
 
         for s in ce_symbols:
-            current_hx = symbol_running_highs[s][idx]
-            current_lx = symbol_running_lows[s][idx]
+            vol = symbol_volumes[s][idx]
+            if vol > 0:
+                ce_total_volume += vol
 
+            current_hx = symbol_running_highs[s][idx]
             if current_hx is not None:
                 prev_hx = prev_ce_highs.get(s)
                 if prev_hx is not None and current_hx != prev_hx:
                     ce_hx_count += 1
                 prev_ce_highs[s] = current_hx
 
+            current_lx = symbol_running_lows[s][idx]
             if current_lx is not None:
                 prev_lx = prev_ce_lows.get(s)
                 if prev_lx is not None and current_lx != prev_lx:
@@ -199,15 +162,18 @@ def compute_hx_lx_counts(all_historical_data, strikes, get_symbol, timeframe=1):
                 prev_ce_lows[s] = current_lx
 
         for s in pe_symbols:
-            current_hx = symbol_running_highs[s][idx]
-            current_lx = symbol_running_lows[s][idx]
+            vol = symbol_volumes[s][idx]
+            if vol > 0:
+                pe_total_volume += vol
 
+            current_hx = symbol_running_highs[s][idx]
             if current_hx is not None:
                 prev_hx = prev_pe_highs.get(s)
                 if prev_hx is not None and current_hx != prev_hx:
                     pe_hx_count += 1
                 prev_pe_highs[s] = current_hx
 
+            current_lx = symbol_running_lows[s][idx]
             if current_lx is not None:
                 prev_lx = prev_pe_lows.get(s)
                 if prev_lx is not None and current_lx != prev_lx:
@@ -215,11 +181,13 @@ def compute_hx_lx_counts(all_historical_data, strikes, get_symbol, timeframe=1):
                 prev_pe_lows[s] = current_lx
 
         results.append({
-            'timestamp_ms': ts * 1000,
+            'timestamp': ts * 1000,
             'ce_hx': ce_hx_count,
             'pe_hx': pe_hx_count,
             'ce_lx': ce_lx_count,
             'pe_lx': pe_lx_count,
+            'ce_changes': ce_total_volume,
+            'pe_changes': pe_total_volume,
         })
 
     return results

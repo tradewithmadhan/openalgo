@@ -2,7 +2,7 @@ import { useEffect, useState, useRef, useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { createChart, ColorType, type IChartApi, type ISeriesApi, LineSeries, CandlestickSeries, HistogramSeries, LineStyle, createSeriesMarkers } from 'lightweight-charts';
+import { createChart, ColorType, type IChartApi, type ISeriesApi, LineSeries, CandlestickSeries, HistogramSeries, LineStyle } from 'lightweight-charts';
 import { useMadhanTheme } from '@/pages/madhan/useMadhanTheme';
 import { useMarketData } from '@/hooks/useMarketData';
 import { Switch } from '@/components/ui/switch';
@@ -136,93 +136,6 @@ const computeRunningMinLow = (data: OptionOHLC[], period: number): { time: numbe
     });
 };
 
-// Count how many strikes had a cross-line change at each timestamp
-interface CrossChangeStats {
-    timestamps: number[];
-    ceHxCounts: Map<number, number>;
-    peHxCounts: Map<number, number>;
-    ceLxCounts: Map<number, number>;
-    peLxCounts: Map<number, number>;
-}
-
-const computeCrossChangeStats = (
-    strikes: number[],
-    optionsData: Map<string, OptionOHLC[]>,
-    getSymbol: (strike: number, type: 'CE' | 'PE') => string | null,
-    timeframe: number,
-    showHighCross: boolean,
-    showLowCross: boolean,
-    showHighCrossCE: boolean,
-    showHighCrossPE: boolean,
-    showLowCrossCE: boolean,
-    showLowCrossPE: boolean,
-): CrossChangeStats => {
-    const ceHxData: { time: number; value: number }[][] = [];
-    const peHxData: { time: number; value: number }[][] = [];
-    const ceLxData: { time: number; value: number }[][] = [];
-    const peLxData: { time: number; value: number }[][] = [];
-
-    strikes.forEach(strike => {
-        const ceSymbol = getSymbol(strike, 'CE');
-        const peSymbol = getSymbol(strike, 'PE');
-
-        if (ceSymbol) {
-            const rawData = optionsData.get(ceSymbol);
-            if (rawData && rawData.length) {
-                if (showHighCross && showHighCrossCE) {
-                    ceHxData.push(computeRunningMaxHigh(rawData, timeframe));
-                }
-                if (showLowCross && showLowCrossCE) {
-                    ceLxData.push(computeRunningMinLow(rawData, timeframe));
-                }
-            }
-        }
-
-        if (peSymbol) {
-            const rawData = optionsData.get(peSymbol);
-            if (rawData && rawData.length) {
-                if (showHighCross && showHighCrossPE) {
-                    peHxData.push(computeRunningMaxHigh(rawData, timeframe));
-                }
-                if (showLowCross && showLowCrossPE) {
-                    peLxData.push(computeRunningMinLow(rawData, timeframe));
-                }
-            }
-        }
-    });
-
-    // Collect all unique timestamps sorted ascending
-    const timestampSet = new Set<number>();
-    [...ceHxData, ...peHxData, ...ceLxData, ...peLxData].forEach(arr => {
-        arr.forEach(d => timestampSet.add(d.time));
-    });
-    const timestamps = Array.from(timestampSet).sort((a, b) => a - b);
-
-    // For each type, count how many series had a value change at each timestamp
-    const countChanges = (seriesList: { time: number; value: number }[][]) => {
-        const counts = new Map<number, number>();
-        seriesList.forEach(series => {
-            if (series.length === 0) return;
-            let prevValue: number | null = null;
-            series.forEach(d => {
-                if (prevValue !== null && d.value !== prevValue) {
-                    counts.set(d.time, (counts.get(d.time) || 0) + 1);
-                }
-                prevValue = d.value;
-            });
-        });
-        return counts;
-    };
-
-    return {
-        timestamps,
-        ceHxCounts: countChanges(ceHxData),
-        peHxCounts: countChanges(peHxData),
-        ceLxCounts: countChanges(ceLxData),
-        peLxCounts: countChanges(peLxData),
-    };
-};
-
 export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: MultiOptionsChartProps) {
     const { mode: madhanMode } = useMadhanTheme();
     const chartContainerRef = useRef<HTMLDivElement>(null);
@@ -273,7 +186,6 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
     
     // Series refs
     const spotSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
-    const markersPluginRef = useRef<any>(null);
     const optionSeriesRefs = useRef<Map<string, ISeriesApi<"Line" | "Candlestick">>>(new Map());
     const optionSeriesTypes = useRef<Map<string, "Line" | "Candlestick">>(new Map());
 
@@ -281,12 +193,11 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
     const [selectedStrikes, setSelectedStrikes] = useState<Set<number>>(new Set());
     const [spotData, setSpotData] = useState<SpotData | null>(null);
     const [optionsData, setOptionsData] = useState<Map<string, OptionOHLC[]>>(new Map());
-    const [backendSignals, setBackendSignals] = useState<any[]>([]);
+    const [crossStats, setCrossStats] = useState<any[]>([]);
     const [showSpot, setShowSpot] = useState(false);
     const [showOptions, setShowOptions] = useState(false);
     const [timeframe, setTimeframe] = useState<1 | 3 | 5 | 15>(1);
     const [isLive, setIsLive] = useState(true);
-    const [showSignals, setShowSignals] = useState(true);
     const [showHighCross, setShowHighCross] = useState(false);
     const [showHighCrossCE, setShowHighCrossCE] = useState(true);
     const [showHighCrossPE, setShowHighCrossPE] = useState(true);
@@ -296,6 +207,8 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
     const [showLowCrossPE, setShowLowCrossPE] = useState(true);
     const lowCrossSeriesRefs = useRef<Map<string, ISeriesApi<"Line">>>(new Map());
     const histogramSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
+    const [histogramMode, setHistogramMode] = useState<'strike_vol' | 'total_vol' | 'hlx_count'>('hlx_count');
+    const [showHistogram, setShowHistogram] = useState(true);
 
     // Symbols for WebSocket subscription
     const wsSymbols = useMemo(() => {
@@ -340,21 +253,25 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
         }
     }, [atmStrike]);
 
-    // Fetch signals from backend
+    // Fetch cross-change stats from backend
     useEffect(() => {
-        const fetchSignals = async () => {
+        const fetchCrossStats = async () => {
             try {
-                const response = await fetch(`/madhan/api/nifty/signals-cross?timeframe=${timeframe}&_=${Date.now()}`);
+                const response = await fetch(`/madhan/api/nifty/hx_lx_vol?_=${Date.now()}`);
                 const json = await response.json();
                 if (json.status === 'success') {
-                    setBackendSignals(json.data);
+                    setCrossStats(json.data);
                 }
             } catch (error) {
-                console.error("Failed to fetch signals", error);
+                console.error("Failed to fetch cross stats", error);
             }
         };
-        if (showSignals) fetchSignals();
-    }, [refreshTrigger, timeframe, showSignals]);
+        if (showHighCross || showLowCross || histogramMode === 'hlx_count') {
+            fetchCrossStats();
+            const interval = setInterval(fetchCrossStats, 60000);
+            return () => clearInterval(interval);
+        }
+    }, [refreshTrigger, showHighCross, showLowCross, atmStrike, expiryDate, histogramMode]);
 
     // Fetch Spot Data
     useEffect(() => {
@@ -540,7 +457,6 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
             chart.remove();
             chartRef.current = null;
             spotSeriesRef.current = null;
-            markersPluginRef.current = null;
             optionSeriesRefs.current.clear();
             optionSeriesTypes.current.clear();
             highCrossSeriesRefs.current.forEach((s) => {
@@ -893,42 +809,96 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
             lowCrossSeriesRefs.current.clear();
         }
 
-        // Update Histogram for cross-change counts
+        // Update Histogram
         if (histogramSeriesRef.current) {
-            if (showHighCross || showLowCross) {
-                const stats = computeCrossChangeStats(
-                    strikes, optionsData, getSymbol, timeframe,
-                    showHighCross, showLowCross,
-                    showHighCrossCE, showHighCrossPE,
-                    showLowCrossCE, showLowCrossPE,
-                );
-                
-                // Combine counts from all visible rows
-                const combinedCounts = new Map<number, number>();
-                const visibleColors: { color: string; counts: Map<number, number> }[] = [];
-                if (showHighCross) {
-                    if (showHighCrossCE) visibleColors.push({ color: '#ef4444', counts: stats.ceHxCounts });
-                    if (showHighCrossPE) visibleColors.push({ color: '#3b82f6', counts: stats.peHxCounts });
-                }
-                if (showLowCross) {
-                    if (showLowCrossCE) visibleColors.push({ color: '#f59e0b', counts: stats.ceLxCounts });
-                    if (showLowCrossPE) visibleColors.push({ color: '#8b5cf6', counts: stats.peLxCounts });
-                }
+            if (!showHistogram) {
+                histogramSeriesRef.current.applyOptions({ visible: false });
+                chartRef.current!.priceScale('histogram').applyOptions({ visible: false });
+                return;
+            }
 
-                stats.timestamps.forEach(ts => {
+            let histogramData: { time: number; value: number; color: string }[] = [];
+
+            if (histogramMode === 'hlx_count') {
+                // Use backend cross-change counts (always available)
+                const backendData = crossStats.length > 0 ? crossStats : [];
+                // Aggregate counts by timeframe bucket (backend returns 1-min data)
+                const periodSeconds = timeframe * 60;
+                const volMap = new Map<number, number>();
+
+                backendData.forEach(item => {
+                    const tsSec = item.timestamp / 1000;
+                    const bucketStart = Math.floor(tsSec / periodSeconds) * periodSeconds;
                     let total = 0;
-                    visibleColors.forEach(r => {
-                        total += r.counts.get(ts) || 0;
-                    });
-                    if (total > 0) combinedCounts.set(ts, total);
+                    total += item.ce_hx || 0;
+                    total += item.pe_hx || 0;
+                    total += item.ce_lx || 0;
+                    total += item.pe_lx || 0;
+                    if (total > 0) {
+                        volMap.set(bucketStart, (volMap.get(bucketStart) || 0) + total);
+                    }
                 });
 
-                const histogramData = stats.timestamps.map(ts => ({
-                    time: ts,
-                    value: combinedCounts.get(ts) || 0,
-                    color: combinedCounts.get(ts) > 0 ? '#eab33a' : 'rgba(100, 116, 126, 0.1)',
-                }));
+                histogramData = Array.from(volMap.entries())
+                    .sort((a, b) => a[0] - b[0])
+                    .map(([ts, count]) => ({
+                        time: ts,
+                        value: count,
+                        color: count > 0 ? '#eab33a' : 'rgba(100, 116, 126, 0.1)',
+                    }));
+            } else if (histogramMode === 'total_vol') {
+                // Total volume across all strikes (CE + PE)
+                const volMap = new Map<number, number>();
+                strikes.forEach(strike => {
+                    (['CE', 'PE'] as const).forEach(type => {
+                        const symbol = getSymbol(strike, type);
+                        if (!symbol) return;
+                        const rawData = optionsData.get(symbol);
+                        if (!rawData) return;
+                        const aggregated = aggregateData(rawData, timeframe);
+                        aggregated.forEach(candle => {
+                            const ts = candle.timestamp;
+                            const prev = volMap.get(ts) || 0;
+                            volMap.set(ts, prev + candle.volume);
+                        });
+                    });
+                });
 
+                histogramData = Array.from(volMap.entries())
+                    .sort((a, b) => a[0] - b[0])
+                    .map(([ts, vol]) => ({
+                             time: ts,
+                        value: vol,
+                        color: '#3b82f6',
+                    }));
+            } else if (histogramMode === 'strike_vol') {
+                // Selected strike volume (CE + PE combined)
+                const volMap = new Map<number, number>();
+                selectedStrikes.forEach(strike => {
+                    (['CE', 'PE'] as const).forEach(type => {
+                        const symbol = getSymbol(strike, type);
+                        if (!symbol) return;
+                        const rawData = optionsData.get(symbol);
+                        if (!rawData) return;
+                        const aggregated = aggregateData(rawData, timeframe);
+                        aggregated.forEach(candle => {
+                            const ts = candle.timestamp;
+                            const prev = volMap.get(ts) || 0;
+                            volMap.set(ts, prev + candle.volume);
+                        });
+                    });
+                });
+
+                histogramData = Array.from(volMap.entries())
+                    .sort((a, b) => a[0] - b[0])
+                    .map(([ts, vol]) => ({
+                             time: ts,
+                        value: vol,
+                        color: '#22c55e',
+                    }));
+            }
+
+            if (histogramData.length > 0) {
                 histogramSeriesRef.current.setData(histogramData);
                 histogramSeriesRef.current.applyOptions({ visible: true });
                 chartRef.current!.priceScale('histogram').applyOptions({ visible: true });
@@ -937,29 +907,7 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
                 chartRef.current!.priceScale('histogram').applyOptions({ visible: false });
             }
         }
-
-        // Calculate Signals if enabled
-        if (showSignals && spotSeriesRef.current && backendSignals.length > 0) {
-            const markers = backendSignals.map(s => ({
-                time: (s.time / 1000) as any,
-                position: (s.type.includes('CALL') ? 'belowBar' : 'aboveBar') as any,
-                color: s.type.includes('CALL') ? '#22c55e' : '#ef4444',
-                shape: (s.type.includes('CALL') ? 'arrowUp' : 'arrowDown') as any,
-                text: `${s.type} (${s.count})`,
-                size: 1
-            }));
-
-            if (markersPluginRef.current) {
-                markersPluginRef.current.setMarkers(markers);
-            } else if (spotSeriesRef.current) {
-                // Type casting to avoid build error with lightweight-charts v5 markers
-                markersPluginRef.current = (createSeriesMarkers as any)(spotSeriesRef.current, markers);
-            }
-        } else if (markersPluginRef.current) {
-            markersPluginRef.current.setMarkers([]);
-        }
-
-    }, [spotData, optionsData, selectedStrikes, strikes, madhanMode, showSpot, showOptions, timeframe, showSignals, backendSignals, showHighCross, showHighCrossCE, showHighCrossPE, showLowCross, showLowCrossCE, showLowCrossPE]);
+    }, [crossStats, selectedStrikes, showOptions, optionsData, timeframe, showHighCross, showHighCrossCE, showHighCrossPE, showLowCross, showLowCrossCE, showLowCrossPE, spotData, showSpot, histogramMode, showHistogram]);
 
     // WebSocket Real-time Updates Effect
     useEffect(() => {
@@ -1129,17 +1077,6 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
                     <CardTitle className="text-xs">Multi-Option Analysis</CardTitle>
                     <div className="flex items-center space-x-4">
                         <div className="flex items-center space-x-2 mr-2">
-                            <Label htmlFor="show-signals-multi" className="text-[10px] font-semibold flex items-center gap-1 cursor-pointer">
-                                Signals
-                            </Label>
-                            <Switch 
-                                id="show-signals-multi" 
-                                checked={showSignals}
-                                onCheckedChange={setShowSignals}
-                                className="scale-75"
-                            />
-                        </div>
-                        <div className="flex items-center space-x-2 mr-2">
                             <Label htmlFor="live-mode-multi" className="text-[10px] font-semibold flex items-center gap-1 cursor-pointer">
                                 {isLive ? <Zap className="h-3 w-3 text-yellow-500 fill-yellow-500" /> : <ZapOff className="h-3 w-3" />}
                                 Live
@@ -1245,7 +1182,39 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
                                     />
                                 </div>
                             </>
-                          )}
+                        )}
+                        <div className="flex items-center space-x-1 border rounded p-0.5">
+                            <button
+                                onClick={() => setHistogramMode('strike_vol')}
+                                className={`px-2 py-0.5 text-[10px] rounded transition-colors ${histogramMode === 'strike_vol' ? 'bg-primary text-primary-foreground' : 'hover:bg-accent text-muted-foreground'}`}
+                                title="Selected strike volume"
+                            >
+                                Strike Vol
+                            </button>
+                            <button
+                                onClick={() => setHistogramMode('total_vol')}
+                                className={`px-2 py-0.5 text-[10px] rounded transition-colors ${histogramMode === 'total_vol' ? 'bg-primary text-primary-foreground' : 'hover:bg-accent text-muted-foreground'}`}
+                                title="Total volume all strikes"
+                            >
+                                Total Vol
+                            </button>
+                            <button
+                                onClick={() => setHistogramMode('hlx_count')}
+                                className={`px-2 py-0.5 text-[10px] rounded transition-colors ${histogramMode === 'hlx_count' ? 'bg-primary text-primary-foreground' : 'hover:bg-accent text-muted-foreground'}`}
+                                title="HighCross/LowCross counts"
+                            >
+                                HLx Count
+                            </button>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                            <Label htmlFor="show-histogram" className="text-[10px] font-semibold">Histogram</Label>
+                            <Switch
+                                id="show-histogram"
+                                checked={showHistogram}
+                                onCheckedChange={setShowHistogram}
+                                className="scale-75"
+                            />
+                        </div>
                     </div>
                 </CardHeader>
                 <CardContent className="p-0 flex-1 min-h-0">

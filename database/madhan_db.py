@@ -722,6 +722,8 @@ def get_current_day_historical_data(end_ts: int = None):
             OptionData.symbol,
             OptionData.timestamp,
             func.coalesce(OptionData.oi, 0).label("oi"),
+            OptionData.high,
+            OptionData.low,
             OptionData.close,
             func.coalesce(OptionData.volume, 0).label("volume"),
         ).filter(*option_filter).all()
