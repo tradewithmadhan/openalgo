@@ -115,7 +115,7 @@ const aggregateSpotData = (data: SpotData, period: number) => {
 }
 
 // Compute running maximum of high (step line that only goes up)
-const computeRunningMaxHigh = (data: OptionOHLC[], period: number): { time: number; value: number }[] => {
+const computeRunningMaxHigh = (data: OptionOHLC[], period: number): { time: any; value: number }[] => {
     if (!data.length) return [];
     const aggregated = aggregateData(data, period);
     let runningMax = Number.NEGATIVE_INFINITY;
@@ -126,7 +126,7 @@ const computeRunningMaxHigh = (data: OptionOHLC[], period: number): { time: numb
 };
 
 // Compute running minimum of low (step line that only goes down)
-const computeRunningMinLow = (data: OptionOHLC[], period: number): { time: number; value: number }[] => {
+const computeRunningMinLow = (data: OptionOHLC[], period: number): { time: any; value: number }[] => {
     if (!data.length) return [];
     const aggregated = aggregateData(data, period);
     let runningMin = Number.POSITIVE_INFINITY;
@@ -410,7 +410,6 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
         // Histogram series for cross-change counts (uses a dedicated price scale)
         const histogramSeries = chart.addSeries(HistogramSeries, {
             priceScaleId: 'histogram',
-            overlay: true,
             priceLineVisible: false,
             lastValueVisible: false,
             title: 'Cross Changes',
@@ -817,7 +816,7 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
                 return;
             }
 
-            let histogramData: { time: number; value: number; color: string }[] = [];
+            let histogramData: { time: any; value: number; color: string }[] = [];
 
             if (histogramMode === 'hlx_count') {
                 // Use backend cross-change counts (always available)

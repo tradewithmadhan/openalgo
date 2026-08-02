@@ -1317,7 +1317,7 @@ export default function EzayChart() {
         const data = intervalMin > 1 ? aggregateTotalVolume(raw, intervalMin) : raw
         totalVolumeDataRef.current = data
         if (totalVolumeRef.current) {
-          totalVolumeRef.current.setData(data.map((d) => ({
+          totalVolumeRef.current.setData(data.map((d: any) => ({
             time: Math.floor(d.time / 1000) as Time,
             value: d.combined,
             color: d.is_spike

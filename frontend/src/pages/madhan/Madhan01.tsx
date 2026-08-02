@@ -786,7 +786,7 @@ export default function Madhan01() {
                             ? { backgroundColor: madhanMode === 'dark' ? 'rgba(146,123,15,0.3)' : 'rgba(253,230,138,1)', color: madhanMode === 'dark' ? '#fbbf24' : '#a16207' }
                             : isCurrentAtm
                                 ? { color: madhanMode === 'dark' ? '#fbbf24' : '#d97706' }
-                                : undefined
+                                : {} as React.CSSProperties
                         return (
                             <div
                             key={row.strike}
