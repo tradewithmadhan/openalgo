@@ -1545,7 +1545,68 @@ def ezay_chart_signals():
             if signals['th']['time'] == 0 and row.get('th_signal') and row['th_signal'] != 'dot':
                 signals['th'] = {'time': row['time'], 'type': row.get('th_dir', ''), 'strike': row['strike']}
 
-        return jsonify({'status': 'success', 'last_time': last_data_time, 'data': all_signals, 'signals': signals})
+        # ── Compute hx_lx_vol for the response ──────────────────────────
+        hx_lx_vol_map = {}
+        try:
+            atm_strike = nifty_fetcher.open_atm_strike or nifty_fetcher.current_atm_strike
+            expiry_date = nifty_fetcher.expiry_date
+            if atm_strike and expiry_date:
+                hx_lx_strikes = [atm_strike + (i * 50) for i in range(-10, 11)]
+
+                def _get_symbol(strike, type_):
+                    try:
+                        date_obj = datetime.strptime(expiry_date, "%d-%b-%y")
+                        day = date_obj.strftime("%d")
+                        month = date_obj.strftime("%b").upper()
+                        year = date_obj.strftime("%y")
+                        return f"NIFTY{day}{month}{year}{strike}{type_}"
+                    except Exception:
+                        return None
+
+                historical_data = get_current_day_historical_data()
+                if historical_data:
+                    hx_results = compute_hx_lx_counts(
+                        all_historical_data=historical_data,
+                        strikes=hx_lx_strikes,
+                        get_symbol=_get_symbol,
+                    )
+                    for row in hx_results:
+                        ts = row['timestamp']
+                        hx_lx_vol_map[ts] = {
+                            'ce_vol': row.get('ce_changes', 0),
+                            'pe_vol': row.get('pe_changes', 0),
+                            'ce_hx': row.get('ce_hx', 0),
+                            'pe_hx': row.get('pe_hx', 0),
+                            'ce_lx': row.get('ce_lx', 0),
+                            'pe_lx': row.get('pe_lx', 0),
+                        }
+        except Exception as e:
+            logger.warning(f'Error computing hx_lx_vol for ezayChart: {e}')
+
+        # ── Merge signals + hx_lx_vol into time-keyed array ─────────────
+        signals_by_time = defaultdict(list)
+        for row in all_signals:
+            signals_by_time[row['time']].append({
+                'strike': row['strike'],
+                'ce_signal': row['ce_signal'],
+                'pe_signal': row['pe_signal'],
+                'cp_signal': row['cp_signal'],
+                'cp_ce_signal': row['cp_ce_signal'],
+                'th_signal': row['th_signal'],
+                'th_dir': row['th_dir'],
+                'ce_close': row['ce_close'],
+                'pe_close': row['pe_close'],
+            })
+
+        all_times = sorted(set(list(signals_by_time.keys()) + list(hx_lx_vol_map.keys())))
+        merged_data = []
+        for ts in all_times:
+            entry = {'time': ts, 'ezay_signals': signals_by_time.get(ts, [])}
+            if ts in hx_lx_vol_map:
+                entry['hx_lx_vol'] = hx_lx_vol_map[ts]
+            merged_data.append(entry)
+
+        return jsonify({'status': 'success', 'last_time': last_data_time, 'data': merged_data, 'signals': signals})
 
     except Exception as e:
         logger.error(f'Error fetching ezayChart signals: {str(e)}')

@@ -826,7 +826,7 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
                 const volMap = new Map<number, number>();
 
                 backendData.forEach(item => {
-                    const tsSec = item.timestamp / 1000;
+                    const tsSec = item.timestamp;
                     const bucketStart = Math.floor(tsSec / periodSeconds) * periodSeconds;
                     let total = 0;
                     total += item.ce_hx || 0;

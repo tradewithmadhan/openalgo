@@ -1506,6 +1506,7 @@ def get_backtest_signals(date_str: str) -> dict | None:
     open_atm = day['open_atm']
     options_df = day['options_df']
     spot_lookup = day['spot_lookup']
+    expiry_str = day['expiry_str']
     ist_tz = _pytz.timezone('Asia/Kolkata')
 
     strikes = [open_atm + (i * 50) for i in range(-10, 11)]
@@ -1714,7 +1715,77 @@ def get_backtest_signals(date_str: str) -> dict | None:
         if signals['th']['time'] == 0 and row.get('th_signal') and row['th_signal'] != 'dot':
             signals['th'] = {'time': row['time'], 'type': row.get('th_dir', ''), 'strike': row['strike']}
 
-    return {'status': 'success', 'last_time': last_data_time, 'data': all_signals, 'signals': signals}
+    # ── Compute hx_lx_vol from backtest options data ────────────────────
+    hx_lx_vol_map = {}
+    try:
+        from services.madhan.hx_lx import compute_hx_lx_counts
+
+        symbol_lookup = {}
+        for _, row in options_df.iterrows():
+            strike_key = int(row['strike'])
+            type_key = row['instrument_type']
+            if (strike_key, type_key) not in symbol_lookup:
+                symbol_lookup[(strike_key, type_key)] = row.get('symbol')
+
+        def _get_symbol(strike, type_):
+            return symbol_lookup.get((int(strike), type_))
+
+        hist_data = []
+        for _, row in options_df.iterrows():
+            symbol = row.get('symbol')
+            ts = int(row['date'].timestamp()) if hasattr(row['date'], 'timestamp') else None
+            if symbol and ts:
+                hist_data.append({
+                    'symbol': symbol,
+                    'timestamp': ts,
+                    'high': row.get('high'),
+                    'low': row.get('low'),
+                    'volume': row.get('volume', 0),
+                })
+
+        hx_results = compute_hx_lx_counts(
+            all_historical_data=hist_data,
+            strikes=strikes,
+            get_symbol=_get_symbol,
+        )
+        for row in hx_results:
+            ts = row['timestamp']
+            hx_lx_vol_map[ts] = {
+                'ce_vol': row.get('ce_changes', 0),
+                'pe_vol': row.get('pe_changes', 0),
+                'ce_hx': row.get('ce_hx', 0),
+                'pe_hx': row.get('pe_hx', 0),
+                'ce_lx': row.get('ce_lx', 0),
+                'pe_lx': row.get('pe_lx', 0),
+            }
+    except Exception as e:
+        pass
+
+    # ── Merge signals + hx_lx_vol into time-keyed array ────────────────
+    from collections import defaultdict
+    signals_by_time = defaultdict(list)
+    for row in all_signals:
+        signals_by_time[row['time']].append({
+            'strike': row['strike'],
+            'ce_signal': row['ce_signal'],
+            'pe_signal': row['pe_signal'],
+            'cp_signal': row['cp_signal'],
+            'cp_ce_signal': row['cp_ce_signal'],
+            'th_signal': row['th_signal'],
+            'th_dir': row['th_dir'],
+            'ce_close': row['ce_close'],
+            'pe_close': row['pe_close'],
+        })
+
+    all_times = sorted(set(list(signals_by_time.keys()) + list(hx_lx_vol_map.keys())))
+    merged_data = []
+    for ts in all_times:
+        entry = {'time': ts, 'ezay_signals': signals_by_time.get(ts, [])}
+        if ts in hx_lx_vol_map:
+            entry['hx_lx_vol'] = hx_lx_vol_map[ts]
+        merged_data.append(entry)
+
+    return {'status': 'success', 'last_time': last_data_time, 'data': merged_data, 'signals': signals}
 
 
 def get_backtest_range(from_date: str, to_date: str) -> dict | None:

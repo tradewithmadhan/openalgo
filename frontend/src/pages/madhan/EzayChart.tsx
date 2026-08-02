@@ -37,7 +37,7 @@ import { setTimeOffset, getTimeOffset } from '@/utils/timeSync'
 import { chartTheme } from './chartTheme'
 import { PositionLinePrimitive, type PositionDatum, OrderLinePrimitive, type OrderLineDatum } from './chartPrimitives'
 import RealtimeTable from './RealtimeTable'
-import EzaySignals, { type FirstSignalInfo, type BackendSignals } from './components/EzaySignals'
+import EzaySignals, { type SignalRow, type FirstSignalInfo, type BackendSignals } from './components/EzaySignals'
 import QuickTradePanel from './components/QuickTradePanel'
 
 type OptionDataResponse = {
@@ -159,20 +159,17 @@ function aggregateCombined(data: AggCombined[], intervalMin: number): AggCombine
   return Array.from(buckets.values()).sort((a, b) => a.time - b.time)
 }
 
-type TotalVolEntry = { time: number; ce: number; pe: number; combined: number; is_spike: boolean }
+type TotalVolEntry = { time: number; combined: number }
 
 function aggregateTotalVolume(data: TotalVolEntry[], intervalMin: number): TotalVolEntry[] {
   if (intervalMin <= 1 || !data.length) return data
   const bucketSec = intervalMin * 60
   const buckets = new Map<number, TotalVolEntry>()
   for (const d of data) {
-    const bucket = Math.floor(d.time / 1000 / bucketSec) * bucketSec * 1000
+    const bucket = Math.floor(d.time / bucketSec) * bucketSec
     const existing = buckets.get(bucket)
     if (existing) {
-      existing.ce += d.ce
-      existing.pe += d.pe
       existing.combined += d.combined
-      if (d.is_spike) existing.is_spike = true
     } else {
       buckets.set(bucket, { ...d, time: bucket })
     }
@@ -195,7 +192,13 @@ export default function EzayChart() {
   const combinedExtrinsicRef = useRef<ISeriesApi<any> | null>(null)
   const volumeRef = useRef<ISeriesApi<any> | null>(null)
   const totalVolumeRef = useRef<ISeriesApi<any> | null>(null)
-  const totalVolumeDataRef = useRef<Array<{ time: number; ce: number; pe: number; combined: number; is_spike: boolean }>>([])
+  const totalVolumeDataRef = useRef<Array<{ time: number; combined: number }>>([])
+  const trustMeUpRef = useRef<ISeriesApi<any> | null>(null)
+  const trustMeDownRef = useRef<ISeriesApi<any> | null>(null)
+  const trustMeDataRef = useRef<Array<{ time: number; upside: number; downside: number }>>([])
+  const signalsResponseRef = useRef<any>(null)
+  const signalsDataRef = useRef<SignalRow[]>([])
+  const signalsMetaRef = useRef<BackendSignals | null>(null)
   const ceMarkersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null)
   const peMarkersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null)
   const cpCeMarkersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null)
@@ -249,6 +252,11 @@ export default function EzayChart() {
   const [showRealtime, setShowRealtime] = useState(() => loadSetting('showRealtime', false))
   const [volumeMode, setVolumeMode] = useState<'strike' | 'total'>(() => loadSetting('volumeMode', 'strike'))
   const [showEzaySignals, setShowEzaySignals] = useState(() => loadSetting('showEzaySignals', false))
+  const [showTrustMe, setShowTrustMe] = useState(() => loadSetting('showTrustMe', false))
+  const showTrustMeRef = useRef(showTrustMe)
+  const [signalsForPanel, setSignalsForPanel] = useState<SignalRow[]>([])
+  const [signalsMetaForPanel, setSignalsMetaForPanel] = useState<BackendSignals | null>(null)
+  const [signalsLastTime, setSignalsLastTime] = useState<number>(0)
   const [irStrikes, setIrStrikes] = useState<number[]>([])
   const [semiTransparent, setSemiTransparent] = useState(() => loadSetting('semiTransparent', true))
   const semiTransparentRef = useRef(true)
@@ -316,6 +324,7 @@ export default function EzayChart() {
     firstSignalTypeRef.current = ''
     setIrStrikes([])
     pendingAutoSelectRef.current = true
+    clearAllChartData()
     loadStrikes()
   }
 
@@ -405,11 +414,11 @@ export default function EzayChart() {
       if (ct === 'candlestick') {
         return chart.addSeries(CandlestickSeries, {
           upColor: ceUp, downColor: ceDown, borderVisible: false,
-          wickUpColor: ceUp, wickDownColor: ceDown, ...opts,
+          wickUpColor: ceUp, wickDownColor: ceDown, crosshairMarkerVisible: false, ...opts,
         })
       }
       return chart.addSeries(LineSeries, {
-        lineWidth: 2, priceLineVisible: false, lastValueVisible: true, ...opts,
+        lineWidth: 2, priceLineVisible: false, lastValueVisible: true, crosshairMarkerVisible: false, ...opts,
       })
     }
 
@@ -417,11 +426,11 @@ export default function EzayChart() {
       if (ct === 'candlestick') {
         return chart.addSeries(CandlestickSeries, {
           upColor: peUp, downColor: peDown, borderVisible: false,
-          wickUpColor: peUp, wickDownColor: peDown, ...opts,
+          wickUpColor: peUp, wickDownColor: peDown, crosshairMarkerVisible: false, ...opts,
         })
       }
       return chart.addSeries(LineSeries, {
-        lineWidth: 2, priceLineVisible: false, lastValueVisible: true, ...opts,
+        lineWidth: 2, priceLineVisible: false, lastValueVisible: true, crosshairMarkerVisible: false, ...opts,
       })
     }
 
@@ -430,43 +439,44 @@ export default function EzayChart() {
 
     combinedSeriesRef.current = chart.addSeries(LineSeries, {
       color: '#2196f3', lineWidth: 3, title: 'Combined Premium',
-      priceLineVisible: false, lastValueVisible: false,
+      priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
     })
     llpSeriesRef.current = chart.addSeries(LineSeries, {
       color: '#1976d2', lineWidth: 2, title: 'LLP',
-      priceLineVisible: false, lastValueVisible: true,
+      priceLineVisible: false, lastValueVisible: true, crosshairMarkerVisible: false,
     })
     ceIntrinsicRef.current = chart.addSeries(LineSeries, {
       color: '#4caf50', lineWidth: 1, lineStyle: 1, title: 'CE Intrinsic',
-      priceLineVisible: false, lastValueVisible: false,
+      priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
     })
     peIntrinsicRef.current = chart.addSeries(LineSeries, {
       color: '#ef5350', lineWidth: 1, lineStyle: 1, title: 'PE Intrinsic',
-      priceLineVisible: false, lastValueVisible: false,
+      priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
     })
     ceExtrinsicRef.current = chart.addSeries(LineSeries, {
       color: '#4caf50', lineWidth: 1, title: 'CE Extrinsic',
-      priceLineVisible: false, lastValueVisible: false,
+      priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
     })
     peExtrinsicRef.current = chart.addSeries(LineSeries, {
       color: '#ef5350', lineWidth: 1, title: 'PE Extrinsic',
-      priceLineVisible: false, lastValueVisible: false,
+      priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
     })
     combinedExtrinsicRef.current = getIntervalMinutes(intervalRef.current) > 1
       ? chart.addSeries(CandlestickSeries, {
           upColor: '#ffeb3b', downColor: '#f57f17', borderVisible: false,
           wickUpColor: '#ffeb3b', wickDownColor: '#f57f17',
-          priceLineVisible: false, lastValueVisible: false, title: 'Combined Extrinsic',
+          priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false, title: 'Combined Extrinsic',
         })
       : chart.addSeries(LineSeries, {
           color: '#ffeb3b', lineWidth: 2, title: 'Combined Extrinsic',
-          priceLineVisible: false, lastValueVisible: false,
+          priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
         })
 
     volumeRef.current = chart.addSeries(HistogramSeries, {
       color: '#26a69a',
       priceLineVisible: false,
       lastValueVisible: false,
+      crosshairMarkerVisible: false,
       priceFormat: { type: 'volume' },
       priceScaleId: 'volume',
     })
@@ -475,6 +485,7 @@ export default function EzayChart() {
       color: '#26a69a',
       priceLineVisible: false,
       lastValueVisible: false,
+      crosshairMarkerVisible: false,
       priceFormat: { type: 'volume' },
       priceScaleId: 'volume',
       visible: false,
@@ -792,8 +803,34 @@ export default function EzayChart() {
     URL.revokeObjectURL(url)
   }, [rangeResults, rangeVisibleStrategies])
 
+  const clearAllChartData = useCallback(() => {
+    rawDataRef.current = null
+    currentOhlcRef.current.clear()
+    apiCandleVolRef.current.clear()
+    if (ceSeriesRef.current) ceSeriesRef.current.setData([])
+    if (peSeriesRef.current) peSeriesRef.current.setData([])
+    if (combinedSeriesRef.current) combinedSeriesRef.current.setData([])
+    if (llpSeriesRef.current) llpSeriesRef.current.setData([])
+    if (ceIntrinsicRef.current) ceIntrinsicRef.current.setData([])
+    if (peIntrinsicRef.current) peIntrinsicRef.current.setData([])
+    if (ceExtrinsicRef.current) ceExtrinsicRef.current.setData([])
+    if (peExtrinsicRef.current) peExtrinsicRef.current.setData([])
+    if (combinedExtrinsicRef.current) combinedExtrinsicRef.current.setData([])
+    if (volumeRef.current) volumeRef.current.setData([])
+    if (totalVolumeRef.current) totalVolumeRef.current.setData([])
+    if (trustMeUpRef.current) trustMeUpRef.current.setData([])
+    if (trustMeDownRef.current) trustMeDownRef.current.setData([])
+    if (ceMarkersRef.current) ceMarkersRef.current.setMarkers([])
+    if (peMarkersRef.current) peMarkersRef.current.setMarkers([])
+    if (cpCeMarkersRef.current) cpCeMarkersRef.current.setMarkers([])
+    if (combinedExtrinsicMarkersRef.current) combinedExtrinsicMarkersRef.current.setMarkers([])
+    if (ceTradeMarkersRef.current) ceTradeMarkersRef.current.setMarkers([])
+    if (peTradeMarkersRef.current) peTradeMarkersRef.current.setMarkers([])
+  }, [])
+
   const loadData = useCallback(async () => {
     if (!selectedStrike) return
+    clearAllChartData()
     try {
       // In backtest mode, load from parquet via backtest endpoint
       if (isBacktest && backtestDate) {
@@ -852,7 +889,7 @@ export default function EzayChart() {
     } catch (err) {
       console.error('Error loading EzayChart data:', err)
     }
-  }, [selectedStrike, applyData, isBacktest, backtestDate])
+  }, [selectedStrike, applyData, isBacktest, backtestDate, clearAllChartData])
 
   const fetchPositions = useCallback(async () => {
     const apiKey = useAuthStore.getState().apiKey
@@ -1218,6 +1255,8 @@ export default function EzayChart() {
       chart.remove()
       chartRef.current = null
       chartReadyRef.current = false
+      trustMeUpRef.current = null
+      trustMeDownRef.current = null
     }
   }, [])
 
@@ -1291,45 +1330,162 @@ export default function EzayChart() {
     applyData()
   }, [showSignals, showHC, applyData])
 
-  // Volume mode: toggle series visibility + fetch total volume data when needed
+  // Single fetch: signals + hx_lx_vol data consumed by Total Volume, TrustMe, and EzaySignals
+  useEffect(() => {
+    const bt = isBacktestRef.current
+    const dt = backtestDateRef.current
+    // Clear previous data
+    signalsResponseRef.current = null
+    signalsDataRef.current = []
+    signalsMetaRef.current = null
+    setSignalsForPanel([])
+    setSignalsMetaForPanel(null)
+    setSignalsLastTime(0)
+    if (totalVolumeRef.current) totalVolumeRef.current.setData([])
+    if (trustMeUpRef.current) trustMeUpRef.current.setData([])
+    if (trustMeDownRef.current) trustMeDownRef.current.setData([])
+    const controller = new AbortController()
+    const fetchSignals = async () => {
+      try {
+        const url = bt && dt
+          ? `/madhan/api/nifty/backtest_signals?date=${dt}&_=${Date.now()}`
+          : `/madhan/api/ezayChart_signals?_=${Date.now()}`
+        const res = await fetch(url, { signal: controller.signal })
+        const json = await res.json()
+        if (json.status !== 'success' || !json.data) return
+        signalsResponseRef.current = json
+        // Flatten ezay_signals into SignalRow[]
+        const flat: SignalRow[] = []
+        for (const entry of json.data) {
+          if (entry.ezay_signals) {
+            for (const sig of entry.ezay_signals) {
+              flat.push({ ...sig, time: entry.time })
+            }
+          }
+        }
+        signalsDataRef.current = flat
+        signalsMetaRef.current = json.signals || null
+        // Update state for EzaySignals panel
+        setSignalsForPanel(flat)
+        setSignalsMetaForPanel(json.signals || null)
+        setSignalsLastTime(json.last_time || 0)
+        const dark = madhanMode === 'dark'
+        // Render Total Volume if active
+        if (volumeModeRef.current === 'total') {
+          const raw: TotalVolEntry[] = []
+          for (const entry of json.data) {
+            if (entry.hx_lx_vol) {
+              raw.push({ time: entry.time, combined: (entry.hx_lx_vol.ce_vol || 0) + (entry.hx_lx_vol.pe_vol || 0) })
+            }
+          }
+          if (raw.length) {
+            const intervalMin = getIntervalMinutes(intervalRef.current)
+            const data = intervalMin > 1 ? aggregateTotalVolume(raw, intervalMin) : raw
+            totalVolumeDataRef.current = data
+            if (totalVolumeRef.current) {
+              totalVolumeRef.current.setData(data.map((d) => ({
+                time: d.time as Time,
+                value: d.combined,
+                color: dark ? 'rgba(38,166,154,0.5)' : 'rgba(38,166,154,0.6)',
+              })))
+            }
+          }
+        }
+        // Render TrustMe if active
+        if (showTrustMeRef.current && trustMeUpRef.current && trustMeDownRef.current) {
+          const upData: Array<{ time: Time; value: number; color: string }> = []
+          const downData: Array<{ time: Time; value: number; color: string }> = []
+          for (const entry of json.data) {
+            if (!entry.hx_lx_vol) continue
+            const { ce_hx = 0, pe_hx = 0, ce_lx = 0, pe_lx = 0 } = entry.hx_lx_vol
+            const time = entry.time as Time
+            const upside = ce_hx + pe_lx
+            const downside = pe_hx + ce_lx
+            if (upside > 0) upData.push({ time, value: upside, color: dark ? 'rgba(33,150,243,0.7)' : 'rgba(33,150,243,0.8)' })
+            if (downside > 0) downData.push({ time, value: downside, color: dark ? 'rgba(244,67,54,0.7)' : 'rgba(244,67,54,0.8)' })
+          }
+          if (upData.length) trustMeUpRef.current.setData(upData)
+          if (downData.length) trustMeDownRef.current.setData(downData)
+        }
+      } catch {}
+    }
+    fetchSignals()
+    return () => controller.abort()
+  }, [madhanMode, isBacktest, backtestDate, interval])
+
+  // Volume mode: toggle series visibility + render total volume from cached data
   useEffect(() => {
     const isTotal = volumeMode === 'total'
     if (volumeRef.current) volumeRef.current.applyOptions({ visible: !isTotal })
     if (totalVolumeRef.current) totalVolumeRef.current.applyOptions({ visible: isTotal })
-    if (!isTotal || isBacktestRef.current) return
-    const controller = new AbortController()
-    const fetchTotal = async () => {
-      try {
-        const res = await fetch(`/madhan/api/nifty/ce-pe-volume-changes?strike_selection_mode=option1&upside_strikes=10&downside_strikes=10&_=${Date.now()}`, { signal: controller.signal })
-        const json = await res.json()
-        if (json.status !== 'success' || !json.data) return
-        const { timestamps, ce_changes, pe_changes, vol_spike } = json.data
-        if (!timestamps?.length) return
-        const dark = madhanMode === 'dark'
-        const raw = timestamps.map((ts: number, i: number) => ({
-          time: ts,
-          ce: ce_changes[i],
-          pe: pe_changes[i],
-          combined: Math.abs(ce_changes[i]) + Math.abs(pe_changes[i]),
-          is_spike: vol_spike?.[i] || false,
-        }))
-        const intervalMin = getIntervalMinutes(intervalRef.current)
-        const data = intervalMin > 1 ? aggregateTotalVolume(raw, intervalMin) : raw
-        totalVolumeDataRef.current = data
-        if (totalVolumeRef.current) {
-          totalVolumeRef.current.setData(data.map((d: any) => ({
-            time: Math.floor(d.time / 1000) as Time,
-            value: d.combined,
-            color: d.is_spike
-              ? (dark ? 'rgba(250,204,21,0.7)' : 'rgba(234,179,8,0.7)')
-              : (dark ? 'rgba(38,166,154,0.5)' : 'rgba(38,166,154,0.6)'),
-          })))
-        }
-      } catch {}
+    if (!isTotal) return
+    const json = signalsResponseRef.current
+    if (!json || !json.data) return
+    const dark = madhanMode === 'dark'
+    const raw: TotalVolEntry[] = []
+    for (const entry of json.data) {
+      if (entry.hx_lx_vol) {
+        raw.push({ time: entry.time, combined: (entry.hx_lx_vol.ce_vol || 0) + (entry.hx_lx_vol.pe_vol || 0) })
+      }
     }
-    fetchTotal()
-    return () => controller.abort()
-  }, [volumeMode, madhanMode, interval])
+    if (!raw.length) return
+    const intervalMin = getIntervalMinutes(intervalRef.current)
+    const data = intervalMin > 1 ? aggregateTotalVolume(raw, intervalMin) : raw
+    totalVolumeDataRef.current = data
+    if (totalVolumeRef.current) {
+      totalVolumeRef.current.setData(data.map((d) => ({
+        time: d.time as Time,
+        value: d.combined,
+        color: dark ? 'rgba(38,166,154,0.5)' : 'rgba(38,166,154,0.6)',
+      })))
+    }
+  }, [volumeMode, madhanMode, isBacktest, backtestDate, interval])
+
+  // TrustMe: lazily create series on pane 1, render from cached data
+  useEffect(() => {
+    showTrustMeRef.current = showTrustMe
+    const chart = chartRef.current
+    if (!showTrustMe) {
+      if (trustMeUpRef.current) { try { chart?.removeSeries(trustMeUpRef.current) } catch {} trustMeUpRef.current = null }
+      if (trustMeDownRef.current) { try { chart?.removeSeries(trustMeDownRef.current) } catch {} trustMeDownRef.current = null }
+      return
+    }
+    if (!chart) return
+    // Create series on demand
+    if (!trustMeUpRef.current) {
+      trustMeUpRef.current = chart.addSeries(HistogramSeries, {
+        priceLineVisible: true, lastValueVisible: true, crosshairMarkerVisible: false,
+        priceFormat: { type: 'volume' }, visible: true,
+      }, 1)
+    }
+    if (!trustMeDownRef.current) {
+      trustMeDownRef.current = chart.addSeries(HistogramSeries, {
+        priceLineVisible: true, lastValueVisible: true, crosshairMarkerVisible: false,
+        priceFormat: { type: 'volume' }, visible: true,
+      }, 1)
+    }
+    try {
+      const panes = chart.panes()
+      if (panes.length > 1) panes[1].setHeight(100)
+    } catch {}
+    // Render from cached data
+    const json = signalsResponseRef.current
+    if (!json || !json.data) return
+    const dark = madhanMode === 'dark'
+    const upData: Array<{ time: Time; value: number; color: string }> = []
+    const downData: Array<{ time: Time; value: number; color: string }> = []
+    for (const entry of json.data) {
+      if (!entry.hx_lx_vol) continue
+      const { ce_hx = 0, pe_hx = 0, ce_lx = 0, pe_lx = 0 } = entry.hx_lx_vol
+      const time = entry.time as Time
+      const upside = ce_hx + pe_lx
+      const downside = pe_hx + ce_lx
+      if (upside > 0) upData.push({ time, value: upside, color: dark ? 'rgba(33,150,243,0.7)' : 'rgba(33,150,243,0.8)' })
+      if (downside > 0) downData.push({ time, value: downside, color: dark ? 'rgba(244,67,54,0.7)' : 'rgba(244,67,54,0.8)' })
+    }
+    if (upData.length) trustMeUpRef.current.setData(upData)
+    if (downData.length) trustMeDownRef.current.setData(downData)
+  }, [showTrustMe, madhanMode, isBacktest, backtestDate])
 
   useEffect(() => {
     intervalRef.current = interval
@@ -1854,6 +2010,7 @@ export default function EzayChart() {
                   pendingAutoSelectRef.current = true
                   setShowEzaySignals(true)
                 }
+                clearAllChartData()
                 loadStrikes()
               }}
             >
@@ -1870,7 +2027,7 @@ export default function EzayChart() {
                     <Button size="sm" variant="ghost" className="h-6 w-6 p-0" style={{ color: t.textSecondary }} onClick={() => shiftBacktestDate(-1)}>
                       <ChevronLeft className="h-4 w-4" />
                     </Button>
-                    <input type="date" value={backtestDate} onChange={(e) => { setBacktestDate(e.target.value); backtestDateRef.current = e.target.value; backtestTradesRef.current = []; backtestSummaryRef.current = null; setBacktestSummary(null); firstSignalTimeRef.current = 0; firstSignalStrikeRef.current = 0; firstSignalTypeRef.current = ''; pendingAutoSelectRef.current = true; loadStrikes() }} className="h-6 px-1 text-[10px] rounded border" style={{ backgroundColor: t.panelDarker, color: t.text, borderColor: t.border }} />
+                    <input type="date" value={backtestDate} onChange={(e) => { setBacktestDate(e.target.value); backtestDateRef.current = e.target.value; backtestTradesRef.current = []; backtestSummaryRef.current = null; setBacktestSummary(null); firstSignalTimeRef.current = 0; firstSignalStrikeRef.current = 0; firstSignalTypeRef.current = ''; pendingAutoSelectRef.current = true; clearAllChartData(); loadStrikes() }} className="h-6 px-1 text-[10px] rounded border" style={{ backgroundColor: t.panelDarker, color: t.text, borderColor: t.border }} />
                     <Button size="sm" variant="ghost" className="h-6 w-6 p-0" style={{ color: t.textSecondary }} onClick={() => shiftBacktestDate(1)}>
                       <ChevronRight className="h-4 w-4" />
                     </Button>
@@ -1914,6 +2071,14 @@ export default function EzayChart() {
             onClick={() => { setShowEzaySignals(!showEzaySignals); saveSetting('showEzaySignals', !showEzaySignals) }}
           >
             EzaySignals
+          </Button>
+          <Button
+            size="sm"
+            variant={showTrustMe ? 'default' : 'ghost'}
+            className={cn('h-6 px-2 text-[10px] font-medium', showTrustMe && 'bg-emerald-600 hover:bg-emerald-700 text-white')}
+            onClick={() => { setShowTrustMe(!showTrustMe); saveSetting('showTrustMe', !showTrustMe) }}
+          >
+            TrustMe
           </Button>
           <Button
             size="sm"
@@ -2137,7 +2302,7 @@ export default function EzayChart() {
           )}
           {showRealtime && <RealtimeTable onClose={() => setShowRealtime(false)} />}
         </div>
-        {showEzaySignals && <EzaySignals className="shrink-0" style={{ width: 320 }} backtestDate={isBacktest ? backtestDate : undefined} refreshTrigger={refreshTrigger} onFirstSignal={handleFirstSignal} onSignals={handleSignals} />}
+        {showEzaySignals && <EzaySignals className="shrink-0" style={{ width: 320 }} backtestDate={isBacktest ? backtestDate : undefined} refreshTrigger={refreshTrigger} onFirstSignal={handleFirstSignal} onSignals={handleSignals} signalsData={signalsForPanel} signalsMeta={signalsMetaForPanel} lastTime={signalsLastTime} />}
       </div>
     </div>
   )

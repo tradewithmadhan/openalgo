@@ -181,7 +181,7 @@ def compute_hx_lx_counts(all_historical_data, strikes, get_symbol):
                 prev_pe_lows[s] = current_lx
 
         results.append({
-            'timestamp': ts * 1000,
+            'timestamp': ts,
             'ce_hx': ce_hx_count,
             'pe_hx': pe_hx_count,
             'ce_lx': ce_lx_count,

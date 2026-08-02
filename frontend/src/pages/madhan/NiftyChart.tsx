@@ -1824,7 +1824,17 @@ export default function NiftyChart() {
         json = await res.json()
       }
       if (json?.status === 'success' && Array.isArray(json.data)) {
-        rawSignalDataRef.current = json.data as SignalRow[]
+        const flat: SignalRow[] = []
+        for (const entry of json.data) {
+          if (entry.ezay_signals) {
+            for (const sig of entry.ezay_signals) {
+              flat.push({ ...sig, time: entry.time })
+            }
+          } else if (entry.time !== undefined && entry.strike !== undefined) {
+            flat.push(entry)
+          }
+        }
+        rawSignalDataRef.current = flat
       } else {
         rawSignalDataRef.current = []
       }

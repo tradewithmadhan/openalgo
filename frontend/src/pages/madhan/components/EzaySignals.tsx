@@ -38,6 +38,9 @@ type EzaySignalsProps = {
   refreshTrigger?: number
   onFirstSignal?: (data: FirstSignalInfo) => void
   onSignals?: (data: BackendSignals) => void
+  signalsData?: SignalRow[]
+  signalsMeta?: BackendSignals | null
+  lastTime?: number
 }
 
 const formatTime = (ts: number) => {
@@ -45,7 +48,7 @@ const formatTime = (ts: number) => {
   return d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' })
 }
 
-export default function EzaySignals({ className, style, backtestDate, refreshTrigger, onFirstSignal, onSignals }: EzaySignalsProps) {
+export default function EzaySignals({ className, style, backtestDate, refreshTrigger, onFirstSignal, onSignals, signalsData, signalsMeta, lastTime: lastTimeProp }: EzaySignalsProps) {
   const { mode: themeMode } = useMadhanTheme()
   const t = chartTheme[themeMode]
   const [data, setData] = useState<SignalRow[]>([])
@@ -62,6 +65,7 @@ export default function EzaySignals({ className, style, backtestDate, refreshTri
   const prevDataLenRef = useRef(0)
 
   const fetchData = useCallback(async () => {
+    if (signalsData && signalsMeta) return
     try {
       setLoading(true)
       setError('')
@@ -74,7 +78,17 @@ export default function EzaySignals({ className, style, backtestDate, refreshTri
       const res = await fetch(url)
       const json = await res.json()
       if (json.status === 'success' && json.data) {
-        setData(json.data)
+        const flat: SignalRow[] = []
+        for (const entry of json.data) {
+          if (entry.ezay_signals) {
+            for (const sig of entry.ezay_signals) {
+              flat.push({ ...sig, time: entry.time })
+            }
+          } else if (entry.time !== undefined && entry.strike !== undefined) {
+            flat.push(entry)
+          }
+        }
+        setData(flat)
         setSignals(json.signals || { ce_pe: { time: 0, type: '', strike: 0 }, ce_pe_hc: { time: 0, type: '', strike: 0 }, cp: { time: 0, strike: 0 }, cp_open: { time: 0, strike: 0 }, ir: [] })
         setLastTime(json.last_time || 0)
       } else {
@@ -85,11 +99,21 @@ export default function EzaySignals({ className, style, backtestDate, refreshTri
     } finally {
       setLoading(false)
     }
-  }, [backtestDate])
+  }, [backtestDate, signalsData, signalsMeta])
+
+  // Apply pre-fetched data from parent (EzayChart single-fetch)
+  useEffect(() => {
+    if (signalsData && signalsMeta) {
+      setData(signalsData)
+      setSignals(signalsMeta)
+      setLastTime(lastTimeProp || 0)
+      return
+    }
+  }, [signalsData, signalsMeta, lastTimeProp])
 
   useEffect(() => {
     fetchData()
-    if (backtestDate) return
+    if (backtestDate || signalsData) return
     if (refreshTrigger !== undefined) return
     let timer: ReturnType<typeof setTimeout>
     const scheduleNextMinute = () => {
@@ -102,7 +126,7 @@ export default function EzaySignals({ className, style, backtestDate, refreshTri
     }
     scheduleNextMinute()
     return () => clearTimeout(timer)
-  }, [fetchData, backtestDate, refreshTrigger])
+  }, [fetchData, backtestDate, refreshTrigger, signalsData])
 
   useEffect(() => {
     if (refreshTrigger !== undefined && refreshTrigger > 0) fetchData()
