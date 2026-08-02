@@ -195,7 +195,6 @@ export default function EzayChart() {
   const totalVolumeDataRef = useRef<Array<{ time: number; combined: number }>>([])
   const trustMeUpRef = useRef<ISeriesApi<any> | null>(null)
   const trustMeDownRef = useRef<ISeriesApi<any> | null>(null)
-  const trustMeDataRef = useRef<Array<{ time: number; upside: number; downside: number }>>([])
   const signalsResponseRef = useRef<any>(null)
   const signalsDataRef = useRef<SignalRow[]>([])
   const signalsMetaRef = useRef<BackendSignals | null>(null)
@@ -415,11 +414,11 @@ export default function EzayChart() {
         return chart.addSeries(CandlestickSeries, {
           upColor: ceUp, downColor: ceDown, borderVisible: false,
           wickUpColor: ceUp, wickDownColor: ceDown, crosshairMarkerVisible: false, ...opts,
-        })
+        } as any)
       }
       return chart.addSeries(LineSeries, {
         lineWidth: 2, priceLineVisible: false, lastValueVisible: true, crosshairMarkerVisible: false, ...opts,
-      })
+      } as any)
     }
 
     const makePeSeries = (opts: Record<string, any>): ISeriesApi<any> => {
@@ -427,11 +426,11 @@ export default function EzayChart() {
         return chart.addSeries(CandlestickSeries, {
           upColor: peUp, downColor: peDown, borderVisible: false,
           wickUpColor: peUp, wickDownColor: peDown, crosshairMarkerVisible: false, ...opts,
-        })
+        } as any)
       }
       return chart.addSeries(LineSeries, {
         lineWidth: 2, priceLineVisible: false, lastValueVisible: true, crosshairMarkerVisible: false, ...opts,
-      })
+      } as any)
     }
 
     ceSeriesRef.current = makeCeSeries({ title: 'CE', color: '#2962FF' })
@@ -466,11 +465,11 @@ export default function EzayChart() {
           upColor: '#ffeb3b', downColor: '#f57f17', borderVisible: false,
           wickUpColor: '#ffeb3b', wickDownColor: '#f57f17',
           priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false, title: 'Combined Extrinsic',
-        })
+        } as any)
       : chart.addSeries(LineSeries, {
           color: '#ffeb3b', lineWidth: 2, title: 'Combined Extrinsic',
           priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
-        })
+        } as any)
 
     volumeRef.current = chart.addSeries(HistogramSeries, {
       color: '#26a69a',
@@ -479,7 +478,7 @@ export default function EzayChart() {
       crosshairMarkerVisible: false,
       priceFormat: { type: 'volume' },
       priceScaleId: 'volume',
-    })
+    } as any)
 
     totalVolumeRef.current = chart.addSeries(HistogramSeries, {
       color: '#26a69a',
@@ -489,7 +488,7 @@ export default function EzayChart() {
       priceFormat: { type: 'volume' },
       priceScaleId: 'volume',
       visible: false,
-    })
+    } as any)
 
     chart.priceScale('volume').applyOptions({
       scaleMargins: { top: 0.8, bottom: 0 },
@@ -1371,7 +1370,7 @@ export default function EzayChart() {
         setSignalsLastTime(json.last_time || 0)
         const dark = madhanMode === 'dark'
         // Render Total Volume if active
-        if (volumeModeRef.current === 'total') {
+        if (volumeMode === 'total') {
           const raw: TotalVolEntry[] = []
           for (const entry of json.data) {
             if (entry.hx_lx_vol) {
@@ -1456,13 +1455,13 @@ export default function EzayChart() {
       trustMeUpRef.current = chart.addSeries(HistogramSeries, {
         priceLineVisible: true, lastValueVisible: true, crosshairMarkerVisible: false,
         priceFormat: { type: 'volume' }, visible: true,
-      }, 1)
+      } as any, 1)
     }
     if (!trustMeDownRef.current) {
       trustMeDownRef.current = chart.addSeries(HistogramSeries, {
         priceLineVisible: true, lastValueVisible: true, crosshairMarkerVisible: false,
         priceFormat: { type: 'volume' }, visible: true,
-      }, 1)
+      } as any, 1)
     }
     try {
       const panes = chart.panes()

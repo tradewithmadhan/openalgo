@@ -1514,22 +1514,33 @@ def get_backtest_signals(date_str: str) -> dict | None:
     last_data_time = 0
     first_candle_per_strike = {}
 
-    for strike_price in strikes:
-        # Find CE and PE for this strike
-        ce_rows = options_df[(options_df['strike'] == strike_price) & (options_df['instrument_type'] == 'CE')]
-        pe_rows = options_df[(options_df['strike'] == strike_price) & (options_df['instrument_type'] == 'PE')]
+    # Step 3: Pre-compute IST timestamps vectorized (once for entire options_df)
+    options_df = options_df.copy()
+    options_df['_ts_utc'] = options_df['date'].astype('int64') // 10**9
+    _IST_OFFSET = 19800  # IST is UTC+5:30 = 19800 seconds
+    options_df['_ts_ist'] = options_df['_ts_utc'] + _IST_OFFSET
 
-        if ce_rows.empty or pe_rows.empty:
+    # Step 1: Pre-group by strike (one scan instead of 42) — after adding _ts_ist
+    ce_grouped = options_df[options_df['instrument_type'] == 'CE'].groupby('strike')
+    pe_grouped = options_df[options_df['instrument_type'] == 'PE'].groupby('strike')
+
+    for strike_price in strikes:
+        # Step 1: O(1) lookup instead of full DataFrame scan
+        ce_rows = ce_grouped.get_group(strike_price) if strike_price in ce_grouped.groups else None
+        pe_rows = pe_grouped.get_group(strike_price) if strike_price in pe_grouped.groups else None
+
+        if ce_rows is None or pe_rows is None or ce_rows.empty or pe_rows.empty:
             continue
 
-        # Convert to sorted row dicts
-        def to_rows(df_slice):
+        # Step 3: Use pre-computed IST timestamps, no per-row datetime conversion
+        def to_rows_fast(df_slice):
             df_sorted = df_slice.sort_values('date')
-            df_sorted['timestamp'] = df_sorted['date'].apply(lambda d: int(d.timestamp()))
-            return df_sorted[['timestamp', 'open', 'high', 'low', 'close', 'volume']].to_dict('records')
+            cols = df_sorted[['_ts_utc', '_ts_ist', 'open', 'high', 'low', 'close', 'volume']].copy()
+            cols = cols.rename(columns={'_ts_utc': 'timestamp'})
+            return cols.to_dict('records')
 
-        ce_data = to_rows(ce_rows)
-        pe_data = to_rows(pe_rows)
+        ce_data = to_rows_fast(ce_rows)
+        pe_data = to_rows_fast(pe_rows)
 
         if not ce_data or not pe_data:
             continue
@@ -1546,9 +1557,8 @@ def get_backtest_signals(date_str: str) -> dict | None:
             for i, item in enumerate(data):
                 if item['open'] is None or item['close'] is None:
                     continue
-                utc_dt = datetime.fromtimestamp(item['timestamp'], tz=_pytz.UTC)
-                ist_dt = utc_dt.astimezone(ist_tz)
-                ist_ts = int(ist_dt.timestamp())
+                # Step 3: Use pre-computed IST timestamp (no datetime conversion)
+                ist_ts = item['_ts_ist']
                 spot_close = spot_lookup.get(item['timestamp'], 0)
 
                 if option_type == 'CE':
@@ -1720,28 +1730,21 @@ def get_backtest_signals(date_str: str) -> dict | None:
     try:
         from services.madhan.hx_lx import compute_hx_lx_counts
 
-        symbol_lookup = {}
-        for _, row in options_df.iterrows():
-            strike_key = int(row['strike'])
-            type_key = row['instrument_type']
-            if (strike_key, type_key) not in symbol_lookup:
-                symbol_lookup[(strike_key, type_key)] = row.get('symbol')
+        # Step 2: Vectorized symbol_lookup (no .iterrows)
+        _sym_df = options_df.drop_duplicates(subset=['strike', 'instrument_type'])
+        symbol_lookup = dict(zip(
+            zip(_sym_df['strike'].astype(int), _sym_df['instrument_type']),
+            _sym_df['symbol']
+        ))
 
         def _get_symbol(strike, type_):
             return symbol_lookup.get((int(strike), type_))
 
-        hist_data = []
-        for _, row in options_df.iterrows():
-            symbol = row.get('symbol')
-            ts = int(row['date'].timestamp()) if hasattr(row['date'], 'timestamp') else None
-            if symbol and ts:
-                hist_data.append({
-                    'symbol': symbol,
-                    'timestamp': ts,
-                    'high': row.get('high'),
-                    'low': row.get('low'),
-                    'volume': row.get('volume', 0),
-                })
+        # Step 2: Vectorized hist_data (no .iterrows)
+        hist_df = options_df[['symbol', 'date', 'high', 'low', 'volume']].copy()
+        hist_df = hist_df.dropna(subset=['symbol'])
+        hist_df['timestamp'] = hist_df['date'].astype('int64') // 10**9
+        hist_data = hist_df[['symbol', 'timestamp', 'high', 'low', 'volume']].to_dict('records')
 
         hx_results = compute_hx_lx_counts(
             all_historical_data=hist_data,
