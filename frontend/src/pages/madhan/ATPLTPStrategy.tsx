@@ -242,13 +242,26 @@ export default function ATPLTPStrategy() {
     return value.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
   }
 
+  const toISTISOString = (ts: number) => {
+    const istOffset = 5.5 * 60 * 60 * 1000
+    const istDate = new Date(ts + istOffset)
+    const y = istDate.getUTCFullYear()
+    const m = String(istDate.getUTCMonth() + 1).padStart(2, '0')
+    const d = String(istDate.getUTCDate()).padStart(2, '0')
+    const h = String(istDate.getUTCHours()).padStart(2, '0')
+    const mi = String(istDate.getUTCMinutes()).padStart(2, '0')
+    const s = String(istDate.getUTCSeconds()).padStart(2, '0')
+    return `${y}-${m}-${d}T${h}:${mi}:${s}+05:30`
+  }
+
   const formatTime = (timeStr: string) => {
     try {
       const date = new Date(timeStr)
       return date.toLocaleTimeString('en-IN', { 
         hour: '2-digit', 
         minute: '2-digit', 
-        second: '2-digit' 
+        second: '2-digit',
+        timeZone: 'Asia/Kolkata',
       })
     } catch {
       return timeStr
@@ -300,7 +313,7 @@ export default function ATPLTPStrategy() {
 
     // Build traces from segments
     const traces: any[] = segments.map((seg, i) => ({
-      x: seg.x.map(t => new Date(t).toISOString()),
+      x: seg.x.map(t => toISTISOString(t)),
       y: seg.y,
       type: 'scatter',
       mode: 'lines',
@@ -321,7 +334,7 @@ export default function ATPLTPStrategy() {
 
     for (let i = 0; i < asc.length; i++) {
       if (!(asc[i] as any).trade_signal) continue
-      const ts = new Date(asc[i].time).toISOString()
+      const ts = toISTISOString(new Date(asc[i].time).getTime())
       const sig = asc[i].final_signal
       const isBullish = sig === 'Bullish'
       dotX.push(ts)
@@ -329,7 +342,7 @@ export default function ATPLTPStrategy() {
       dotColors.push(isBullish ? '#22c55e' : '#ef4444')
 
       const label = `${asc[i].atm_strike} ${isBullish ? 'Call' : 'Put'}<br>${formatNumber(isBullish ? asc[i].atm_call_ltp : asc[i].atm_put_ltp)}<br>${(() => {
-        try { return new Date(asc[i].time).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) }
+        try { return new Date(asc[i].time).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata' }) }
         catch { return '' }
       })()}`
       const yVal = asc[i].spot_ltp ?? 0
@@ -371,7 +384,7 @@ export default function ATPLTPStrategy() {
 
     // Live spot point
     if (liveSpot > 0) {
-      const now = new Date(Date.now() + timeOffsetRef.current).toISOString()
+      const now = toISTISOString(Date.now() + timeOffsetRef.current)
       traces.push({
         x: [now],
         y: [liveSpot],
