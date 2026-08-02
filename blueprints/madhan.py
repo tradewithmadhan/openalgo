@@ -13,6 +13,7 @@ from services.madhan.atp_signal import (
     detect_trade_signals, process_historical_atp_data,
 )
 from services.madhan.volume_signal import compute_spike_flags
+from services.madhan.hx_lx import compute_hx_lx_counts
 from database.madhan_db import extract_strike, get_nifty_data, get_option_data, get_consistent_current_option_data, get_nifty_data_count, get_previous_day_oi, get_nth_candle_oi_for_all_symbols, get_current_day_historical_data, get_current_day_instrument_data, get_coi_history, get_valid_trading_day, SessionLocal, NiftyData, get_tracked_symbols
 from database.auth_db import get_api_key_for_tradingview
 from blueprints.react_app import serve_react_app
@@ -2181,6 +2182,55 @@ def nifty_signals_cross():
             
     return jsonify({'status': 'success', 'data': signals})
 
+
+@madhan_bp.route('/api/nifty/hx-lx')
+@check_session_validity
+def nifty_hx_lx():
+    """Compute HighCross/LowCross change counts per timestamp.
+
+    Returns a list of dicts with timestamp_ms, ce_hx, pe_hx, ce_lx, pe_lx
+    showing how many strikes had a running-high or running-low change.
+    """
+    timeframe = int(request.args.get('timeframe', '1'))
+
+    # 1. Get ATM and Expiry from fetcher
+    atm_strike = nifty_fetcher.open_atm_strike or nifty_fetcher.current_atm_strike
+    expiry_date = nifty_fetcher.expiry_date
+
+    if not atm_strike or not expiry_date:
+        return jsonify({'status': 'success', 'data': [], 'message': 'ATM or Expiry not available.'})
+
+    # 2. Generate 21 strikes around ATM (±10)
+    strikes = [atm_strike + (i * 50) for i in range(-10, 11)]
+
+    # 3. Symbol helper (same pattern as signals-cross)
+    def get_symbol_python(strike, type_):
+        try:
+            date_obj = datetime.strptime(expiry_date, "%d-%b-%y")
+            day = date_obj.strftime("%d")
+            month = date_obj.strftime("%b").upper()
+            year = date_obj.strftime("%y")
+            return f"NIFTY{day}{month}{year}{strike}{type_}"
+        except Exception:
+            return None
+
+    # 4. Fetch historical data
+    historical_data = get_current_day_historical_data()
+    if not historical_data:
+        return jsonify({'status': 'success', 'data': []})
+
+    # 5. Compute
+    try:
+        results = compute_hx_lx_counts(
+            all_historical_data=historical_data,
+            strikes=strikes,
+            get_symbol=get_symbol_python,
+            timeframe=timeframe,
+        )
+        return jsonify({'status': 'success', 'data': results})
+    except Exception as e:
+        logger.error(f"Error computing hx-lx: {e}", exc_info=True)
+        return jsonify({'status': 'error', 'message': str(e)})
 
 
 @madhan_bp.route('/api/nifty/support-resistance')
