@@ -402,6 +402,8 @@ export default function ATPLTPStrategy() {
         title: { text: 'Spot LTP' },
         gridcolor: dark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)',
         automargin: true,
+        tickformat: ',d',
+        dtick: 50,
       },
       hovermode: 'x unified',
       legend: { orientation: 'h', y: 1.02, x: 0.5, xanchor: 'center' },
