@@ -8,7 +8,7 @@ import { Label } from '@/components/ui/label';
 import { useMadhanTheme } from '@/pages/madhan/useMadhanTheme';
 
 import { Zap, ZapOff } from 'lucide-react';
-import { toast } from 'sonner';
+import { showToast } from '@/utils/toast';
 
 interface SupportResistanceData {
     timestamps: number[];
@@ -124,7 +124,7 @@ export function SupportResistanceChart({ refreshTrigger }: SupportResistanceChar
                         
                         if (type === 'auth' && message.status === 'success') {
                             console.log('[WS] Auth success, subscribing...');
-                            toast.success('Live connection established');
+                            showToast.success('Live connection established');
                             // Subscribe to NIFTY
                             socket.send(JSON.stringify({ 
                                 action: 'subscribe', 
@@ -188,7 +188,7 @@ export function SupportResistanceChart({ refreshTrigger }: SupportResistanceChar
             } catch (error) {
                 console.error('WebSocket Connection Failed', error);
                 setIsLive(false);
-                toast.error('Failed to connect to live data');
+                showToast.error('Failed to connect to live data');
             }
         };
 

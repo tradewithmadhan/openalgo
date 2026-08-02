@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router'
 import { 
   AlertTriangle, 
   BarChart3, 
@@ -13,7 +13,7 @@ import {
   TrendingUp,
   Clock
 } from 'lucide-react'
-import { toast } from 'sonner'
+import { showToast } from '@/utils/toast'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -535,9 +535,9 @@ export default function ATPLTPStrategy() {
                 onClick={async () => {
                     const result = await toggleAppMode()
                     if (result.success) {
-                        toast.success(result.message || `Switched to ${appMode === "live" ? "Analyze" : "Live"} mode`)
+                        showToast.success(result.message || `Switched to ${appMode === "live" ? "Analyze" : "Live"} mode`)
                     } else {
-                        toast.error(result.message || "Failed to toggle mode")
+                        showToast.error(result.message || "Failed to toggle mode")
                     }
                 }}
                 disabled={isTogglingMode}

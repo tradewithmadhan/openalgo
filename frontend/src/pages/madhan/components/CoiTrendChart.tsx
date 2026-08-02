@@ -7,7 +7,7 @@ import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { useMadhanTheme } from '@/pages/madhan/useMadhanTheme';
 import { Zap, ZapOff } from 'lucide-react';
-import { toast } from 'sonner';
+import { showToast } from '@/utils/toast';
 
 interface CoiTrendData {
     timestamps: number[];
@@ -150,7 +150,7 @@ export function CoiTrendChart({ refreshTrigger }: CoiTrendChartProps) {
                         const type = message.type || message.status;
 
                         if (type === 'auth' && message.status === 'success') {
-                            toast.success('Live connection established');
+                            showToast.success('Live connection established');
                             socket.send(JSON.stringify({
                                 action: 'subscribe',
                                 symbols: [{ symbol: 'NIFTY', exchange: 'NSE_INDEX' }],
@@ -214,7 +214,7 @@ export function CoiTrendChart({ refreshTrigger }: CoiTrendChartProps) {
             } catch (error) {
                 console.error('WebSocket Connection Failed', error);
                 setIsLive(false);
-                toast.error('Failed to connect to live data');
+                showToast.error('Failed to connect to live data');
             }
         };
 

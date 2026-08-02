@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { Link, useNavigate } from 'react-router'
 import { 
   AlertTriangle, 
   BarChart3, 
@@ -13,7 +13,7 @@ import {
   Moon, 
   Home
 } from 'lucide-react'
-import { toast } from 'sonner'
+import { showToast } from '@/utils/toast'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -32,7 +32,6 @@ import { useThemeStore } from '@/stores/themeStore'
 import { useAlertStore } from '@/stores/alertStore'
 import { useMadhanSignalStore } from '@/stores/madhanSignalStore'
 import { useProfileMenuItems } from '@/hooks/useProfileMenuItems'
-import { useRef } from 'react'
 import { useMadhanTheme } from './useMadhanTheme'
 import { CoiTrendChart } from './components/CoiTrendChart'
 import { CePeChangesChart } from './components/CePeChangesChart'
@@ -166,7 +165,7 @@ export default function Madhan01() {
       })
       const data = await response.json()
       if (response.ok && (data.status === 'success' || data.status === 'info')) {
-        toast.success(data.message || 'Fetcher started successfully')
+        showToast.success(data.message || 'Fetcher started successfully')
         await fetchStatus()
       } else {
         setError(data.message || 'Failed to start fetcher')
@@ -189,17 +188,17 @@ export default function Madhan01() {
       })
       const data = await response.json()
       if (response.ok && data.status === 'success') {
-        toast.success(data.message || 'Fetcher stopped successfully')
+        showToast.success(data.message || 'Fetcher stopped successfully')
         await fetchStatus()
       } else {
         const msg = data.message || 'Failed to stop fetcher'
         setError(msg)
-        toast.error(msg)
+        showToast.error(msg)
       }
     } catch (_e) {
       const msg = 'Failed to stop fetcher'
       setError(msg)
-      toast.error(msg)
+      showToast.error(msg)
     } finally {
       setIsLoading(false)
     }
@@ -481,13 +480,13 @@ export default function Madhan01() {
                 onClick={async () => {
                     const result = await toggleAppMode()
                     if (result.success) {
-                        toast.success(result.message || `Switched to ${appMode === "live" ? "Analyze" : "Live"} mode`)
+                        showToast.success(result.message || `Switched to ${appMode === "live" ? "Analyze" : "Live"} mode`)
                         if (appMode === "live") { // Note: appMode here is the *old* mode before toggle completes if we use the destructured value directly, but toggleAppMode is async. Actually, toggleAppMode updates the store. We should probably use the *new* mode from store or result.
                              // Wait, useThemeStore state might not update immediately in this render cycle.
                              // Playground uses: const newMode = useThemeStore.getState().appMode;
                         }
                     } else {
-                        toast.error(result.message || "Failed to toggle mode")
+                        showToast.error(result.message || "Failed to toggle mode")
                     }
                 }}
                 disabled={isTogglingMode}
