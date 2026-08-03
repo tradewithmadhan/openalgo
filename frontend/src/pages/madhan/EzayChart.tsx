@@ -1429,7 +1429,7 @@ export default function EzayChart() {
     }
     fetchSignals()
     return () => controller.abort()
-  }, [madhanMode, isBacktest, backtestDate, interval])
+  }, [madhanMode, isBacktest, backtestDate])
 
   // Volume mode: toggle series visibility + render total volume from cached data
   useEffect(() => {
@@ -1526,46 +1526,71 @@ export default function EzayChart() {
       const isTotal = volumeMode === 'total'
       if (volumeRef.current) volumeRef.current.applyOptions({ visible: !isTotal })
       if (totalVolumeRef.current) totalVolumeRef.current.applyOptions({ visible: isTotal })
-      // Rebuild TrustMe on pane 1 after createAllSeries restructured the chart
-      if (showTrustMeRef.current) {
-        const chart = chartRef.current
-        if (trustMeUpRef.current) { try { chart.removeSeries(trustMeUpRef.current) } catch {} trustMeUpRef.current = null }
-        if (trustMeDownRef.current) { try { chart.removeSeries(trustMeDownRef.current) } catch {} trustMeDownRef.current = null }
-        trustMeUpRef.current = chart.addSeries(HistogramSeries, {
-          priceLineVisible: true, lastValueVisible: true, crosshairMarkerVisible: false,
-          priceFormat: { type: 'volume' }, visible: true,
-        } as any, 1)
-        trustMeDownRef.current = chart.addSeries(HistogramSeries, {
-          priceLineVisible: true, lastValueVisible: true, crosshairMarkerVisible: false,
-          priceFormat: { type: 'volume' }, visible: true,
-        } as any, 1)
-        try {
-          const panes = chart.panes()
-          if (panes.length > 1) panes[1].setHeight(100)
-        } catch {}
-        const json = signalsResponseRef.current
-        if (json?.data) {
-          const dark = madhanMode === 'dark'
-          const intervalMin = getIntervalMinutes(intervalRef.current)
-          const rawEntries: TrustMeEntry[] = []
-          for (const entry of json.data) {
-            if (!entry.hx_lx_vol) continue
-            const { ce_hx = 0, pe_hx = 0, ce_lx = 0, pe_lx = 0 } = entry.hx_lx_vol
-            rawEntries.push({ time: entry.time, upside: ce_hx + pe_lx, downside: pe_hx + ce_lx })
-          }
-          const aggregated = aggregateTrustMe(rawEntries, intervalMin)
-          const upData: Array<{ time: Time; value: number; color: string }> = []
-          const downData: Array<{ time: Time; value: number; color: string }> = []
-          for (const item of aggregated) {
-            if (item.upside > 0) upData.push({ time: item.time as Time, value: item.upside, color: dark ? 'rgba(33,150,243,0.7)' : 'rgba(33,150,243,0.8)' })
-            if (item.downside > 0) downData.push({ time: item.time as Time, value: item.downside, color: dark ? 'rgba(244,67,54,0.7)' : 'rgba(244,67,54,0.8)' })
-          }
-          if (upData.length) trustMeUpRef.current.setData(upData)
-          if (downData.length) trustMeDownRef.current.setData(downData)
-        }
-      }
     }
   }, [interval, applyData])
+
+  // Re-render TrustMe and TotalVolume data when interval changes (using cached signals data)
+  useEffect(() => {
+    const json = signalsResponseRef.current
+    if (!json || !json.data) return
+    const dark = madhanMode === 'dark'
+    const intervalMin = getIntervalMinutes(interval)
+    const isTotal = volumeMode === 'total'
+    // Re-render Total Volume with new interval aggregation
+    if (isTotal && totalVolumeRef.current) {
+      const raw: TotalVolEntry[] = []
+      for (const entry of json.data) {
+        if (entry.hx_lx_vol) {
+          raw.push({ time: entry.time, combined: (entry.hx_lx_vol.ce_vol || 0) + (entry.hx_lx_vol.pe_vol || 0) })
+        }
+      }
+      if (raw.length) {
+        const data = intervalMin > 1 ? aggregateTotalVolume(raw, intervalMin) : raw
+        totalVolumeDataRef.current = data
+        totalVolumeRef.current.setData(data.map((d) => ({
+          time: d.time as Time,
+          value: d.combined,
+          color: dark ? 'rgba(38,166,154,0.5)' : 'rgba(38,166,154,0.6)',
+        })))
+      }
+    }
+    // Re-render TrustMe with new interval aggregation
+    if (showTrustMeRef.current && json.data) {
+      const chart = chartRef.current
+      if (!chart) return
+      // Destroy and recreate TrustMe series on pane 1 (in case createAllSeries moved them)
+      if (trustMeUpRef.current) { try { chart.removeSeries(trustMeUpRef.current) } catch {} trustMeUpRef.current = null }
+      if (trustMeDownRef.current) { try { chart.removeSeries(trustMeDownRef.current) } catch {} trustMeDownRef.current = null }
+       trustMeUpRef.current = chart.addSeries(HistogramSeries, {
+        priceLineVisible: true, lastValueVisible: true, crosshairMarkerVisible: false,
+        priceFormat: { type: 'volume' }, visible: true,
+      } as any, 1)
+      trustMeDownRef.current = chart.addSeries(HistogramSeries, {
+        priceLineVisible: true, lastValueVisible: true, crosshairMarkerVisible: false,
+        priceFormat: { type: 'volume' }, visible: true,
+      } as any, 1)
+      try {
+        const panes = chart.panes()
+        if (panes.length > 1) panes[1].setHeight(100)
+      } catch {}
+      if (!trustMeUpRef.current || !trustMeDownRef.current) return
+      const rawEntries: TrustMeEntry[] = []
+      for (const entry of json.data) {
+        if (!entry.hx_lx_vol) continue
+        const { ce_hx = 0, pe_hx = 0, ce_lx = 0, pe_lx = 0 } = entry.hx_lx_vol
+        rawEntries.push({ time: entry.time, upside: ce_hx + pe_lx, downside: pe_hx + ce_lx })
+      }
+      const aggregated = aggregateTrustMe(rawEntries, intervalMin)
+      const upData: Array<{ time: Time; value: number; color: string }> = []
+      const downData: Array<{ time: Time; value: number; color: string }> = []
+      for (const item of aggregated) {
+        if (item.upside > 0) upData.push({ time: item.time as Time, value: item.upside, color: dark ? 'rgba(33,150,243,0.7)' : 'rgba(33,150,243,0.8)' })
+        if (item.downside > 0) downData.push({ time: item.time as Time, value: item.downside, color: dark ? 'rgba(244,67,54,0.7)' : 'rgba(244,67,54,0.8)' })
+      }
+      if (upData.length) trustMeUpRef.current.setData(upData)
+      if (downData.length) trustMeDownRef.current.setData(downData)
+    }
+  }, [interval, volumeMode, madhanMode])
 
   useEffect(() => {
     const update = () => {
