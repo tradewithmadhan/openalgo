@@ -1406,27 +1406,8 @@ export default function EzayChart() {
             }
           }
         }
-        // Render TrustMe if active
-        if (showTrustMeRef.current) {
-          const chart = chartRef.current
-          if (chart) {
-            if (!trustMeUpRef.current) {
-              trustMeUpRef.current = chart.addSeries(HistogramSeries, {
-                priceLineVisible: true, lastValueVisible: true, crosshairMarkerVisible: false,
-                priceFormat: { type: 'volume' }, visible: true,
-              } as any, 1)
-            }
-            if (!trustMeDownRef.current) {
-              trustMeDownRef.current = chart.addSeries(HistogramSeries, {
-                priceLineVisible: true, lastValueVisible: true, crosshairMarkerVisible: false,
-                priceFormat: { type: 'volume' }, visible: true,
-              } as any, 1)
-            }
-            try {
-              const panes = chart.panes()
-              if (panes.length > 1) panes[1].setHeight(100)
-            } catch {}
-          }
+        // Render TrustMe if series exist
+        if (showTrustMeRef.current && trustMeUpRef.current && trustMeDownRef.current) {
           const intervalMin = getIntervalMinutes(intervalRef.current)
           const rawEntries: TrustMeEntry[] = []
           for (const entry of json.data) {
@@ -1441,8 +1422,8 @@ export default function EzayChart() {
             if (item.upside > 0) upData.push({ time: item.time as Time, value: item.upside, color: dark ? 'rgba(33,150,243,0.7)' : 'rgba(33,150,243,0.8)' })
             if (item.downside > 0) downData.push({ time: item.time as Time, value: item.downside, color: dark ? 'rgba(244,67,54,0.7)' : 'rgba(244,67,54,0.8)' })
           }
-          if (upData.length && trustMeUpRef.current) trustMeUpRef.current.setData(upData)
-          if (downData.length && trustMeDownRef.current) trustMeDownRef.current.setData(downData)
+          if (upData.length) trustMeUpRef.current.setData(upData)
+          if (downData.length) trustMeDownRef.current.setData(downData)
         }
       } catch {}
     }
@@ -1478,7 +1459,7 @@ export default function EzayChart() {
     }
   }, [volumeMode, madhanMode, isBacktest, backtestDate, interval])
 
-  // TrustMe: lazily create series on pane 1, render from cached data
+   // TrustMe: lazily create series on pane 1, render from cached data
   useEffect(() => {
     showTrustMeRef.current = showTrustMe
     const chart = chartRef.current
@@ -1525,7 +1506,7 @@ export default function EzayChart() {
     }
     if (upData.length) trustMeUpRef.current.setData(upData)
     if (downData.length) trustMeDownRef.current.setData(downData)
-  }, [showTrustMe, madhanMode, isBacktest, backtestDate])
+  }, [showTrustMe, madhanMode, isBacktest, backtestDate, interval])
 
   useEffect(() => {
     intervalRef.current = interval
