@@ -177,6 +177,25 @@ function aggregateTotalVolume(data: TotalVolEntry[], intervalMin: number): Total
   return Array.from(buckets.values()).sort((a, b) => a.time - b.time)
 }
 
+type TrustMeEntry = { time: number; upside: number; downside: number }
+
+function aggregateTrustMe(data: TrustMeEntry[], intervalMin: number): TrustMeEntry[] {
+  if (intervalMin <= 1 || !data.length) return data
+  const bucketSec = intervalMin * 60
+  const buckets = new Map<number, TrustMeEntry>()
+  for (const d of data) {
+    const bucket = Math.floor(d.time / bucketSec) * bucketSec
+    const existing = buckets.get(bucket)
+    if (existing) {
+      existing.upside += d.upside
+      existing.downside += d.downside
+    } else {
+      buckets.set(bucket, { time: bucket, upside: d.upside, downside: d.downside })
+    }
+  }
+  return Array.from(buckets.values()).sort((a, b) => a.time - b.time)
+}
+
 export default function EzayChart() {
   const chartContainerRef = useRef<HTMLDivElement | null>(null)
   const chartRef = useRef<IChartApi | null>(null)
@@ -1340,9 +1359,6 @@ export default function EzayChart() {
     setSignalsForPanel([])
     setSignalsMetaForPanel(null)
     setSignalsLastTime(0)
-    if (totalVolumeRef.current) totalVolumeRef.current.setData([])
-    if (trustMeUpRef.current) trustMeUpRef.current.setData([])
-    if (trustMeDownRef.current) trustMeDownRef.current.setData([])
     const controller = new AbortController()
     const fetchSignals = async () => {
       try {
@@ -1391,20 +1407,42 @@ export default function EzayChart() {
           }
         }
         // Render TrustMe if active
-        if (showTrustMeRef.current && trustMeUpRef.current && trustMeDownRef.current) {
-          const upData: Array<{ time: Time; value: number; color: string }> = []
-          const downData: Array<{ time: Time; value: number; color: string }> = []
+        if (showTrustMeRef.current) {
+          const chart = chartRef.current
+          if (chart) {
+            if (!trustMeUpRef.current) {
+              trustMeUpRef.current = chart.addSeries(HistogramSeries, {
+                priceLineVisible: true, lastValueVisible: true, crosshairMarkerVisible: false,
+                priceFormat: { type: 'volume' }, visible: true,
+              } as any, 1)
+            }
+            if (!trustMeDownRef.current) {
+              trustMeDownRef.current = chart.addSeries(HistogramSeries, {
+                priceLineVisible: true, lastValueVisible: true, crosshairMarkerVisible: false,
+                priceFormat: { type: 'volume' }, visible: true,
+              } as any, 1)
+            }
+            try {
+              const panes = chart.panes()
+              if (panes.length > 1) panes[1].setHeight(100)
+            } catch {}
+          }
+          const intervalMin = getIntervalMinutes(intervalRef.current)
+          const rawEntries: TrustMeEntry[] = []
           for (const entry of json.data) {
             if (!entry.hx_lx_vol) continue
             const { ce_hx = 0, pe_hx = 0, ce_lx = 0, pe_lx = 0 } = entry.hx_lx_vol
-            const time = entry.time as Time
-            const upside = ce_hx + pe_lx
-            const downside = pe_hx + ce_lx
-            if (upside > 0) upData.push({ time, value: upside, color: dark ? 'rgba(33,150,243,0.7)' : 'rgba(33,150,243,0.8)' })
-            if (downside > 0) downData.push({ time, value: downside, color: dark ? 'rgba(244,67,54,0.7)' : 'rgba(244,67,54,0.8)' })
+            rawEntries.push({ time: entry.time, upside: ce_hx + pe_lx, downside: pe_hx + ce_lx })
           }
-          if (upData.length) trustMeUpRef.current.setData(upData)
-          if (downData.length) trustMeDownRef.current.setData(downData)
+          const aggregated = aggregateTrustMe(rawEntries, intervalMin)
+          const upData: Array<{ time: Time; value: number; color: string }> = []
+          const downData: Array<{ time: Time; value: number; color: string }> = []
+          for (const item of aggregated) {
+            if (item.upside > 0) upData.push({ time: item.time as Time, value: item.upside, color: dark ? 'rgba(33,150,243,0.7)' : 'rgba(33,150,243,0.8)' })
+            if (item.downside > 0) downData.push({ time: item.time as Time, value: item.downside, color: dark ? 'rgba(244,67,54,0.7)' : 'rgba(244,67,54,0.8)' })
+          }
+          if (upData.length && trustMeUpRef.current) trustMeUpRef.current.setData(upData)
+          if (downData.length && trustMeDownRef.current) trustMeDownRef.current.setData(downData)
         }
       } catch {}
     }
@@ -1471,16 +1509,19 @@ export default function EzayChart() {
     const json = signalsResponseRef.current
     if (!json || !json.data) return
     const dark = madhanMode === 'dark'
-    const upData: Array<{ time: Time; value: number; color: string }> = []
-    const downData: Array<{ time: Time; value: number; color: string }> = []
+    const intervalMin = getIntervalMinutes(intervalRef.current)
+    const rawEntries: TrustMeEntry[] = []
     for (const entry of json.data) {
       if (!entry.hx_lx_vol) continue
       const { ce_hx = 0, pe_hx = 0, ce_lx = 0, pe_lx = 0 } = entry.hx_lx_vol
-      const time = entry.time as Time
-      const upside = ce_hx + pe_lx
-      const downside = pe_hx + ce_lx
-      if (upside > 0) upData.push({ time, value: upside, color: dark ? 'rgba(33,150,243,0.7)' : 'rgba(33,150,243,0.8)' })
-      if (downside > 0) downData.push({ time, value: downside, color: dark ? 'rgba(244,67,54,0.7)' : 'rgba(244,67,54,0.8)' })
+      rawEntries.push({ time: entry.time, upside: ce_hx + pe_lx, downside: pe_hx + ce_lx })
+    }
+    const aggregated = aggregateTrustMe(rawEntries, intervalMin)
+    const upData: Array<{ time: Time; value: number; color: string }> = []
+    const downData: Array<{ time: Time; value: number; color: string }> = []
+    for (const item of aggregated) {
+      if (item.upside > 0) upData.push({ time: item.time as Time, value: item.upside, color: dark ? 'rgba(33,150,243,0.7)' : 'rgba(33,150,243,0.8)' })
+      if (item.downside > 0) downData.push({ time: item.time as Time, value: item.downside, color: dark ? 'rgba(244,67,54,0.7)' : 'rgba(244,67,54,0.8)' })
     }
     if (upData.length) trustMeUpRef.current.setData(upData)
     if (downData.length) trustMeDownRef.current.setData(downData)
@@ -1504,6 +1545,44 @@ export default function EzayChart() {
       const isTotal = volumeMode === 'total'
       if (volumeRef.current) volumeRef.current.applyOptions({ visible: !isTotal })
       if (totalVolumeRef.current) totalVolumeRef.current.applyOptions({ visible: isTotal })
+      // Rebuild TrustMe on pane 1 after createAllSeries restructured the chart
+      if (showTrustMeRef.current) {
+        const chart = chartRef.current
+        if (trustMeUpRef.current) { try { chart.removeSeries(trustMeUpRef.current) } catch {} trustMeUpRef.current = null }
+        if (trustMeDownRef.current) { try { chart.removeSeries(trustMeDownRef.current) } catch {} trustMeDownRef.current = null }
+        trustMeUpRef.current = chart.addSeries(HistogramSeries, {
+          priceLineVisible: true, lastValueVisible: true, crosshairMarkerVisible: false,
+          priceFormat: { type: 'volume' }, visible: true,
+        } as any, 1)
+        trustMeDownRef.current = chart.addSeries(HistogramSeries, {
+          priceLineVisible: true, lastValueVisible: true, crosshairMarkerVisible: false,
+          priceFormat: { type: 'volume' }, visible: true,
+        } as any, 1)
+        try {
+          const panes = chart.panes()
+          if (panes.length > 1) panes[1].setHeight(100)
+        } catch {}
+        const json = signalsResponseRef.current
+        if (json?.data) {
+          const dark = madhanMode === 'dark'
+          const intervalMin = getIntervalMinutes(intervalRef.current)
+          const rawEntries: TrustMeEntry[] = []
+          for (const entry of json.data) {
+            if (!entry.hx_lx_vol) continue
+            const { ce_hx = 0, pe_hx = 0, ce_lx = 0, pe_lx = 0 } = entry.hx_lx_vol
+            rawEntries.push({ time: entry.time, upside: ce_hx + pe_lx, downside: pe_hx + ce_lx })
+          }
+          const aggregated = aggregateTrustMe(rawEntries, intervalMin)
+          const upData: Array<{ time: Time; value: number; color: string }> = []
+          const downData: Array<{ time: Time; value: number; color: string }> = []
+          for (const item of aggregated) {
+            if (item.upside > 0) upData.push({ time: item.time as Time, value: item.upside, color: dark ? 'rgba(33,150,243,0.7)' : 'rgba(33,150,243,0.8)' })
+            if (item.downside > 0) downData.push({ time: item.time as Time, value: item.downside, color: dark ? 'rgba(244,67,54,0.7)' : 'rgba(244,67,54,0.8)' })
+          }
+          if (upData.length) trustMeUpRef.current.setData(upData)
+          if (downData.length) trustMeDownRef.current.setData(downData)
+        }
+      }
     }
   }, [interval, applyData])
 
