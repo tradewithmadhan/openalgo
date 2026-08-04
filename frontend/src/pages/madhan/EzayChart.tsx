@@ -262,6 +262,7 @@ export default function EzayChart() {
   const [interval, setInterval] = useState(() => loadSetting('interval', '1m'))
   const [strikes, setStrikes] = useState<number[]>([])
   const [selectedStrike, setSelectedStrike] = useState<string>('')
+  const selectedStrikeRef = useRef('')
   const [showCE, setShowCE] = useState(() => loadSetting('showCE', true))
   const [showPE, setShowPE] = useState(() => loadSetting('showPE', true))
   const [showIntrinsic, setShowIntrinsic] = useState(() => loadSetting('showIntrinsic', false))
@@ -925,6 +926,7 @@ export default function EzayChart() {
       const res = await fetch(`/madhan/api/ezayChart_data?strike=${selectedStrike}&_=${Date.now()}`)
       const json: OptionDataResponse = await res.json()
       if (json.status !== 'success' || !json.data) return
+      if (String(json.data.strike) !== selectedStrikeRef.current) return
       rawDataRef.current = json.data
       strikeNumRef.current = json.data.strike
       currentOhlcRef.current.clear()
@@ -948,6 +950,7 @@ export default function EzayChart() {
       const res = await fetch(`/madhan/api/ezayChart_data?strike=${selectedStrike}&_=${Date.now()}`)
       const json: OptionDataResponse = await res.json()
       if (json.status !== 'success' || !json.data) return
+      if (String(json.data.strike) !== selectedStrikeRef.current) return
       rawDataRef.current = json.data
       strikeNumRef.current = json.data.strike
       currentOhlcRef.current.clear()
@@ -1548,6 +1551,9 @@ export default function EzayChart() {
       })))
     }
   }, [volumeMode, madhanMode, isBacktest, backtestDate, interval])
+
+  // Keep selectedStrikeRef in sync — used for stale-response guards in loadData/updateLiveData
+  useEffect(() => { selectedStrikeRef.current = selectedStrike }, [selectedStrike])
 
    // TrustMe: lazily create series on pane 1, render from cached data
   useEffect(() => {
