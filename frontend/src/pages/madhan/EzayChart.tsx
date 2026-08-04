@@ -1686,14 +1686,13 @@ export default function EzayChart() {
           return
         }
         if (json?.status === 'success' && json?.is_running && json?.last_update) {
+          if (!fetcherRunningRef.current) setFetcherRunning(true)
           fetcherRunningRef.current = true
-          setFetcherRunning(true)
           const lastUpdate = new Date(json.last_update)
           const serverNow = getServerNow()
             if (lastUpdate.getMinutes() === serverNow.getMinutes()) {
               await updateLiveData()
               await refetchSignals()
-              setRefreshTrigger((t) => t + 1)
               window.clearInterval(pollInterval)
               scheduleNextMinute()
             }
