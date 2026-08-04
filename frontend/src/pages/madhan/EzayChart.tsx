@@ -36,6 +36,7 @@ import { tradingApi } from '@/api/trading'
 import { setTimeOffset, getTimeOffset } from '@/utils/timeSync'
 import { chartTheme } from './chartTheme'
 import { PositionLinePrimitive, type PositionDatum, OrderLinePrimitive, type OrderLineDatum } from './chartPrimitives'
+import { useOrderEventRefresh } from '@/hooks/useOrderEventRefresh'
 import RealtimeTable from './RealtimeTable'
 import EzaySignals, { type SignalRow, type FirstSignalInfo, type BackendSignals } from './components/EzaySignals'
 import QuickTradePanel from './components/QuickTradePanel'
@@ -1750,12 +1751,11 @@ export default function EzayChart() {
     fetchPositions()
   }, [ceSymbol, peSymbol, fetchPositions])
 
-  // Periodic position refresh (every 30s)
-  useEffect(() => {
-    if (isBacktest) return
-    const id = window.setInterval(fetchPositions, 30000)
-    return () => window.clearInterval(id)
-  }, [fetchPositions, isBacktest])
+  // Refresh positions on order/position events instead of 30s polling
+  useOrderEventRefresh(fetchPositions, {
+    events: ['order_event', 'analyzer_update', 'close_position_event'],
+    enabled: !isBacktest,
+  })
 
   // Fetch orders when CE/PE symbols change
   useEffect(() => {
@@ -1763,12 +1763,11 @@ export default function EzayChart() {
     fetchOrders()
   }, [ceSymbol, peSymbol, fetchOrders])
 
-  // Periodic order refresh (every 30s)
-  useEffect(() => {
-    if (isBacktest) return
-    const id = window.setInterval(fetchOrders, 30000)
-    return () => window.clearInterval(id)
-  }, [fetchOrders, isBacktest])
+  // Refresh orders on order events instead of 30s polling
+  useOrderEventRefresh(fetchOrders, {
+    events: ['order_event', 'analyzer_update', 'cancel_order_event', 'modify_order_event'],
+    enabled: !isBacktest,
+  })
 
   // Strategy visibility toggle — re-combine trades from cached response
   useEffect(() => {
