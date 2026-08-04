@@ -6,6 +6,17 @@
 - Use `cd frontend && npm install && npm run build` to build locally if needed.
 - Use `cd frontend && npm ci` to verify lockfile consistency with CI.
 
+## Build Verification Before Push
+
+- **Always run `npx tsc -b` (TypeScript check) AND `npx vite build` locally before committing.** A passing `tsc` alone is not enough — the full `vite build` must also succeed. Docker builds use `npm run build` which runs both.
+- **Never commit or push without first verifying the build passes locally.** If the user confirms a fix works at runtime, still run the full build before committing.
+
+## Commit & Push Discipline
+
+- **Never push to git without explicit user confirmation.** Always ask the user to confirm before running `git push`.
+- Commits may be created after user confirms changes are working, but `git push` requires separate explicit approval.
+- If the user says "push" or "ok push", that counts as confirmation.
+
 ## Dependency Management
 
 - **Never remove or modify dependencies in `package.json` without user confirmation.** The madhan pages import many third-party libraries (`react-router-dom`, `lightweight-charts-drawing`, `lightweight-charts-indicators`, `chart.js`, `react-chartjs-2`, `oakscriptjs`, `date-fns`, `chartjs-adapter-date-fns`, `@types/chart.js`) that may not be explicitly listed in `package.json` but are required for builds.

@@ -1653,7 +1653,7 @@ export default function EzayChart() {
     return () => window.clearInterval(id)
   }, [interval])
 
-  const [refreshTrigger, setRefreshTrigger] = useState(0)
+  const [refreshTrigger] = useState(0)
 
   useEffect(() => {
     if (selectedStrike) loadData()
