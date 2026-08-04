@@ -1912,15 +1912,6 @@ export default function EzayChart() {
 
     if (!ceDayVol && !peDayVol) return
 
-    const totalDayVol = ceDayVol + peDayVol
-
-    // Current candle volume = WS day vol - all previous API volumes (exclude current)
-    let historicalVol = 0
-    for (const [ts, vol] of apiCandleVolRef.current) {
-      if (ts < (time as number)) historicalVol += vol
-    }
-    const currentCandleVol = Math.max(0, totalDayVol - historicalVol)
-
     const ceIntrinsic = Math.max(0, spot - strike)
     const peIntrinsic = Math.max(0, strike - spot)
     const ceExtrinsic = Math.max(0, ceLtp - ceIntrinsic)
@@ -1985,9 +1976,20 @@ export default function EzayChart() {
       }
     }
 
-    if (volumeRef.current && totalDayVol > 0 && volumeMode === 'strike' && currentCandleVol > 0) {
-      const dark = madhanMode === 'dark'
-      volumeRef.current.update({ time: time as Time, value: currentCandleVol, color: dark ? 'rgba(38,166,154,0.5)' : 'rgba(38,166,154,0.6)' })
+    // Strike volume: only when WS provides volume data
+    if (volumeRef.current && volumeMode === 'strike') {
+      const totalDayVol = ceDayVol + peDayVol
+      if (totalDayVol > 0) {
+        let historicalVol = 0
+        for (const [ts, vol] of apiCandleVolRef.current) {
+          if (ts < (time as number)) historicalVol += vol
+        }
+        const currentCandleVol = Math.max(0, totalDayVol - historicalVol)
+        if (currentCandleVol > 0) {
+          const dark = madhanMode === 'dark'
+          volumeRef.current.update({ time: time as Time, value: currentCandleVol, color: dark ? 'rgba(38,166,154,0.5)' : 'rgba(38,166,154,0.6)' })
+        }
+      }
     }
   }, [wsData, ceSymbol, peSymbol, volumeMode])
 
