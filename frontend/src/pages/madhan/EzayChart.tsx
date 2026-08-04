@@ -1910,8 +1910,6 @@ export default function EzayChart() {
       pePositionRef.current?.setData([updated])
     }
 
-    if (!ceDayVol && !peDayVol) return
-
     const ceIntrinsic = Math.max(0, spot - strike)
     const peIntrinsic = Math.max(0, strike - spot)
     const ceExtrinsic = Math.max(0, ceLtp - ceIntrinsic)
