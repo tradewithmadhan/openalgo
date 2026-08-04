@@ -1348,8 +1348,9 @@ export default function EzayChart() {
     applyData()
   }, [showSignals, showHC, applyData])
 
-  // Single fetch: signals + hx_lx_vol data consumed by Total Volume, TrustMe, and EzaySignals
-  useEffect(() => {
+  // Signals + hx_lx_vol data consumed by Total Volume, TrustMe, and EzaySignals
+  // Extracted as useCallback so the live polling can re-fetch every minute
+  const refetchSignals = useCallback(async () => {
     const bt = isBacktestRef.current
     const dt = backtestDateRef.current
     // Clear previous data
@@ -1359,77 +1360,77 @@ export default function EzayChart() {
     setSignalsForPanel([])
     setSignalsMetaForPanel(null)
     setSignalsLastTime(0)
-    const controller = new AbortController()
-    const fetchSignals = async () => {
-      try {
-        const url = bt && dt
-          ? `/madhan/api/nifty/backtest_signals?date=${dt}&_=${Date.now()}`
-          : `/madhan/api/ezayChart_signals?_=${Date.now()}`
-        const res = await fetch(url, { signal: controller.signal })
-        const json = await res.json()
-        if (json.status !== 'success' || !json.data) return
-        signalsResponseRef.current = json
-        // Flatten ezay_signals into SignalRow[]
-        const flat: SignalRow[] = []
+    try {
+      const url = bt && dt
+        ? `/madhan/api/nifty/backtest_signals?date=${dt}&_=${Date.now()}`
+        : `/madhan/api/ezayChart_signals?_=${Date.now()}`
+      const res = await fetch(url)
+      const json = await res.json()
+      if (json.status !== 'success' || !json.data) return
+      signalsResponseRef.current = json
+      // Flatten ezay_signals into SignalRow[]
+      const flat: SignalRow[] = []
+      for (const entry of json.data) {
+        if (entry.ezay_signals) {
+          for (const sig of entry.ezay_signals) {
+            flat.push({ ...sig, time: entry.time })
+          }
+        }
+      }
+      signalsDataRef.current = flat
+      signalsMetaRef.current = json.signals || null
+      // Update state for EzaySignals panel
+      setSignalsForPanel(flat)
+      setSignalsMetaForPanel(json.signals || null)
+      setSignalsLastTime(json.last_time || 0)
+      const dark = madhanMode === 'dark'
+      // Render Total Volume if active
+      if (volumeMode === 'total') {
+        const raw: TotalVolEntry[] = []
         for (const entry of json.data) {
-          if (entry.ezay_signals) {
-            for (const sig of entry.ezay_signals) {
-              flat.push({ ...sig, time: entry.time })
-            }
+          if (entry.hx_lx_vol) {
+            raw.push({ time: entry.time, combined: (entry.hx_lx_vol.ce_vol || 0) + (entry.hx_lx_vol.pe_vol || 0) })
           }
         }
-        signalsDataRef.current = flat
-        signalsMetaRef.current = json.signals || null
-        // Update state for EzaySignals panel
-        setSignalsForPanel(flat)
-        setSignalsMetaForPanel(json.signals || null)
-        setSignalsLastTime(json.last_time || 0)
-        const dark = madhanMode === 'dark'
-        // Render Total Volume if active
-        if (volumeMode === 'total') {
-          const raw: TotalVolEntry[] = []
-          for (const entry of json.data) {
-            if (entry.hx_lx_vol) {
-              raw.push({ time: entry.time, combined: (entry.hx_lx_vol.ce_vol || 0) + (entry.hx_lx_vol.pe_vol || 0) })
-            }
-          }
-          if (raw.length) {
-            const intervalMin = getIntervalMinutes(intervalRef.current)
-            const data = intervalMin > 1 ? aggregateTotalVolume(raw, intervalMin) : raw
-            totalVolumeDataRef.current = data
-            if (totalVolumeRef.current) {
-              totalVolumeRef.current.setData(data.map((d) => ({
-                time: d.time as Time,
-                value: d.combined,
-                color: dark ? 'rgba(38,166,154,0.5)' : 'rgba(38,166,154,0.6)',
-              })))
-            }
-          }
-        }
-        // Render TrustMe if series exist
-        if (showTrustMeRef.current && trustMeUpRef.current && trustMeDownRef.current) {
+        if (raw.length) {
           const intervalMin = getIntervalMinutes(intervalRef.current)
-          const rawEntries: TrustMeEntry[] = []
-          for (const entry of json.data) {
-            if (!entry.hx_lx_vol) continue
-            const { ce_hx = 0, pe_hx = 0, ce_lx = 0, pe_lx = 0 } = entry.hx_lx_vol
-            rawEntries.push({ time: entry.time, upside: ce_hx + pe_lx, downside: pe_hx + ce_lx })
+          const data = intervalMin > 1 ? aggregateTotalVolume(raw, intervalMin) : raw
+          totalVolumeDataRef.current = data
+          if (totalVolumeRef.current) {
+            totalVolumeRef.current.setData(data.map((d) => ({
+              time: d.time as Time,
+              value: d.combined,
+              color: dark ? 'rgba(38,166,154,0.5)' : 'rgba(38,166,154,0.6)',
+            })))
           }
-          const aggregated = aggregateTrustMe(rawEntries, intervalMin)
-          const upData: Array<{ time: Time; value: number; color: string }> = []
-          const downData: Array<{ time: Time; value: number; color: string }> = []
-          for (const item of aggregated) {
-            if (item.upside > 0) upData.push({ time: item.time as Time, value: item.upside, color: dark ? 'rgba(33,150,243,0.7)' : 'rgba(33,150,243,0.8)' })
-            if (item.downside > 0) downData.push({ time: item.time as Time, value: item.downside, color: dark ? 'rgba(244,67,54,0.7)' : 'rgba(244,67,54,0.8)' })
-          }
-          if (upData.length) trustMeUpRef.current.setData(upData)
-          if (downData.length) trustMeDownRef.current.setData(downData)
         }
-      } catch {}
-    }
-    fetchSignals()
-    return () => controller.abort()
-  }, [madhanMode, isBacktest, backtestDate])
+      }
+      // Render TrustMe if series exist
+      if (showTrustMeRef.current && trustMeUpRef.current && trustMeDownRef.current) {
+        const intervalMin = getIntervalMinutes(intervalRef.current)
+        const rawEntries: TrustMeEntry[] = []
+        for (const entry of json.data) {
+          if (!entry.hx_lx_vol) continue
+          const { ce_hx = 0, pe_hx = 0, ce_lx = 0, pe_lx = 0 } = entry.hx_lx_vol
+          rawEntries.push({ time: entry.time, upside: ce_hx + pe_lx, downside: pe_hx + ce_lx })
+        }
+        const aggregated = aggregateTrustMe(rawEntries, intervalMin)
+        const upData: Array<{ time: Time; value: number; color: string }> = []
+        const downData: Array<{ time: Time; value: number; color: string }> = []
+        for (const item of aggregated) {
+          if (item.upside > 0) upData.push({ time: item.time as Time, value: item.upside, color: dark ? 'rgba(33,150,243,0.7)' : 'rgba(33,150,243,0.8)' })
+          if (item.downside > 0) downData.push({ time: item.time as Time, value: item.downside, color: dark ? 'rgba(244,67,54,0.7)' : 'rgba(244,67,54,0.8)' })
+        }
+        if (upData.length) trustMeUpRef.current.setData(upData)
+        if (downData.length) trustMeDownRef.current.setData(downData)
+      }
+    } catch {}
+  }, [madhanMode, volumeMode])
+
+  // Single fetch: signals + hx_lx_vol data consumed by Total Volume, TrustMe, and EzaySignals
+  useEffect(() => {
+    refetchSignals()
+  }, [madhanMode, isBacktest, backtestDate, selectedStrike, refetchSignals])
 
   // Volume mode: toggle series visibility + render total volume from cached data
   useEffect(() => {
@@ -1651,9 +1652,10 @@ export default function EzayChart() {
           setFetcherRunning(true)
           const lastUpdate = new Date(json.last_update)
           const serverNow = getServerNow()
-          if (lastUpdate.getMinutes() === serverNow.getMinutes()) {
-            await loadData()
-            setRefreshTrigger((t) => t + 1)
+           if (lastUpdate.getMinutes() === serverNow.getMinutes()) {
+             await loadData()
+             await refetchSignals()
+             setRefreshTrigger((t) => t + 1)
             window.clearInterval(pollInterval)
             scheduleNextMinute()
           }
