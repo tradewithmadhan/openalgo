@@ -363,6 +363,7 @@ export default function EzayChart() {
   }, [])
 
   const [fetcherRunning, setFetcherRunning] = useState(false)
+  const fetcherRunningRef = useRef(false)
   const [isPlacingOrder, setIsPlacingOrder] = useState(false)
   const isPlacingOrderRef = useRef(false)
   const isClosingRef = useRef(false)
@@ -910,6 +911,36 @@ export default function EzayChart() {
       console.error('Error loading EzayChart data:', err)
     }
   }, [selectedStrike, applyData, isBacktest, backtestDate, clearAllChartData])
+
+  // Lightweight incremental update for live polling — avoids clearing all series data
+  // which causes a visual "flash" / "page refresh" feeling every minute
+  const updateLiveData = useCallback(async () => {
+    if (!selectedStrike) return
+    try {
+      const res = await fetch(`/madhan/api/ezayChart_data?strike=${selectedStrike}&_=${Date.now()}`)
+      const json: OptionDataResponse = await res.json()
+      if (json.status !== 'success' || !json.data) return
+      rawDataRef.current = json.data
+      strikeNumRef.current = json.data.strike
+      currentOhlcRef.current.clear()
+      apiCandleVolRef.current.clear()
+      // Update symbols if changed
+      const newCeSymbol = json.data.ce_symbol || ''
+      const newPeSymbol = json.data.pe_symbol || ''
+      if (newCeSymbol !== ceSymbolRef.current) {
+        setCeSymbol(newCeSymbol)
+        ceSymbolRef.current = newCeSymbol
+      }
+      if (newPeSymbol !== peSymbolRef.current) {
+        setPeSymbol(newPeSymbol)
+        peSymbolRef.current = newPeSymbol
+      }
+      // Apply data directly without clearing series first
+      applyData()
+    } catch (err) {
+      console.error('Error updating live EzayChart data:', err)
+    }
+  }, [selectedStrike, applyData])
 
   const fetchPositions = useCallback(async () => {
     const apiKey = useAuthStore.getState().apiKey
@@ -1649,21 +1680,23 @@ export default function EzayChart() {
           setTimeOffset(timeOffsetRef.current)
         }
         if (!json?.is_running) {
-          setFetcherRunning(false)
+          if (fetcherRunningRef.current) setFetcherRunning(false)
+          fetcherRunningRef.current = false
           window.clearInterval(pollInterval)
           return
         }
         if (json?.status === 'success' && json?.is_running && json?.last_update) {
+          fetcherRunningRef.current = true
           setFetcherRunning(true)
           const lastUpdate = new Date(json.last_update)
           const serverNow = getServerNow()
-           if (lastUpdate.getMinutes() === serverNow.getMinutes()) {
-             await loadData()
-             await refetchSignals()
-             setRefreshTrigger((t) => t + 1)
-            window.clearInterval(pollInterval)
-            scheduleNextMinute()
-          }
+            if (lastUpdate.getMinutes() === serverNow.getMinutes()) {
+              await updateLiveData()
+              await refetchSignals()
+              setRefreshTrigger((t) => t + 1)
+              window.clearInterval(pollInterval)
+              scheduleNextMinute()
+            }
         }
       } catch {} finally {
         isFetching = false
@@ -1684,7 +1717,7 @@ export default function EzayChart() {
       scheduleNextMinute()
     }
     return () => { window.clearTimeout(timer); window.clearInterval(pollInterval) }
-  }, [selectedStrike, loadData, isBacktest])
+  }, [selectedStrike, updateLiveData, isBacktest])
 
   useEffect(() => {
     if (!strikeListRef.current || !selectedStrike) return
