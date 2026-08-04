@@ -315,6 +315,7 @@ export default function EzayChart() {
 
   const currentOhlcRef = useRef<Map<string, { time: number; open: number; high: number; low: number; close: number }>>(new Map())
   const apiCandleVolRef = useRef<Map<number, number>>(new Map())
+  const prevDayVolRef = useRef<Map<number, number>>(new Map())
   const strikeNumRef = useRef(0)
   const tradePanelClickRef = useRef<(clickY: number) => void>(() => {})
 
@@ -856,6 +857,7 @@ export default function EzayChart() {
     rawDataRef.current = null
     currentOhlcRef.current.clear()
     apiCandleVolRef.current.clear()
+    prevDayVolRef.current.clear()
     if (ceSeriesRef.current) ceSeriesRef.current.setData([])
     if (peSeriesRef.current) peSeriesRef.current.setData([])
     if (combinedSeriesRef.current) combinedSeriesRef.current.setData([])
@@ -890,6 +892,7 @@ export default function EzayChart() {
         strikeNumRef.current = json.data.strike
         currentOhlcRef.current.clear()
         apiCandleVolRef.current.clear()
+        prevDayVolRef.current.clear()
         setCeSymbol(json.data.ce_symbol || '')
         setPeSymbol(json.data.pe_symbol || '')
         ceSymbolRef.current = json.data.ce_symbol || ''
@@ -929,6 +932,7 @@ export default function EzayChart() {
       strikeNumRef.current = json.data.strike
       currentOhlcRef.current.clear()
       apiCandleVolRef.current.clear()
+      prevDayVolRef.current.clear()
       setCeSymbol(json.data.ce_symbol || '')
       setPeSymbol(json.data.pe_symbol || '')
       ceSymbolRef.current = json.data.ce_symbol || ''
@@ -952,6 +956,7 @@ export default function EzayChart() {
       strikeNumRef.current = json.data.strike
       currentOhlcRef.current.clear()
       apiCandleVolRef.current.clear()
+      prevDayVolRef.current.clear()
       // Update symbols if changed
       const newCeSymbol = json.data.ce_symbol || ''
       const newPeSymbol = json.data.pe_symbol || ''
@@ -1785,6 +1790,7 @@ export default function EzayChart() {
     ceTradeMarkersRef.current?.setMarkers([])
     peTradeMarkersRef.current?.setMarkers([])
     apiCandleVolRef.current.clear()
+    prevDayVolRef.current.clear()
     setCeLtpDisplay(0)
     setPeLtpDisplay(0)
     ceOrderRef.current?.setData([])
@@ -1795,6 +1801,7 @@ export default function EzayChart() {
   // baseline with old symbol's dayVol then computes bogus delta against new symbol
   useEffect(() => {
     apiCandleVolRef.current.clear()
+    prevDayVolRef.current.clear()
   }, [ceSymbol, peSymbol])
 
   // Fetch positions when CE/PE symbols change
@@ -1913,11 +1920,27 @@ export default function EzayChart() {
     if (!ceDayVol && !peDayVol) return
 
     const totalDayVol = ceDayVol + peDayVol
-    let historicalVol = 0
-    for (const [ts, vol] of apiCandleVolRef.current) {
-      if (ts < (time as number)) historicalVol += vol
+
+    // Skip volume update if day volume hasn't changed for this timestamp (no new volume from exchange)
+    const prevDayVol = prevDayVolRef.current.get(time as number) || 0
+    if (totalDayVol === prevDayVol) {
+      // No new volume — skip volume update but still process price/intrinsic/extrinsic below
     }
-    const currentCandleVol = Math.max(0, totalDayVol - historicalVol)
+    const dayVolChanged = totalDayVol !== prevDayVol
+    prevDayVolRef.current.set(time as number, totalDayVol)
+
+    let currentCandleVol = 0
+    if (dayVolChanged) {
+      let historicalVol = 0
+      for (const [ts, vol] of apiCandleVolRef.current) {
+        if (ts < (time as number)) historicalVol += vol
+      }
+      // Guard: if apiCandleVolRef is empty but totalDayVol is large, don't show full day vol as current candle
+      const apiHasData = apiCandleVolRef.current.size > 0
+      if (apiHasData || historicalVol === 0) {
+        currentCandleVol = Math.max(0, totalDayVol - historicalVol)
+      }
+    }
 
     const ceIntrinsic = Math.max(0, spot - strike)
     const peIntrinsic = Math.max(0, strike - spot)
@@ -1983,7 +2006,7 @@ export default function EzayChart() {
       }
     }
 
-    if (volumeRef.current && totalDayVol > 0 && volumeMode === 'strike') {
+    if (volumeRef.current && totalDayVol > 0 && volumeMode === 'strike' && dayVolChanged && currentCandleVol > 0) {
       const dark = madhanMode === 'dark'
       volumeRef.current.update({ time: time as Time, value: currentCandleVol, color: dark ? 'rgba(38,166,154,0.5)' : 'rgba(38,166,154,0.6)' })
     }
