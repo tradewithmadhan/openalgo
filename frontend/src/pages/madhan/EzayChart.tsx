@@ -217,6 +217,8 @@ export default function EzayChart() {
   const signalsResponseRef = useRef<any>(null)
   const signalsDataRef = useRef<SignalRow[]>([])
   const signalsMetaRef = useRef<BackendSignals | null>(null)
+  const signalsLastTimeRef = useRef<number>(0)
+  const signalsLastFetchedRef = useRef<number>(0)
   const ceMarkersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null)
   const peMarkersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null)
   const cpCeMarkersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null)
@@ -1350,16 +1352,16 @@ export default function EzayChart() {
 
   // Signals + hx_lx_vol data consumed by Total Volume, TrustMe, and EzaySignals
   // Extracted as useCallback so the live polling can re-fetch every minute
+  // Note: avoids unnecessary React state updates (like applyData) to prevent chart component re-renders
   const refetchSignals = useCallback(async () => {
     const bt = isBacktestRef.current
     const dt = backtestDateRef.current
-    // Clear previous data
+    // Only clear refs — React state is updated only when new data arrives below
     signalsResponseRef.current = null
     signalsDataRef.current = []
     signalsMetaRef.current = null
-    setSignalsForPanel([])
-    setSignalsMetaForPanel(null)
-    setSignalsLastTime(0)
+    signalsLastTimeRef.current = 0
+    signalsLastFetchedRef.current = Date.now()
     try {
       const url = bt && dt
         ? `/madhan/api/nifty/backtest_signals?date=${dt}&_=${Date.now()}`
@@ -1379,10 +1381,13 @@ export default function EzayChart() {
       }
       signalsDataRef.current = flat
       signalsMetaRef.current = json.signals || null
-      // Update state for EzaySignals panel
-      setSignalsForPanel(flat)
-      setSignalsMetaForPanel(json.signals || null)
-      setSignalsLastTime(json.last_time || 0)
+      signalsLastTimeRef.current = json.last_time || 0
+      // Update state for EzaySignals panel (only when visible to avoid unnecessary re-renders)
+      if (showEzaySignals) {
+        setSignalsForPanel(flat)
+        setSignalsMetaForPanel(json.signals || null)
+        setSignalsLastTime(json.last_time || 0)
+      }
       const dark = madhanMode === 'dark'
       // Render Total Volume if active
       if (volumeMode === 'total') {
@@ -1425,7 +1430,7 @@ export default function EzayChart() {
         if (downData.length) trustMeDownRef.current.setData(downData)
       }
     } catch {}
-  }, [madhanMode, volumeMode])
+  }, [madhanMode, volumeMode, showEzaySignals])
 
   // Single fetch: signals + hx_lx_vol data consumed by Total Volume, TrustMe, and EzaySignals
   useEffect(() => {
