@@ -12,6 +12,7 @@ import {
   type ISeriesApi,
   type ISeriesMarkersPluginApi,
   type Time,
+  createTextWatermark,
 } from 'lightweight-charts'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
@@ -215,6 +216,7 @@ export default function EzayChart() {
   const totalVolumeDataRef = useRef<Array<{ time: number; combined: number }>>([])
   const trustMeUpRef = useRef<ISeriesApi<any> | null>(null)
   const trustMeDownRef = useRef<ISeriesApi<any> | null>(null)
+  const strikeWatermarkRef = useRef<any>(null)
   const signalsResponseRef = useRef<any>(null)
   const signalsDataRef = useRef<SignalRow[]>([])
   const signalsMetaRef = useRef<BackendSignals | null>(null)
@@ -416,6 +418,10 @@ export default function EzayChart() {
     combinedExtrinsicMarkersRef.current = null
     ceTradeMarkersRef.current = null
     peTradeMarkersRef.current = null
+    if (strikeWatermarkRef.current) {
+      try { strikeWatermarkRef.current.detach() } catch {}
+      strikeWatermarkRef.current = null
+    }
     backtestTradesRef.current = []
     backtestSummaryRef.current = null
   }, [])
@@ -553,6 +559,27 @@ export default function EzayChart() {
     })
     peOrderRef.current = peOrd
     peSeriesRef.current.attachPrimitive(peOrd as any)
+
+    // Strike watermark — center of chart
+    if (strikeWatermarkRef.current) {
+      try { strikeWatermarkRef.current.detach() } catch {}
+      strikeWatermarkRef.current = null
+    }
+    const strikeVal = selectedStrike || (strikeNumRef.current ? String(strikeNumRef.current) : '')
+    if (strikeVal) {
+      const isDark = madhanMode === 'dark'
+      strikeWatermarkRef.current = createTextWatermark(chart.panes()[0], {
+        horzAlign: 'center',
+        vertAlign: 'center',
+        lines: [{
+          text: `Strike ${strikeVal}`,
+          color: isDark ? 'rgba(166,173,187,0.3)' : 'rgba(0,0,0,0.15)',
+          fontSize: 48,
+          fontFamily: 'Arial, sans-serif',
+          fontStyle: 'bold',
+        }],
+      })
+    }
   }, [removeAllSeries])
 
   const applyData = useCallback(() => {
@@ -1307,8 +1334,9 @@ export default function EzayChart() {
       chart.remove()
       chartRef.current = null
       chartReadyRef.current = false
-      trustMeUpRef.current = null
-      trustMeDownRef.current = null
+    trustMeUpRef.current = null
+    trustMeDownRef.current = null
+    strikeWatermarkRef.current = null
     }
   }, [])
 
@@ -1357,6 +1385,30 @@ export default function EzayChart() {
       if (peSeriesRef.current) peSeriesRef.current.applyOptions({ visible: showPE })
     }
   }, [semiTransparent, createAllSeries])
+
+  // Update strike watermark when selected strike changes
+  useEffect(() => {
+    if (!chartReadyRef.current || !chartRef.current) return
+    const strikeVal = selectedStrike || (strikeNumRef.current ? String(strikeNumRef.current) : '')
+    if (!strikeVal) return
+    // Detach old watermark
+    if (strikeWatermarkRef.current) {
+      try { strikeWatermarkRef.current.detach() } catch {}
+      strikeWatermarkRef.current = null
+    }
+    const isDark = madhanMode === 'dark'
+    strikeWatermarkRef.current = createTextWatermark(chartRef.current.panes()[0], {
+      horzAlign: 'center',
+      vertAlign: 'center',
+      lines: [{
+        text: `Strike ${strikeVal}`,
+        color: isDark ? 'rgba(166,173,187,0.3)' : 'rgba(0,0,0,0.15)',
+        fontSize: 48,
+        fontFamily: 'Arial, sans-serif',
+        fontStyle: 'bold',
+      }],
+    })
+  }, [selectedStrike, madhanMode])
 
   useEffect(() => {
     if (ceIntrinsicRef.current) ceIntrinsicRef.current.applyOptions({ visible: showIntrinsic })
