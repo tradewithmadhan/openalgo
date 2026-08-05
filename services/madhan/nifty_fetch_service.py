@@ -12,8 +12,8 @@ import pytz
 from utils.logging import get_logger
 from services.history_service import get_history
 from services.expiry_service import get_expiry_dates
-from database.madhan_db import store_nifty_data, store_option_data, store_previous_day_oi, NiftyData, OptionData, SessionLocal, get_tracked_symbols, save_tracked_symbols, save_fetcher_state, get_fetcher_state,get_valid_trading_day,clear_madhan_db, validate_backfill_consistency, get_current_day_historical_data
-from database.market_calendar_db import is_market_holiday
+from database.madhan_db import store_nifty_data, store_option_data, store_previous_day_oi, NiftyData, OptionData, SessionLocal, get_tracked_symbols, save_tracked_symbols, save_fetcher_state, get_fetcher_state,get_valid_trading_day,clear_madhan_db, validate_backfill_consistency, get_current_day_historical_data, get_last_option_candle_timestamp
+from database.market_calendar_db import is_market_holiday, get_market_timings_for_date
 from database.auth_db import get_first_available_api_key
 from utils.notifier import emit_notification
 from services.madhan.atp_signal import process_historical_atp_data
@@ -165,34 +165,99 @@ class NiftyDataFetcher:
         logger.info("Nifty data fetcher stopped.")
 
     def _auto_start_scheduler(self):
-        """Background thread that auto-starts the fetcher at 9:15 AM IST on trading days."""
+        """Background thread that auto-starts the fetcher at NFO start time on trading days."""
         IST = pytz.timezone('Asia/Kolkata')
 
         while True:
             now_ist = datetime.now(IST)
-            target = now_ist.replace(hour=9, minute=15, second=0, microsecond=0)
+            today = date_type.today()
+
+            # Skip weekends/holidays — sleep until tomorrow morning and re-check
+            if today.weekday() >= 5:
+                logger.info("Auto-start scheduler: weekend, sleeping until tomorrow.")
+                tomorrow = now_ist + timedelta(days=1)
+                target = tomorrow.replace(hour=9, minute=0, second=0, microsecond=0)
+                sleep_seconds = (target - now_ist).total_seconds()
+                while sleep_seconds > 0:
+                    chunk = min(sleep_seconds, 60)
+                    time.sleep(chunk)
+                    sleep_seconds -= chunk
+                continue
+
+            if is_market_holiday(today, exchange="NSE"):
+                logger.info("Auto-start scheduler: market holiday, sleeping until tomorrow.")
+                tomorrow = now_ist + timedelta(days=1)
+                target = tomorrow.replace(hour=9, minute=0, second=0, microsecond=0)
+                sleep_seconds = (target - now_ist).total_seconds()
+                while sleep_seconds > 0:
+                    chunk = min(sleep_seconds, 60)
+                    time.sleep(chunk)
+                    sleep_seconds -= chunk
+                continue
+
+            # Get NFO start time from DB timings
+            nfo_start_hour, nfo_start_min = 9, 15  # fallback
+            try:
+                timings = get_market_timings_for_date(today)
+                for t in timings:
+                    if t.get('exchange') == 'NFO':
+                        start_dt = datetime.fromtimestamp(t['start_time'] / 1000, tz=IST)
+                        nfo_start_hour = start_dt.hour
+                        nfo_start_min = start_dt.minute
+                        logger.info(f"Auto-start scheduler: NFO start time from DB: {nfo_start_hour:02d}:{nfo_start_min:02d}")
+                        break
+            except Exception as e:
+                logger.warning(f"Auto-start scheduler: could not fetch NFO timings, using default 09:15: {e}")
+
+            target = now_ist.replace(hour=nfo_start_hour, minute=nfo_start_min, second=0, microsecond=0)
 
             if now_ist >= target:
-                target += timedelta(days=1)
+                # Already past NFO start — check if fetcher needs to be started
+                if self.is_running:
+                    logger.info("Auto-start scheduler: fetcher already running, sleeping until tomorrow.")
+                    tomorrow = now_ist + timedelta(days=1)
+                    next_target = tomorrow.replace(hour=nfo_start_hour, minute=nfo_start_min, second=0, microsecond=0)
+                    sleep_seconds = (next_target - now_ist).total_seconds()
+                    while sleep_seconds > 0:
+                        chunk = min(sleep_seconds, 60)
+                        time.sleep(chunk)
+                        sleep_seconds -= chunk
+                    continue
 
+                api_key = get_first_available_api_key()
+                if not api_key:
+                    logger.info("Auto-start scheduler: no active session/API key found, sleeping until tomorrow.")
+                    tomorrow = now_ist + timedelta(days=1)
+                    next_target = tomorrow.replace(hour=nfo_start_hour, minute=nfo_start_min, second=0, microsecond=0)
+                    sleep_seconds = (next_target - now_ist).total_seconds()
+                    while sleep_seconds > 0:
+                        chunk = min(sleep_seconds, 60)
+                        time.sleep(chunk)
+                        sleep_seconds -= chunk
+                    continue
+
+                logger.info("Auto-start scheduler: starting fetcher (past NFO start).")
+                self.start(api_key)
+                # Sleep until tomorrow
+                tomorrow = now_ist + timedelta(days=1)
+                next_target = tomorrow.replace(hour=nfo_start_hour, minute=nfo_start_min, second=0, microsecond=0)
+                sleep_seconds = (next_target - now_ist).total_seconds()
+                while sleep_seconds > 0:
+                    chunk = min(sleep_seconds, 60)
+                    time.sleep(chunk)
+                    sleep_seconds -= chunk
+                continue
+
+            # Sleep until NFO start time
             sleep_seconds = (target - now_ist).total_seconds()
-            logger.info(f"Auto-start scheduler: sleeping {sleep_seconds/3600:.1f}h until {target.strftime('%Y-%m-%d %H:%M %Z')}")
+            logger.info(f"Auto-start scheduler: sleeping {sleep_seconds/3600:.1f}h until {target.strftime('%Y-%m-%d %H:%M %Z')} (NFO start)")
 
             while sleep_seconds > 0:
                 chunk = min(sleep_seconds, 60)
                 time.sleep(chunk)
                 sleep_seconds -= chunk
 
-            today = date_type.today()
-
-            if today.weekday() >= 5:
-                logger.info("Auto-start scheduler: weekend, skipping.")
-                continue
-
-            if is_market_holiday(today, exchange="NSE"):
-                logger.info("Auto-start scheduler: market holiday, skipping.")
-                continue
-
+            # Re-check after sleep
             if self.is_running:
                 logger.info("Auto-start scheduler: fetcher already running, skipping.")
                 continue
@@ -820,21 +885,38 @@ class NiftyDataFetcher:
                                 logger.warning(f"Backfill validation FAILED: {validation['issues']}")
 
                         # Check for market close condition to stop the fetcher for the day
-                        market_close_time = now.replace(hour=15, minute=30, second=0, microsecond=0)
+                        # Get NFO end_time from DB timings
+                        nfo_end_hour, nfo_end_min = 15, 40  # fallback
+                        try:
+                            today_date = date_type.today()
+                            timings = get_market_timings_for_date(today_date)
+                            for t in timings:
+                                if t.get('exchange') == 'NFO':
+                                    end_dt = datetime.fromtimestamp(t['end_time'] / 1000, tz=pytz.timezone('Asia/Kolkata'))
+                                    nfo_end_hour = end_dt.hour
+                                    nfo_end_min = end_dt.minute
+                                    break
+                        except Exception as e:
+                            logger.debug(f"Could not fetch NFO timings for close check, using default 15:40: {e}")
+
+                        market_close_time = now.replace(hour=nfo_end_hour, minute=nfo_end_min, second=0, microsecond=0)
 
                         if now > market_close_time:
-                            last_candle_timestamp = df_nifty['timestamp'].iloc[-1]
-                            # The timestamp is in seconds (unix time), convert to datetime
-                            last_candle_dt = datetime.fromtimestamp(last_candle_timestamp)
-                            logger.info(f"Market is closed. Last candle time: {last_candle_dt.strftime('%H:%M:%S')}")
+                            # Check last options candle timestamp instead of NIFTY spot
+                            last_opt_ts = get_last_option_candle_timestamp()
+                            if last_opt_ts:
+                                last_opt_dt = datetime.fromtimestamp(last_opt_ts)
+                                logger.info(f"Market is closed. Last options candle time: {last_opt_dt.strftime('%H:%M:%S')}")
 
-                            # If the last candle is at 15:29, it's the end of the trading day
-                            if last_candle_dt.hour == 15 and last_candle_dt.minute == 29:
-                                logger.info("Last candle for the day (15:29) has been fetched. Stopping fetcher.")
-                                self.is_running = False
-                                self.status = "Stopped (Market Closed)"
-                                self.stop_event.set() # Signal the loop to terminate
-                                break # Exit the loop
+                                # Stop when last options candle is at NFO end minute - 1 (e.g. 15:39 for 15:40 close)
+                                if last_opt_dt.hour == nfo_end_hour and last_opt_dt.minute == nfo_end_min - 1:
+                                    logger.info(f"Last options candle for the day ({nfo_end_hour}:{nfo_end_min - 1:02d}) has been fetched. Stopping fetcher.")
+                                    self.is_running = False
+                                    self.status = "Stopped (Market Closed)"
+                                    self.stop_event.set()
+                                    break
+                            else:
+                                logger.info("Market is closed but no options candle data found yet.")
                 else:
                     logger.warning(f"Incremental NIFTY fetch failed: {result_nifty.get('message', 'Unknown error')}")
 

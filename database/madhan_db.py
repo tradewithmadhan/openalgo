@@ -738,6 +738,22 @@ def get_current_day_historical_data(end_ts: int = None):
     finally:
         session.close()
 
+def get_last_option_candle_timestamp():
+    """Returns the latest OptionData timestamp (unix seconds) for today, or None."""
+    session = SessionLocal()
+    try:
+        today = get_valid_trading_day(exchange="NSE")
+        start_of_day = datetime.combine(today, time.min)
+        start_of_day_ts = int(start_of_day.timestamp())
+        return session.query(func.max(OptionData.timestamp)).filter(
+            OptionData.timestamp >= start_of_day_ts
+        ).scalar()
+    except Exception as e:
+        logger.error(f"Error fetching last option candle timestamp: {e}")
+        return None
+    finally:
+        session.close()
+
 def get_current_day_instrument_data(symbol: str):
     """Fetches all 1-minute candle data for the current day for a specific instrument/symbol."""
     session = SessionLocal()
