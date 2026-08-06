@@ -133,7 +133,7 @@ export function CePeStrikeVolumeChangesChart({ refreshTrigger, atmStrike }: CePe
 
     let currentTime = data.timestamps[0];
     const endTime = new Date(data.timestamps[0]);
-    endTime.setHours(15, 30, 0, 0);
+    endTime.setHours(15, 40, 0, 0);
     const endTimestamp = endTime.getTime();
 
     const dataMap = new Map<number, { ce: number, pe: number, spike: boolean }>();

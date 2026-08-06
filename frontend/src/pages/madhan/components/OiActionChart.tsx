@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { RefreshCw } from 'lucide-react';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
-import { useThemeStore } from '@/stores/themeStore';
+import { useMadhanTheme } from '../useMadhanTheme';
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -118,7 +118,7 @@ const verticalLinePlugin = {
 };
 
 export function OiActionChart({ refreshTrigger, atmStrike }: OiActionChartProps) {
-  const { mode } = useThemeStore();
+  const { mode } = useMadhanTheme();
   const [data, setData] = useState<OiStrikeHistoryResponse | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [showFillColor, setShowFillColor] = useState(false);

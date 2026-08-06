@@ -38,7 +38,7 @@ import { CePeChangesChart } from './components/CePeChangesChart'
 import { CePeStrikeChangesChart } from './components/CePeStrikeChangesChart'
 import { CePeVolumeChangesChart } from './components/CePeVolumeChangesChart'
 import { CePeStrikeVolumeChangesChart } from './components/CePeStrikeVolumeChangesChart'
-import { OiActionChart } from './components/OiActionChart'
+import { OiActionChartPlotly } from './components/OiActionChartPlotly'
 import { SupportResistanceChart } from './components/SupportResistanceChart'
 import { FutStocks } from './components/FutStocks'
 import { MultiOptionsChart } from './components/MultiOptionsChart'
@@ -634,7 +634,7 @@ export default function Madhan01() {
         <TabsTrigger value="ce-pe-volume-analysis">CE/PE Volume</TabsTrigger>
         <TabsTrigger value="coi-trend">COI Trend</TabsTrigger>
         <TabsTrigger value="multi-options">Multi-Options</TabsTrigger>
-        <TabsTrigger value="oi-action">OI Action</TabsTrigger>
+        <TabsTrigger value="oi-action-plotly">OI Action</TabsTrigger>
         <TabsTrigger value="support-resistance">Support & Resistance</TabsTrigger>
         <TabsTrigger value="data-check">Data Check</TabsTrigger>
         <TabsTrigger value="signal-settings">Signal Settings</TabsTrigger>
@@ -1044,8 +1044,8 @@ export default function Madhan01() {
             />
         </TabsContent>
 
-        <TabsContent value="oi-action">
-          <OiActionChart refreshTrigger={_refreshTrigger} atmStrike={status?.current_atm_strike} />
+        <TabsContent value="oi-action-plotly">
+          <OiActionChartPlotly refreshTrigger={_refreshTrigger} atmStrike={status?.open_atm_strike} />
         </TabsContent>
 
         <TabsContent value="support-resistance">

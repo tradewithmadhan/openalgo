@@ -120,7 +120,7 @@ export function CePeChangesChart({ refreshTrigger }: CePeChangesChartProps) {
 
         // Set end time to 3:30 PM
         const endDate = new Date(baseDate);
-        endDate.setHours(15, 30, 0, 0);
+        endDate.setHours(15, 40, 0, 0);
         const endTime = endDate.getTime();
 
         // Create map for O(1) lookup
@@ -181,7 +181,7 @@ export function CePeChangesChart({ refreshTrigger }: CePeChangesChartProps) {
         const lastTs = filledTimestamps[filledTimestamps.length - 1];
         
         const targetEnd = new Date(lastTs);
-        targetEnd.setHours(15, 30, 0, 0);
+        targetEnd.setHours(15, 40, 0, 0);
         
         let nextTime = lastTs + interval;
         while (nextTime <= targetEnd.getTime()) {

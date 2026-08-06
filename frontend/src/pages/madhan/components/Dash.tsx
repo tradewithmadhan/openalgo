@@ -71,7 +71,7 @@ export function Dash({ refreshTrigger }: { refreshTrigger: number }) {
 
     const marketEndTime = useMemo(() => {
         const d = new Date();
-        d.setHours(15, 30, 0, 0);
+        d.setHours(15, 40, 0, 0);
         return Math.floor(d.getTime() / 1000);
     }, []);
 

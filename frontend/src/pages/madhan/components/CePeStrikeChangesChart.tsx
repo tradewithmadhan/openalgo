@@ -142,7 +142,7 @@ export function CePeStrikeChangesChart({ refreshTrigger, atmStrike }: CePeStrike
         if (lastTs) {
              const lastDate = new Date(lastTs);
              const targetEnd = new Date(lastDate);
-             targetEnd.setHours(15, 30, 0, 0);
+             targetEnd.setHours(15, 40, 0, 0);
              
              // Determine interval (default to 3 mins if not enough points)
              let interval = 3 * 60 * 1000;
