@@ -893,6 +893,27 @@ def get_first_available_api_key():
         return None
 
 
+def get_first_available_api_key_with_user():
+    """
+    Get the first available decrypted API key and its owning user_id.
+    Used for background services that need to call has_login_this_trading_session().
+
+    Returns (api_key, user_id) or (None, None).
+    """
+    try:
+        api_keys = ApiKeys.query.all()
+        for api_key_obj in api_keys:
+            if not api_key_obj.api_key_encrypted:
+                continue
+            auth_obj = Auth.query.filter_by(name=api_key_obj.user_id).first()
+            if auth_obj and not auth_obj.is_revoked and auth_obj.broker:
+                return decrypt_token(api_key_obj.api_key_encrypted), api_key_obj.user_id
+        return None, None
+    except Exception as e:
+        logger.exception(f"Error getting first available API key with user: {e}")
+        return None, None
+
+
 def verify_api_key(provided_api_key):
     """
     Verify an API key using Argon2 with intelligent caching.

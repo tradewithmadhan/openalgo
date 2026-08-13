@@ -14,7 +14,8 @@ from services.history_service import get_history
 from services.expiry_service import get_expiry_dates
 from database.madhan_db import store_nifty_data, store_option_data, store_previous_day_oi, NiftyData, OptionData, SessionLocal, get_tracked_symbols, save_tracked_symbols, save_fetcher_state, get_fetcher_state,get_valid_trading_day,clear_madhan_db, validate_backfill_consistency, get_current_day_historical_data, get_last_option_candle_timestamp
 from database.market_calendar_db import is_market_holiday, get_market_timings_for_date
-from database.auth_db import get_first_available_api_key
+from database.auth_db import get_first_available_api_key_with_user
+from utils.session import has_login_this_trading_session
 from utils.notifier import emit_notification
 from services.madhan.atp_signal import process_historical_atp_data
 from services.madhan.volume_signal import detect_volume_spike
@@ -224,9 +225,23 @@ class NiftyDataFetcher:
                         sleep_seconds -= chunk
                     continue
 
-                api_key = get_first_available_api_key()
+                api_key, user_id = get_first_available_api_key_with_user()
                 if not api_key:
                     logger.info("Auto-start scheduler: no active session/API key found, sleeping until tomorrow.")
+                    tomorrow = now_ist + timedelta(days=1)
+                    next_target = tomorrow.replace(hour=nfo_start_hour, minute=nfo_start_min, second=0, microsecond=0)
+                    sleep_seconds = (next_target - now_ist).total_seconds()
+                    while sleep_seconds > 0:
+                        chunk = min(sleep_seconds, 60)
+                        time.sleep(chunk)
+                        sleep_seconds -= chunk
+                    continue
+
+                if not has_login_this_trading_session(user_id):
+                    logger.info(
+                        f"Auto-start scheduler: no login since today's session rollover "
+                        f"for {user_id}, broker token is stale. Sleeping until tomorrow."
+                    )
                     tomorrow = now_ist + timedelta(days=1)
                     next_target = tomorrow.replace(hour=nfo_start_hour, minute=nfo_start_min, second=0, microsecond=0)
                     sleep_seconds = (next_target - now_ist).total_seconds()
@@ -262,9 +277,16 @@ class NiftyDataFetcher:
                 logger.info("Auto-start scheduler: fetcher already running, skipping.")
                 continue
 
-            api_key = get_first_available_api_key()
+            api_key, user_id = get_first_available_api_key_with_user()
             if not api_key:
                 logger.info("Auto-start scheduler: no active session/API key found, skipping.")
+                continue
+
+            if not has_login_this_trading_session(user_id):
+                logger.info(
+                    f"Auto-start scheduler: no login since today's session rollover "
+                    f"for {user_id}, broker token is stale. Skipping."
+                )
                 continue
 
             logger.info("Auto-start scheduler: starting fetcher.")
