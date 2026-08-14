@@ -14,7 +14,7 @@ from services.madhan.atp_signal import (
 )
 from services.madhan.volume_signal import compute_spike_flags
 from services.madhan.hx_lx import compute_hx_lx_counts
-from database.madhan_db import extract_strike, get_nifty_data, get_option_data, get_consistent_current_option_data, get_nifty_data_count, get_previous_day_oi, get_nth_candle_oi_for_all_symbols, get_current_day_historical_data, get_current_day_instrument_data, get_coi_history, get_valid_trading_day, SessionLocal, NiftyData, get_tracked_symbols
+from database.madhan_db import extract_strike, get_nifty_data, get_option_data, get_consistent_current_option_data, get_nifty_data_count, get_previous_day_oi, get_nth_candle_oi_for_all_symbols, get_current_day_historical_data, get_current_day_instrument_data, get_instrument_data_for_date, get_previous_trading_day, get_coi_history, get_valid_trading_day, SessionLocal, NiftyData, get_tracked_symbols
 from database.auth_db import get_api_key_for_tradingview
 from blueprints.react_app import serve_react_app
 
@@ -1112,6 +1112,8 @@ def ezay_chart_data():
         except ValueError:
             return jsonify({'status': 'error', 'message': 'Invalid strike price format'}), 400
         
+        include_previous = request.args.get('include_previous_day', 'false').lower() == 'true'
+        
         # Get tracked symbols to find CE and PE for the given strike
         tracked_symbols = get_tracked_symbols()
         
@@ -1144,8 +1146,28 @@ def ezay_chart_data():
         # Get NIFTY spot data for intrinsic value calculations
         spot_data = get_current_day_instrument_data('NIFTY')
         
-        # Create a spot price lookup by timestamp
+        # Get previous day's data if requested
+        prev_ce_data = []
+        prev_pe_data = []
+        prev_spot_data = []
+        prev_spot_lookup = {}
+        
+        if include_previous:
+            try:
+                prev_date = get_previous_trading_day()
+                if ce_symbol:
+                    prev_ce_data = get_instrument_data_for_date(ce_symbol, prev_date)
+                if pe_symbol:
+                    prev_pe_data = get_instrument_data_for_date(pe_symbol, prev_date)
+                prev_spot_data = get_instrument_data_for_date('NIFTY', prev_date)
+                prev_spot_lookup = {item['timestamp']: item['close'] for item in prev_spot_data}
+            except Exception as e:
+                logger.warning(f"Could not fetch previous day data: {e}")
+                include_previous = False
+        
+        # Create a spot price lookup by timestamp (merge current + previous)
         spot_lookup = {item['timestamp']: item['close'] for item in spot_data}
+        spot_lookup.update(prev_spot_lookup)
         
         # IST timezone
         ist_tz = pytz.timezone('Asia/Kolkata')
@@ -1223,9 +1245,18 @@ def ezay_chart_data():
             
             return enhanced_data
         
-        # Process CE and PE data
+        # Process CE and PE data for current day
         formatted_ce_data = format_chart_data_enhanced(ce_data, 'CE') if ce_data else []
         formatted_pe_data = format_chart_data_enhanced(pe_data, 'PE') if pe_data else []
+        
+        # Process previous day data if requested
+        if include_previous and (prev_ce_data or prev_pe_data):
+            formatted_prev_ce = format_chart_data_enhanced(prev_ce_data, 'CE') if prev_ce_data else []
+            formatted_prev_pe = format_chart_data_enhanced(prev_pe_data, 'PE') if prev_pe_data else []
+            
+            # Prepend previous day data to current day data
+            formatted_ce_data = formatted_prev_ce + formatted_ce_data
+            formatted_pe_data = formatted_prev_pe + formatted_pe_data
         
         # Calculate combined premium data and additional metrics
         combined_data = []

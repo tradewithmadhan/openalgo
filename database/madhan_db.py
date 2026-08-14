@@ -754,6 +754,13 @@ def get_last_option_candle_timestamp():
     finally:
         session.close()
 
+
+def get_previous_trading_day():
+    """Returns the valid trading day immediately before the current trading day."""
+    current = get_valid_trading_day(exchange="NSE")
+    return get_valid_trading_day(current - timedelta(days=1), exchange="NSE")
+
+
 def get_current_day_instrument_data(symbol: str):
     """Fetches all 1-minute candle data for the current day for a specific instrument/symbol."""
     session = SessionLocal()
@@ -801,6 +808,57 @@ def get_current_day_instrument_data(symbol: str):
         session.close()
 
 
+def get_instrument_data_for_date(symbol: str, target_date):
+    """Fetches all 1-minute candle data for a specific date and instrument/symbol.
+
+    Args:
+        symbol: 'NIFTY' for spot data, or an option symbol like 'NIFTY29AUG2524000CE'
+        target_date: date object for the target trading day
+    """
+    session = SessionLocal()
+    try:
+        start_of_day = datetime.combine(target_date, time.min)
+        end_of_day = datetime.combine(target_date, time.max)
+        start_ts = int(start_of_day.timestamp())
+        end_ts = int(end_of_day.timestamp())
+
+        if symbol == 'NIFTY':
+            nifty_data = session.query(
+                NiftyData.timestamp,
+                NiftyData.open,
+                NiftyData.high,
+                NiftyData.low,
+                NiftyData.close,
+                NiftyData.volume,
+                func.coalesce(NiftyData.oi, 0).label('oi')
+            ).filter(
+                NiftyData.timestamp >= start_ts,
+                NiftyData.timestamp <= end_ts
+            ).order_by(NiftyData.timestamp.asc()).all()
+
+            return [row._asdict() for row in nifty_data]
+        else:
+            option_data = session.query(
+                OptionData.timestamp,
+                OptionData.open,
+                OptionData.high,
+                OptionData.low,
+                OptionData.close,
+                OptionData.volume,
+                func.coalesce(OptionData.oi, 0).label('oi')
+            ).filter(
+                OptionData.symbol == symbol,
+                OptionData.timestamp >= start_ts,
+                OptionData.timestamp <= end_ts
+            ).order_by(OptionData.timestamp.asc()).all()
+
+            return [row._asdict() for row in option_data]
+
+    except Exception as e:
+        logger.error(f"Error fetching instrument data for {symbol} on {target_date}: {e}", exc_info=True)
+        return []
+    finally:
+        session.close()
 
 
 def get_coi_history(days: int = 30):

@@ -245,6 +245,7 @@ export default function EzayChart() {
   const updaterRef = useRef<number | null>(null)
   const chartReadyRef = useRef(false)
   const rawDataRef = useRef<OptionDataResponse['data'] | null>(null)
+  const prevDayDataRef = useRef<{ ce_data: any[]; pe_data: any[]; combined_data: any[] } | null>(null)
 
   const chartTypeRef = useRef<'candlestick' | 'line'>('candlestick')
   const intervalRef = useRef('1m')
@@ -561,7 +562,7 @@ export default function EzayChart() {
     peOrderRef.current = peOrd
     peSeriesRef.current.attachPrimitive(peOrd as any)
 
-    // Strike watermark — center of chart
+    // Strike watermark — top center of chart
     if (strikeWatermarkRef.current) {
       try { strikeWatermarkRef.current.detach() } catch {}
       strikeWatermarkRef.current = null
@@ -571,7 +572,7 @@ export default function EzayChart() {
       const isDark = madhanMode === 'dark'
       strikeWatermarkRef.current = createTextWatermark(chart.panes()[0], {
         horzAlign: 'center',
-        vertAlign: 'center',
+        vertAlign: 'top',
         lines: [{
           text: `Strike ${strikeVal}`,
           color: isDark ? 'rgba(166,173,187,0.3)' : 'rgba(0,0,0,0.15)',
@@ -642,10 +643,10 @@ export default function EzayChart() {
       peIntrinsicRef.current.setData(combinedData.map((item) => ({ time: item.time, value: item.pe_intrinsic })))
     }
     if (ceExtrinsicRef.current) {
-      ceExtrinsicRef.current.setData(combinedData.map((item) => ({ time: item.time, value: item.ce_extrinsic })))
+      ceExtrinsicRef.current.setData(combinedData.filter((item) => item.ce_extrinsic >= 0).map((item) => ({ time: item.time, value: item.ce_extrinsic })))
     }
     if (peExtrinsicRef.current) {
-      peExtrinsicRef.current.setData(combinedData.map((item) => ({ time: item.time, value: item.pe_extrinsic })))
+      peExtrinsicRef.current.setData(combinedData.filter((item) => item.pe_extrinsic >= 0).map((item) => ({ time: item.time, value: item.pe_extrinsic })))
     }
     if (combinedExtrinsicRef.current) {
       if (intervalMin > 1) {
@@ -655,6 +656,7 @@ export default function EzayChart() {
         for (const item of rawCombined) {
           const bucket = Math.floor(item.time / bucketSec) * bucketSec
           const val = item.combined_extrinsic
+          if (val < 0) continue
           const existing = ohlcBuckets.get(bucket)
           if (existing) {
             if (val > existing.high) existing.high = val
@@ -667,7 +669,7 @@ export default function EzayChart() {
         const ohlcData = Array.from(ohlcBuckets.values()).sort((a, b) => a.time - b.time)
         combinedExtrinsicRef.current.setData(ohlcData)
       } else {
-        combinedExtrinsicRef.current.setData(combinedData.map((item) => ({ time: item.time, value: item.combined_extrinsic })))
+        combinedExtrinsicRef.current.setData(combinedData.filter((item) => item.combined_extrinsic >= 0).map((item) => ({ time: item.time, value: item.combined_extrinsic })))
       }
     }
 
@@ -855,6 +857,7 @@ export default function EzayChart() {
 
   const clearAllChartData = useCallback(() => {
     rawDataRef.current = null
+    prevDayDataRef.current = null
     currentOhlcRef.current.clear()
     apiCandleVolRef.current.clear()
     if (ceSeriesRef.current) ceSeriesRef.current.setData([])
@@ -923,11 +926,28 @@ export default function EzayChart() {
         return
       }
       // Live mode — existing logic
-      const res = await fetch(`/madhan/api/ezayChart_data?strike=${selectedStrike}&_=${Date.now()}`)
+      const res = await fetch(`/madhan/api/ezayChart_data?strike=${selectedStrike}&include_previous_day=true&_=${Date.now()}`)
       const json: OptionDataResponse = await res.json()
       if (json.status !== 'success' || !json.data) return
       if (String(json.data.strike) !== selectedStrikeRef.current) return
       rawDataRef.current = json.data
+      // Save previous day data for incremental updates (detect overnight gap > 4 hours)
+      const ceArr = json.data.ce_data || []
+      const peArr = json.data.pe_data || []
+      const combArr = json.data.combined_data || []
+      let splitIdx = 0
+      for (let i = 1; i < ceArr.length; i++) {
+        if (ceArr[i].time - ceArr[i - 1].time > 4 * 3600) { splitIdx = i; break }
+      }
+      if (splitIdx > 0) {
+        prevDayDataRef.current = {
+          ce_data: ceArr.slice(0, splitIdx),
+          pe_data: peArr.slice(0, splitIdx),
+          combined_data: combArr.slice(0, splitIdx),
+        }
+      } else {
+        prevDayDataRef.current = null
+      }
       strikeNumRef.current = json.data.strike
       currentOhlcRef.current.clear()
       apiCandleVolRef.current.clear()
@@ -952,6 +972,12 @@ export default function EzayChart() {
       if (json.status !== 'success' || !json.data) return
       if (String(json.data.strike) !== selectedStrikeRef.current) return
       rawDataRef.current = json.data
+      // Merge saved previous day data (it never changes, no need to re-fetch)
+      if (prevDayDataRef.current) {
+        json.data.ce_data = [...prevDayDataRef.current.ce_data, ...(json.data.ce_data || [])]
+        json.data.pe_data = [...prevDayDataRef.current.pe_data, ...(json.data.pe_data || [])]
+        json.data.combined_data = [...prevDayDataRef.current.combined_data, ...(json.data.combined_data || [])]
+      }
       strikeNumRef.current = json.data.strike
       currentOhlcRef.current.clear()
       apiCandleVolRef.current.clear()
@@ -1402,7 +1428,7 @@ export default function EzayChart() {
     const isDark = madhanMode === 'dark'
     strikeWatermarkRef.current = createTextWatermark(chartRef.current.panes()[0], {
       horzAlign: 'center',
-      vertAlign: 'center',
+      vertAlign: 'top',
       lines: [{
         text: `Strike ${strikeVal}`,
         color: isDark ? 'rgba(166,173,187,0.3)' : 'rgba(0,0,0,0.15)',
@@ -1622,6 +1648,15 @@ export default function EzayChart() {
       const isTotal = volumeMode === 'total'
       if (volumeRef.current) volumeRef.current.applyOptions({ visible: !isTotal })
       if (totalVolumeRef.current) totalVolumeRef.current.applyOptions({ visible: isTotal })
+      // Re-lock TrustMe pane height after createAllSeries re-adds all series
+      if (showTrustMeRef.current) {
+        requestAnimationFrame(() => {
+          try {
+            const panes = chartRef.current?.panes()
+            if (panes && panes.length > 1) panes[1].setHeight(100)
+          } catch {}
+        })
+      }
     }
   }, [interval, applyData])
 
@@ -1654,10 +1689,12 @@ export default function EzayChart() {
     if (showTrustMeRef.current && json.data) {
       const chart = chartRef.current
       if (!chart) return
-      // Destroy and recreate TrustMe series on pane 1 (in case createAllSeries moved them)
+      // Destroy and recreate TrustMe on pane 1 — necessary because createAllSeries
+      // removes all pane-0 series which causes the chart to collapse panes and
+      // move TrustMe to pane 0. Recreating ensures it lands on pane 1.
       if (trustMeUpRef.current) { try { chart.removeSeries(trustMeUpRef.current) } catch {} trustMeUpRef.current = null }
       if (trustMeDownRef.current) { try { chart.removeSeries(trustMeDownRef.current) } catch {} trustMeDownRef.current = null }
-       trustMeUpRef.current = chart.addSeries(HistogramSeries, {
+      trustMeUpRef.current = chart.addSeries(HistogramSeries, {
         priceLineVisible: true, lastValueVisible: true, crosshairMarkerVisible: false,
         priceFormat: { type: 'volume' }, visible: true,
       } as any, 1)
@@ -1665,11 +1702,6 @@ export default function EzayChart() {
         priceLineVisible: true, lastValueVisible: true, crosshairMarkerVisible: false,
         priceFormat: { type: 'volume' }, visible: true,
       } as any, 1)
-      try {
-        const panes = chart.panes()
-        if (panes.length > 1) panes[1].setHeight(100)
-      } catch {}
-      if (!trustMeUpRef.current || !trustMeDownRef.current) return
       const rawEntries: TrustMeEntry[] = []
       for (const entry of json.data) {
         if (!entry.hx_lx_vol) continue
@@ -1685,6 +1717,13 @@ export default function EzayChart() {
       }
       if (upData.length) trustMeUpRef.current.setData(upData)
       if (downData.length) trustMeDownRef.current.setData(downData)
+      // Re-lock pane height after chart settles
+      requestAnimationFrame(() => {
+        try {
+          const panes = chart.panes()
+          if (panes.length > 1) panes[1].setHeight(100)
+        } catch {}
+      })
     }
   }, [interval, volumeMode, madhanMode])
 
