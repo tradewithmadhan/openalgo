@@ -1450,3 +1450,145 @@ export function removeEmptyPanes(chart: any) {
     }
   }
 }
+
+export class VolumeProfilePrimitive {
+  _series: any
+  _timeScale: any
+  _pocPrice: number = 0
+  _developingPoc: Array<{ time: number; price: number }> = []
+  _prevPocPrice: number = 0
+  _prevDevelopingPoc: Array<{ time: number; price: number }> = []
+  _show = false
+  _pocColor = '#FFD700'
+  _devPocColor = '#FF8C00'
+  _prevPocColor = 'rgba(255,215,0,0.35)'
+  _prevDevPocColor = 'rgba(255,140,0,0.3)'
+  _bucketSize: number
+
+  constructor(series: any, timeScale: any, bucketSize = 10) {
+    this._series = series
+    this._timeScale = timeScale
+    this._bucketSize = bucketSize
+  }
+
+  paneViews() {
+    const self = this
+    return [
+      {
+        zOrder() { return 'top' as const },
+        renderer() {
+          return {
+            draw(target: any) {
+              if (!self._show) return
+              target.useMediaCoordinateSpace((scope: any) => {
+                const ctx = scope.context
+                const chartWidth = scope.mediaSize.width
+
+                // Draw previous day developing POC (dimmed, drawn first so today's is on top)
+                if (self._prevDevelopingPoc.length > 1) {
+                  ctx.save()
+                  ctx.strokeStyle = self._prevDevPocColor
+                  ctx.lineWidth = 1
+                  ctx.setLineDash([3, 3])
+                  ctx.beginPath()
+                  let started = false
+                  let prevY: number | null = null
+                  for (const pt of self._prevDevelopingPoc) {
+                    const x = self._timeScale.timeToCoordinate(pt.time)
+                    const y = self._series.priceToCoordinate(pt.price)
+                    if (x == null || y == null) continue
+                    if (!started) { ctx.moveTo(x, y); started = true }
+                    else {
+                      if (prevY != null && Math.abs(y - prevY) > 0.5) { ctx.lineTo(x, prevY); ctx.lineTo(x, y) }
+                      else ctx.lineTo(x, y)
+                    }
+                    prevY = y
+                  }
+                  ctx.stroke()
+                  ctx.setLineDash([])
+                  ctx.restore()
+                }
+
+                // Draw previous day POC line (dimmed, dashed)
+                if (self._prevPocPrice > 0) {
+                  const pocY = self._series.priceToCoordinate(self._prevPocPrice)
+                  if (pocY != null) {
+                    ctx.save()
+                    ctx.strokeStyle = self._prevPocColor
+                    ctx.lineWidth = 1
+                    ctx.setLineDash([6, 4])
+                    ctx.beginPath()
+                    ctx.moveTo(0, pocY)
+                    ctx.lineTo(chartWidth, pocY)
+                    ctx.stroke()
+                    ctx.fillStyle = self._prevPocColor
+                    ctx.font = '10px Arial'
+                    ctx.textAlign = 'right'
+                    ctx.fillText(`Prev ${self._prevPocPrice.toFixed(0)}`, chartWidth - 8, pocY - 5)
+                    ctx.setLineDash([])
+                    ctx.restore()
+                  }
+                }
+
+                // Draw today developing POC (stepped line)
+                if (self._developingPoc.length > 1) {
+                  ctx.save()
+                  ctx.strokeStyle = self._devPocColor
+                  ctx.lineWidth = 1.5
+                  ctx.setLineDash([4, 3])
+                  ctx.beginPath()
+                  let started = false
+                  let prevY: number | null = null
+                  for (const pt of self._developingPoc) {
+                    const x = self._timeScale.timeToCoordinate(pt.time)
+                    const y = self._series.priceToCoordinate(pt.price)
+                    if (x == null || y == null) continue
+                    if (!started) { ctx.moveTo(x, y); started = true }
+                    else {
+                      if (prevY != null && Math.abs(y - prevY) > 0.5) { ctx.lineTo(x, prevY); ctx.lineTo(x, y) }
+                      else ctx.lineTo(x, y)
+                    }
+                    prevY = y
+                  }
+                  ctx.stroke()
+                  ctx.setLineDash([])
+                  ctx.restore()
+                }
+
+                // Draw today POC line (solid, full color)
+                if (self._pocPrice > 0) {
+                  const pocY = self._series.priceToCoordinate(self._pocPrice)
+                  if (pocY != null) {
+                    ctx.save()
+                    ctx.strokeStyle = self._pocColor
+                    ctx.lineWidth = 2
+                    ctx.setLineDash([])
+                    ctx.beginPath()
+                    ctx.moveTo(0, pocY)
+                    ctx.lineTo(chartWidth, pocY)
+                    ctx.stroke()
+                    ctx.fillStyle = self._pocColor
+                    ctx.font = 'bold 11px Arial'
+                    ctx.textAlign = 'right'
+                    ctx.fillText(`POC ${self._pocPrice.toFixed(0)}`, chartWidth - 8, pocY - 6)
+                    ctx.restore()
+                  }
+                }
+              })
+            },
+          }
+        },
+      },
+    ]
+  }
+
+  setData(pocPrice: number, developingPoc: Array<{ time: number; price: number }>, prevPocPrice = 0, prevDevelopingPoc: Array<{ time: number; price: number }> = []) {
+    this._pocPrice = pocPrice
+    this._developingPoc = developingPoc
+    this._prevPocPrice = prevPocPrice
+    this._prevDevelopingPoc = prevDevelopingPoc
+  }
+
+  setVisible(v: boolean) { this._show = v }
+  toggle() { this._show = !this._show; return this._show }
+}

@@ -49,7 +49,7 @@ import ChartLayout from './ChartLayout'
 import WidgetBar from './WidgetBar'
 import EzaySignals from './components/EzaySignals'
 import IndicatorPanel, { INDICATOR_CATEGORIES } from './IndicatorPanel'
-import { PlotFillPrimitive, LineBrPrimitive, ExtendedMarkerPrimitive, BgColorPrimitive, LabelPrimitive, BoxPrimitive, LineDrawingPrimitive, TablePrimitive, CrossPlotPrimitive, applyTransparency } from './chartPrimitives'
+import { PlotFillPrimitive, LineBrPrimitive, ExtendedMarkerPrimitive, BgColorPrimitive, LabelPrimitive, BoxPrimitive, LineDrawingPrimitive, TablePrimitive, CrossPlotPrimitive, VolumeProfilePrimitive, applyTransparency } from './chartPrimitives'
 
 type Candle = {
   time: number
@@ -166,6 +166,7 @@ export default function NiftyChart() {
   const sqrtPrimitiveRef = useRef<any>(null)
   const sqrtActiveRef = useRef(false)
   const coiHistoryPrimitiveRef = useRef<any>(null)
+  const volumeProfileRef = useRef<VolumeProfilePrimitive | null>(null)
 
   const [interval, setIntervalValue] = useState('5m')
   const [oiActive, setOiActive] = useState(true)
@@ -175,6 +176,7 @@ export default function NiftyChart() {
   const [prevOhlcActive, setPrevOhlcActive] = useState(false)
   const [sqrtActive, setSqrtActive] = useState(false)
   const [coiHistoryActive, setCoiHistoryActive] = useState(false)
+  const [volumeProfileActive, setVolumeProfileActive] = useState(false)
   const [writersViewActive, setWritersViewActive] = useState(true)
   const coiTrendPaneRef = useRef<any>(null)
   const coiCandleSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null)
@@ -410,6 +412,9 @@ export default function NiftyChart() {
     try { thAnchor.attachPrimitive(thExtMarker as any) } catch {}
     thAnchorSeriesRef.current = thAnchor
     thExtMarkerRef.current = thExtMarker
+    const volumeProfile = new VolumeProfilePrimitive(candle, chart.timeScale())
+    try { candle.attachPrimitive(volumeProfile as any) } catch {}
+    volumeProfileRef.current = volumeProfile
     setChartReady(true)
     const drawingManager = new DrawingManager()
     drawingManager.attach(chart, candle, chartContainerRef.current)
@@ -630,6 +635,10 @@ export default function NiftyChart() {
       }
       thExtMarkerRef.current = null
       thAnchorSeriesRef.current = null
+      if (volumeProfileRef.current && candleRef.current) {
+        try { candleRef.current.detachPrimitive(volumeProfileRef.current as any) } catch {}
+      }
+      volumeProfileRef.current = null
       rawSignalDataRef.current = []
       chart.remove()
       chartRef.current = null
@@ -1302,6 +1311,100 @@ export default function NiftyChart() {
     repaintOverlay()
   }
 
+  const buildVolumeProfile = async () => {
+    if (!volumeProfileRef.current || !candleRef.current) return
+    try {
+      const [volRes, candlesRes] = await Promise.all([
+        fetch(`/madhan/api/nifty/ce-pe-volume-changes?strike_selection_mode=option1&upside_strikes=10&downside_strikes=10&_=${Date.now()}`),
+        fetch(`/madhan/nifty_live_data?interval=1m&_=${Date.now()}`),
+      ])
+      const volJson = await volRes.json()
+      const candlesJson = await candlesRes.json()
+      if (volJson?.status !== 'success' || !volJson?.data?.timestamps?.length) return
+
+      const timestamps: number[] = volJson.data.timestamps || []
+      const ce: number[] = volJson.data.ce_changes || []
+      const pe: number[] = volJson.data.pe_changes || []
+
+      // Build volume-by-timestamp map (1-min buckets, in seconds)
+      const volMap = new Map<number, number>()
+      for (let i = 0; i < timestamps.length; i++) {
+        const rawTs = Number(timestamps[i] || 0)
+        if (!rawTs) continue
+        const tsSec = rawTs > 1e10 ? Math.floor(rawTs / 1000) : Math.floor(rawTs)
+        const bucket = Math.floor(tsSec / 60) * 60
+        const combined = Math.abs(Number(ce[i] || 0)) + Math.abs(Number(pe[i] || 0))
+        volMap.set(bucket, (volMap.get(bucket) || 0) + combined)
+      }
+
+      // Always use raw 1-min candles for consistent profile granularity
+      const allCandles: Candle[] = candlesJson?.data || []
+      if (!allCandles.length) return
+      const lastCandle = allCandles[allCandles.length - 1]
+      const istDateKey = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit',
+      }).format(new Date(lastCandle.time * 1000))
+      const dayCandles = allCandles.filter((c) => {
+        const key = new Intl.DateTimeFormat('en-CA', {
+          timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit',
+        }).format(new Date(c.time * 1000))
+        return key === istDateKey
+      })
+      if (!dayCandles.length) return
+
+      // Build volume profile: distribute each candle's volume across its price range
+      // 24-row adaptive sizing (TradingView standard)
+      let minLow = Infinity, maxHigh = -Infinity
+      for (const c of dayCandles) {
+        if (c.low < minLow) minLow = c.low
+        if (c.high > maxHigh) maxHigh = c.high
+      }
+      const rowSize = (maxHigh - minLow) > 0 ? Math.max(1, Math.ceil((maxHigh - minLow) / 24)) : 10
+      const profile = new Map<number, number>()
+      const developingPoc: Array<{ time: number; price: number }> = []
+      let runningMaxVol = 0
+      let runningPoc = 0
+
+      for (const c of dayCandles) {
+        const vol = volMap.get(c.time) || 0
+        if (vol > 0) {
+          const lowBucket = Math.floor(c.low / rowSize) * rowSize
+          const highBucket = Math.ceil(c.high / rowSize) * rowSize
+          const numBuckets = Math.max(1, Math.round((highBucket - lowBucket) / rowSize))
+          const volPerBucket = vol / numBuckets
+          for (let p = lowBucket; p < highBucket; p += rowSize) {
+            profile.set(p, (profile.get(p) || 0) + volPerBucket)
+          }
+        }
+        // Track developing POC at each candle
+        let maxVol = 0
+        let poc = 0
+        for (const [price, v] of profile) {
+          if (v > maxVol) { maxVol = v; poc = price }
+        }
+        if (maxVol > runningMaxVol) { runningMaxVol = maxVol; runningPoc = poc }
+        developingPoc.push({ time: c.time, price: runningPoc })
+      }
+
+      volumeProfileRef.current.setData(runningPoc, developingPoc)
+      if (volumeProfileActive) {
+        chartRef.current?.timeScale().applyOptions({})
+      }
+    } catch (e) {
+      console.error('[VP] build error:', e)
+    }
+  }
+
+  const toggleVolumeProfile = () => {
+    const next = !volumeProfileActive
+    setVolumeProfileActive(next)
+    if (next && volumeProfileRef.current) {
+      buildVolumeProfile()
+    }
+    volumeProfileRef.current?.setVisible(next)
+    chartRef.current?.timeScale().applyOptions({})
+  }
+
   const toggleWritersView = () => {
     const next = !writersViewActive
     setWritersViewActive(next)
@@ -1882,6 +1985,7 @@ export default function NiftyChart() {
       })
     }
     await Promise.all([fetchOiProfiles(), fetchOptionCombinedVolume()])
+    if (volumeProfileActive) buildVolumeProfile()
     fetchCoiHistory()
     fetchCoiTrend()
     fetchSignalData()
@@ -2906,6 +3010,7 @@ export default function NiftyChart() {
           <Button variant={cePeSignalsActive ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={() => setCePeSignalsActive((p) => !p)}>CE/PE</Button>
           <Button variant={cpSignalsActive ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={() => setCpSignalsActive((p) => !p)}>CP</Button>
           <Button variant={thSignalsActive ? 'default' : 'outline'} size="sm" className={cn('h-7 px-2 text-[11px]', thSignalsActive && 'bg-purple-600 text-white hover:bg-purple-700')} onClick={() => setThSignalsActive((p) => !p)}>TH</Button>
+          <Button variant={volumeProfileActive ? 'default' : 'outline'} size="sm" className={cn('h-7 px-2 text-[11px]', volumeProfileActive && 'bg-amber-600 text-white hover:bg-amber-700')} onClick={toggleVolumeProfile}>VP</Button>
           <div className="flex items-center gap-1.5 ml-auto">
             {niftyStatus && (
               <div className="flex items-center gap-1" title={niftyStatus}>

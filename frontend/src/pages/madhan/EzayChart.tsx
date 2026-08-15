@@ -36,7 +36,7 @@ import { cn } from '@/lib/utils'
 import { tradingApi } from '@/api/trading'
 import { setTimeOffset, getTimeOffset } from '@/utils/timeSync'
 import { chartTheme } from './chartTheme'
-import { PositionLinePrimitive, type PositionDatum, OrderLinePrimitive, type OrderLineDatum } from './chartPrimitives'
+import { PositionLinePrimitive, type PositionDatum, OrderLinePrimitive, type OrderLineDatum, VolumeProfilePrimitive } from './chartPrimitives'
 import { useOrderEventRefresh } from '@/hooks/useOrderEventRefresh'
 import RealtimeTable from './RealtimeTable'
 import EzaySignals, { type SignalRow, type FirstSignalInfo, type BackendSignals } from './components/EzaySignals'
@@ -233,6 +233,8 @@ export default function EzayChart() {
 
   const ceOrderRef = useRef<OrderLinePrimitive | null>(null)
   const peOrderRef = useRef<OrderLinePrimitive | null>(null)
+  const ceVpRef = useRef<VolumeProfilePrimitive | null>(null)
+  const peVpRef = useRef<VolumeProfilePrimitive | null>(null)
   const handleClosePositionRef = useRef<(symbol: string, exchange: string, product: string) => void>(() => {})
   const handleCancelOrderRef = useRef<(orderId: string) => void>(() => {})
   const handleModifyOrderRef = useRef<(orderId: string, newPrice: number) => void>(() => {})
@@ -279,6 +281,8 @@ export default function EzayChart() {
   const [showEzaySignals, setShowEzaySignals] = useState(() => loadSetting('showEzaySignals', false))
   const [showTrustMe, setShowTrustMe] = useState(() => loadSetting('showTrustMe', false))
   const showTrustMeRef = useRef(showTrustMe)
+  const [showVP, setShowVP] = useState(() => loadSetting('showVP', false))
+  const showVPRef = useRef(false)
   const [signalsForPanel, setSignalsForPanel] = useState<SignalRow[]>([])
   const [signalsMetaForPanel, setSignalsMetaForPanel] = useState<BackendSignals | null>(null)
   const [signalsLastTime, setSignalsLastTime] = useState<number>(0)
@@ -414,6 +418,8 @@ export default function EzayChart() {
         ref.current = null
       }
     }
+    ceVpRef.current = null
+    peVpRef.current = null
     ceMarkersRef.current = null
     peMarkersRef.current = null
     cpCeMarkersRef.current = null
@@ -466,6 +472,32 @@ export default function EzayChart() {
 
     ceSeriesRef.current = makeCeSeries({ title: 'CE', color: '#2962FF' })
     peSeriesRef.current = makePeSeries({ title: 'PE', color: '#E040FB' })
+
+    // Volume Profile primitives (attached on first creation, reused across series recreation)
+    if (!ceVpRef.current) {
+      const ceVp = new VolumeProfilePrimitive(ceSeriesRef.current, chart.timeScale())
+      ceVp._pocColor = '#00C851'
+      ceVp._devPocColor = '#00E676'
+      ceVp._prevPocColor = 'rgba(0,200,81,0.5)'
+      ceVp._prevDevPocColor = 'rgba(0,230,118,0.45)'
+      try { ceSeriesRef.current.attachPrimitive(ceVp as any) } catch {}
+      ceVpRef.current = ceVp
+    } else {
+      try { ceSeriesRef.current.attachPrimitive(ceVpRef.current as any) } catch {}
+    }
+    if (!peVpRef.current) {
+      const peVp = new VolumeProfilePrimitive(peSeriesRef.current, chart.timeScale(), 10)
+      peVp._pocColor = '#E040FB'
+      peVp._devPocColor = '#EA80FC'
+      peVp._prevPocColor = 'rgba(224,64,251,0.5)'
+      peVp._prevDevPocColor = 'rgba(234,128,252,0.45)'
+      try { peSeriesRef.current.attachPrimitive(peVp as any) } catch {}
+      peVpRef.current = peVp
+    } else {
+      try { peSeriesRef.current.attachPrimitive(peVpRef.current as any) } catch {}
+    }
+    ceVpRef.current?.setVisible(showVPRef.current && showCE)
+    peVpRef.current?.setVisible(showVPRef.current && showPE)
 
     combinedSeriesRef.current = chart.addSeries(LineSeries, {
       color: '#2196f3', lineWidth: 3, title: 'Combined Premium',
@@ -583,6 +615,82 @@ export default function EzayChart() {
       })
     }
   }, [removeAllSeries])
+
+  const buildEzayVolumeProfile = useCallback(() => {
+    const d = rawDataRef.current
+    const ceVp = ceVpRef.current
+    const peVp = peVpRef.current
+    if (!d || (!ceVp && !peVp)) return
+
+    let ceData = d.ce_data || []
+    let peData = d.pe_data || []
+    let combinedData = d.combined_data || []
+    const intervalMin = getIntervalMinutes(intervalRef.current)
+    if (intervalMin > 1) {
+      ceData = aggregateCandles(ceData, intervalMin)
+      peData = aggregateCandles(peData, intervalMin)
+      combinedData = aggregateCombined(combinedData, intervalMin)
+    }
+
+    // Split into previous day / today by overnight gap (>4h between consecutive timestamps)
+    let splitIdx = 0
+    for (let i = 1; i < ceData.length; i++) {
+      if (ceData[i].time - ceData[i - 1].time > 4 * 3600) { splitIdx = i; break }
+    }
+
+    const computeSession = (candles: typeof ceData, combSlice: typeof combinedData) => {
+      const profile = new Map<number, number>()
+      const devPoc: Array<{ time: number; price: number }> = []
+      let runningMaxVol = 0, runningPoc = 0
+      const len = Math.min(candles.length, combSlice.length)
+      if (len === 0) return { poc: 0, devPoc }
+
+      // Find price range for 24-row adaptive sizing (TradingView standard)
+      let minLow = Infinity, maxHigh = -Infinity
+      for (let i = 0; i < len; i++) {
+        const c = candles[i]
+        if (c.low < minLow) minLow = c.low
+        if (c.high > maxHigh) maxHigh = c.high
+      }
+      const priceRange = maxHigh - minLow
+      const rowSize = priceRange > 0 ? Math.max(1, Math.ceil(priceRange / 24)) : 10
+
+      for (let i = 0; i < len; i++) {
+        const c = candles[i]
+        const vol = (combSlice[i]?.combined_volume || 0)
+        if (vol > 0 && c.high > c.low) {
+          const lo = Math.floor(c.low / rowSize) * rowSize
+          const hi = Math.ceil(c.high / rowSize) * rowSize
+          const n = Math.max(1, Math.round((hi - lo) / rowSize))
+          const vpb = vol / n
+          for (let p = lo; p < hi; p += rowSize) profile.set(p, (profile.get(p) || 0) + vpb)
+        }
+        let maxV = 0, poc = 0
+        for (const [price, v] of profile) { if (v > maxV) { maxV = v; poc = price } }
+        if (maxV > runningMaxVol) { runningMaxVol = maxV; runningPoc = poc }
+        devPoc.push({ time: c.time, price: runningPoc })
+      }
+      return { poc: runningPoc, devPoc }
+    }
+
+    // Previous day session
+    const prevCe = ceData.slice(0, splitIdx)
+    const prevPe = peData.slice(0, splitIdx)
+    const prevComb = combinedData.slice(0, splitIdx)
+    const prevCeResult = computeSession(prevCe, prevComb)
+    const prevPeResult = computeSession(prevPe, prevComb)
+
+    // Today session
+    const todayCe = ceData.slice(splitIdx)
+    const todayPe = peData.slice(splitIdx)
+    const todayComb = combinedData.slice(splitIdx)
+    const todayCeResult = computeSession(todayCe, todayComb)
+    const todayPeResult = computeSession(todayPe, todayComb)
+
+    if (ceVp) ceVp.setData(todayCeResult.poc, todayCeResult.devPoc, prevCeResult.poc, prevCeResult.devPoc)
+    if (peVp) peVp.setData(todayPeResult.poc, todayPeResult.devPoc, prevPeResult.poc, prevPeResult.devPoc)
+    chartRef.current?.timeScale().applyOptions({})
+  }, [])
 
   const applyData = useCallback(() => {
     const d = rawDataRef.current
@@ -771,7 +879,10 @@ export default function EzayChart() {
       ceTradeMarkersRef.current?.setMarkers([])
       peTradeMarkersRef.current?.setMarkers([])
     }
-  }, [])
+
+    // Rebuild Volume Profile if active
+    if (showVPRef.current) buildEzayVolumeProfile()
+  }, [buildEzayVolumeProfile])
 
   const saveBacktest = useCallback(() => {
     const trades = backtestTradesRef.current
@@ -1385,15 +1496,19 @@ export default function EzayChart() {
       createAllSeries()
       applyData()
       // Re-apply visibility after series recreation
-      if (ceIntrinsicRef.current) ceIntrinsicRef.current.applyOptions({ visible: showIntrinsic })
-      if (peIntrinsicRef.current) peIntrinsicRef.current.applyOptions({ visible: showIntrinsic })
-      if (ceExtrinsicRef.current) ceExtrinsicRef.current.applyOptions({ visible: showExtrinsic })
-      if (peExtrinsicRef.current) peExtrinsicRef.current.applyOptions({ visible: showExtrinsic })
+      if (ceIntrinsicRef.current) ceIntrinsicRef.current.applyOptions({ visible: showIntrinsic && showCE })
+      if (peIntrinsicRef.current) peIntrinsicRef.current.applyOptions({ visible: showIntrinsic && showPE })
+      if (ceExtrinsicRef.current) ceExtrinsicRef.current.applyOptions({ visible: showExtrinsic && showCE })
+      if (peExtrinsicRef.current) peExtrinsicRef.current.applyOptions({ visible: showExtrinsic && showPE })
       if (combinedSeriesRef.current) combinedSeriesRef.current.applyOptions({ visible: showCombinedAll })
       if (llpSeriesRef.current) llpSeriesRef.current.applyOptions({ visible: showCombinedAll })
       if (combinedExtrinsicRef.current) combinedExtrinsicRef.current.applyOptions({ visible: showCombinedAll })
       if (ceSeriesRef.current) ceSeriesRef.current.applyOptions({ visible: showCE })
       if (peSeriesRef.current) peSeriesRef.current.applyOptions({ visible: showPE })
+      if (showVPRef.current) {
+        ceVpRef.current?.setVisible(showCE)
+        peVpRef.current?.setVisible(showPE)
+      }
     }
   }, [chartType, createAllSeries])
 
@@ -1403,15 +1518,19 @@ export default function EzayChart() {
       createAllSeries()
       applyData()
       // Re-apply visibility after series recreation
-      if (ceIntrinsicRef.current) ceIntrinsicRef.current.applyOptions({ visible: showIntrinsic })
-      if (peIntrinsicRef.current) peIntrinsicRef.current.applyOptions({ visible: showIntrinsic })
-      if (ceExtrinsicRef.current) ceExtrinsicRef.current.applyOptions({ visible: showExtrinsic })
-      if (peExtrinsicRef.current) peExtrinsicRef.current.applyOptions({ visible: showExtrinsic })
+      if (ceIntrinsicRef.current) ceIntrinsicRef.current.applyOptions({ visible: showIntrinsic && showCE })
+      if (peIntrinsicRef.current) peIntrinsicRef.current.applyOptions({ visible: showIntrinsic && showPE })
+      if (ceExtrinsicRef.current) ceExtrinsicRef.current.applyOptions({ visible: showExtrinsic && showCE })
+      if (peExtrinsicRef.current) peExtrinsicRef.current.applyOptions({ visible: showExtrinsic && showPE })
       if (combinedSeriesRef.current) combinedSeriesRef.current.applyOptions({ visible: showCombinedAll })
       if (llpSeriesRef.current) llpSeriesRef.current.applyOptions({ visible: showCombinedAll })
       if (combinedExtrinsicRef.current) combinedExtrinsicRef.current.applyOptions({ visible: showCombinedAll })
       if (ceSeriesRef.current) ceSeriesRef.current.applyOptions({ visible: showCE })
       if (peSeriesRef.current) peSeriesRef.current.applyOptions({ visible: showPE })
+      if (showVPRef.current) {
+        ceVpRef.current?.setVisible(showCE)
+        peVpRef.current?.setVisible(showPE)
+      }
     }
   }, [semiTransparent, createAllSeries])
 
@@ -1440,15 +1559,24 @@ export default function EzayChart() {
   }, [selectedStrike, madhanMode])
 
   useEffect(() => {
-    if (ceIntrinsicRef.current) ceIntrinsicRef.current.applyOptions({ visible: showIntrinsic })
-    if (peIntrinsicRef.current) peIntrinsicRef.current.applyOptions({ visible: showIntrinsic })
-    if (ceExtrinsicRef.current) ceExtrinsicRef.current.applyOptions({ visible: showExtrinsic })
-    if (peExtrinsicRef.current) peExtrinsicRef.current.applyOptions({ visible: showExtrinsic })
-  }, [showIntrinsic, showExtrinsic])
+    if (ceIntrinsicRef.current) ceIntrinsicRef.current.applyOptions({ visible: showIntrinsic && showCE })
+    if (peIntrinsicRef.current) peIntrinsicRef.current.applyOptions({ visible: showIntrinsic && showPE })
+    if (ceExtrinsicRef.current) ceExtrinsicRef.current.applyOptions({ visible: showExtrinsic && showCE })
+    if (peExtrinsicRef.current) peExtrinsicRef.current.applyOptions({ visible: showExtrinsic && showPE })
+  }, [showIntrinsic, showExtrinsic, showCE, showPE])
 
   useEffect(() => {
     if (ceSeriesRef.current) ceSeriesRef.current.applyOptions({ visible: showCE })
     if (peSeriesRef.current) peSeriesRef.current.applyOptions({ visible: showPE })
+    if (ceIntrinsicRef.current) ceIntrinsicRef.current.applyOptions({ visible: showIntrinsic && showCE })
+    if (peIntrinsicRef.current) peIntrinsicRef.current.applyOptions({ visible: showIntrinsic && showPE })
+    if (ceExtrinsicRef.current) ceExtrinsicRef.current.applyOptions({ visible: showExtrinsic && showCE })
+    if (peExtrinsicRef.current) peExtrinsicRef.current.applyOptions({ visible: showExtrinsic && showPE })
+    if (showVPRef.current) {
+      ceVpRef.current?.setVisible(showCE)
+      peVpRef.current?.setVisible(showPE)
+      chartRef.current?.timeScale().applyOptions({})
+    }
   }, [showCE, showPE])
 
   useEffect(() => {
@@ -1631,14 +1759,23 @@ export default function EzayChart() {
   }, [showTrustMe, madhanMode, isBacktest, backtestDate, interval])
 
   useEffect(() => {
+    showVPRef.current = showVP
+    if (!chartReadyRef.current || !chartRef.current) return
+    ceVpRef.current?.setVisible(showVP && showCE)
+    peVpRef.current?.setVisible(showVP && showPE)
+    if (showVP) buildEzayVolumeProfile()
+    chartRef.current.timeScale().applyOptions({})
+  }, [showVP, showCE, showPE, buildEzayVolumeProfile])
+
+  useEffect(() => {
     intervalRef.current = interval
     if (chartReadyRef.current && chartRef.current) {
       createAllSeries()
       applyData()
-      if (ceIntrinsicRef.current) ceIntrinsicRef.current.applyOptions({ visible: showIntrinsic })
-      if (peIntrinsicRef.current) peIntrinsicRef.current.applyOptions({ visible: showIntrinsic })
-      if (ceExtrinsicRef.current) ceExtrinsicRef.current.applyOptions({ visible: showExtrinsic })
-      if (peExtrinsicRef.current) peExtrinsicRef.current.applyOptions({ visible: showExtrinsic })
+      if (ceIntrinsicRef.current) ceIntrinsicRef.current.applyOptions({ visible: showIntrinsic && showCE })
+      if (peIntrinsicRef.current) peIntrinsicRef.current.applyOptions({ visible: showIntrinsic && showPE })
+      if (ceExtrinsicRef.current) ceExtrinsicRef.current.applyOptions({ visible: showExtrinsic && showCE })
+      if (peExtrinsicRef.current) peExtrinsicRef.current.applyOptions({ visible: showExtrinsic && showPE })
       if (combinedSeriesRef.current) combinedSeriesRef.current.applyOptions({ visible: showCombinedAll })
       if (llpSeriesRef.current) llpSeriesRef.current.applyOptions({ visible: showCombinedAll })
       if (combinedExtrinsicRef.current) combinedExtrinsicRef.current.applyOptions({ visible: showCombinedAll })
@@ -2300,6 +2437,14 @@ export default function EzayChart() {
             onClick={() => { setShowTrustMe(!showTrustMe); saveSetting('showTrustMe', !showTrustMe) }}
           >
             TrustMe
+          </Button>
+          <Button
+            size="sm"
+            variant={showVP ? 'default' : 'ghost'}
+            className={cn('h-6 px-2 text-[10px] font-medium', showVP && 'bg-amber-600 hover:bg-amber-700 text-white')}
+            onClick={() => { setShowVP(!showVP); saveSetting('showVP', !showVP) }}
+          >
+            VP
           </Button>
           <Button
             size="sm"
