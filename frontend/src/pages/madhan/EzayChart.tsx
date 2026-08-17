@@ -622,15 +622,10 @@ export default function EzayChart() {
     const peVp = peVpRef.current
     if (!d || (!ceVp && !peVp)) return
 
-    let ceData = d.ce_data || []
-    let peData = d.pe_data || []
-    let combinedData = d.combined_data || []
-    const intervalMin = getIntervalMinutes(intervalRef.current)
-    if (intervalMin > 1) {
-      ceData = aggregateCandles(ceData, intervalMin)
-      peData = aggregateCandles(peData, intervalMin)
-      combinedData = aggregateCombined(combinedData, intervalMin)
-    }
+    // Always use raw 1-min data for VP calculation (consistent profile granularity)
+    const ceData = d.ce_data || []
+    const peData = d.pe_data || []
+    const combinedData = d.combined_data || []
 
     // Split into previous day / today by overnight gap (>4h between consecutive timestamps)
     let splitIdx = 0
@@ -642,12 +637,16 @@ export default function EzayChart() {
       const profile = new Map<number, number>()
       const devPoc: Array<{ time: number; price: number }> = []
       let runningMaxVol = 0, runningPoc = 0
-      const len = Math.min(candles.length, combSlice.length)
-      if (len === 0) return { poc: 0, devPoc }
+      if (candles.length === 0) return { poc: 0, devPoc }
+
+      // Timestamp-based lookup: combined_data has fewer entries than ce/pe
+      // because it only includes common timestamps. Index-based access misaligns.
+      const volMap = new Map<number, number>()
+      for (const item of combSlice) volMap.set(item.time, item.combined_volume || 0)
 
       // Find price range for 24-row adaptive sizing (TradingView standard)
       let minLow = Infinity, maxHigh = -Infinity
-      for (let i = 0; i < len; i++) {
+      for (let i = 0; i < candles.length; i++) {
         const c = candles[i]
         if (c.low < minLow) minLow = c.low
         if (c.high > maxHigh) maxHigh = c.high
@@ -655,9 +654,9 @@ export default function EzayChart() {
       const priceRange = maxHigh - minLow
       const rowSize = priceRange > 0 ? Math.max(1, Math.ceil(priceRange / 24)) : 10
 
-      for (let i = 0; i < len; i++) {
+      for (let i = 0; i < candles.length; i++) {
         const c = candles[i]
-        const vol = (combSlice[i]?.combined_volume || 0)
+        const vol = volMap.get(c.time) || 0
         if (vol > 0 && c.high > c.low) {
           const lo = Math.floor(c.low / rowSize) * rowSize
           const hi = Math.ceil(c.high / rowSize) * rowSize
@@ -674,17 +673,21 @@ export default function EzayChart() {
       return { poc: runningPoc, devPoc }
     }
 
+    // Split combinedData by timestamp (not index) — combinedData has fewer entries
+    // than ce/pe data (only common timestamps), so index-based slice is misaligned
+    const splitTime = splitIdx > 0 && splitIdx < ceData.length ? ceData[splitIdx].time : 0
+    const prevComb = splitTime > 0 ? combinedData.filter(d => d.time < splitTime) : []
+    const todayComb = splitTime > 0 ? combinedData.filter(d => d.time >= splitTime) : combinedData
+
     // Previous day session
     const prevCe = ceData.slice(0, splitIdx)
     const prevPe = peData.slice(0, splitIdx)
-    const prevComb = combinedData.slice(0, splitIdx)
     const prevCeResult = computeSession(prevCe, prevComb)
     const prevPeResult = computeSession(prevPe, prevComb)
 
     // Today session
     const todayCe = ceData.slice(splitIdx)
     const todayPe = peData.slice(splitIdx)
-    const todayComb = combinedData.slice(splitIdx)
     const todayCeResult = computeSession(todayCe, todayComb)
     const todayPeResult = computeSession(todayPe, todayComb)
 
