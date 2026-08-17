@@ -667,7 +667,8 @@ export default function EzayChart() {
         }
         let maxV = 0, poc = 0
         for (const [price, v] of profile) { if (v > maxV) { maxV = v; poc = price } }
-        if (maxV > runningMaxVol) { runningMaxVol = maxV; runningPoc = poc }
+        const pocCenter = maxV > 0 ? poc + rowSize / 2 : 0
+        if (maxV > runningMaxVol) { runningMaxVol = maxV; runningPoc = pocCenter }
         devPoc.push({ time: c.time, price: runningPoc })
       }
       return { poc: runningPoc, devPoc }

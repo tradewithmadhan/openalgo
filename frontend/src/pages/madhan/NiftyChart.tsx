@@ -1382,7 +1382,8 @@ export default function NiftyChart() {
         for (const [price, v] of profile) {
           if (v > maxVol) { maxVol = v; poc = price }
         }
-        if (maxVol > runningMaxVol) { runningMaxVol = maxVol; runningPoc = poc }
+        const pocCenter = maxVol > 0 ? poc + rowSize / 2 : 0
+        if (maxVol > runningMaxVol) { runningMaxVol = maxVol; runningPoc = pocCenter }
         developingPoc.push({ time: c.time, price: runningPoc })
       }
 
