@@ -1,143 +1,33 @@
 import { useState, useRef, useEffect } from 'react'
 import { getToolRegistry } from 'lightweight-charts-drawing'
-import { Trash2, ChevronRight } from 'lucide-react'
 import { useMadhanTheme } from './useMadhanTheme'
 import { chartTheme } from './chartTheme'
+import { TOOL_ICONS, TOOL_SVG } from './DrawingToolIcons'
 
 interface DrawingToolbarProps {
   activeTool: string | null
   onToolSelect: (toolType: string | null) => void
-  drawingColor: string
-  onColorChange: (color: string) => void
-  lineWidth: number
-  onLineWidthChange: (width: number) => void
-  onClearAll: () => void
   collapsed: boolean
   onToggleCollapse: () => void
+  onHideAll?: () => void
+  onClearAll?: () => void
+  hasDrawings?: boolean
+  allHidden?: boolean
 }
 
-function IconTrendLine() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="h-4 w-4">
-      <line x1="4" y1="20" x2="20" y2="4" />
-      <circle cx="4" cy="20" r="1.5" fill="currentColor" stroke="none" />
-      <circle cx="20" cy="4" r="1.5" fill="currentColor" stroke="none" />
-    </svg>
-  )
-}
+const SvgIcon: React.FC<{ svg: string }> = ({ svg }) => (
+  <span
+    className="h-6 w-6 inline-flex items-center justify-center [&>svg]:w-full [&>svg]:h-full"
+    dangerouslySetInnerHTML={{ __html: svg }}
+  />
+)
 
-function IconHorizontal() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="h-4 w-4">
-      <line x1="2" y1="12" x2="22" y2="12" />
-      <polyline points="18,8 22,12 18,16" />
-    </svg>
-  )
-}
-
-function IconChannel() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="h-4 w-4">
-      <line x1="3" y1="18" x2="21" y2="6" />
-      <line x1="3" y1="21" x2="21" y2="9" strokeDasharray="3 2" />
-    </svg>
-  )
-}
-
-function IconPitchfork() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="h-4 w-4">
-      <line x1="4" y1="4" x2="12" y2="20" />
-      <line x1="12" y1="20" x2="20" y2="8" />
-      <line x1="4" y1="4" x2="12" y2="12" strokeDasharray="3 2" />
-      <line x1="20" y1="8" x2="12" y2="12" strokeDasharray="3 2" />
-      <circle cx="4" cy="4" r="1.5" fill="currentColor" stroke="none" />
-      <circle cx="12" cy="20" r="1.5" fill="currentColor" stroke="none" />
-      <circle cx="20" cy="8" r="1.5" fill="currentColor" stroke="none" />
-    </svg>
-  )
-}
-
-function IconFib() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="h-4 w-4">
-      <line x1="3" y1="4" x2="21" y2="4" />
-      <line x1="3" y1="10" x2="21" y2="10" strokeDasharray="3 2" />
-      <line x1="3" y1="13" x2="21" y2="13" strokeDasharray="3 2" />
-      <line x1="3" y1="16" x2="21" y2="16" strokeDasharray="3 2" />
-      <line x1="3" y1="20" x2="21" y2="20" />
-      <circle cx="3" cy="4" r="1.5" fill="currentColor" stroke="none" />
-      <circle cx="21" cy="20" r="1.5" fill="currentColor" stroke="none" />
-    </svg>
-  )
-}
-
-function IconGann() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="h-4 w-4">
-      <rect x="4" y="4" width="16" height="16" />
-      <line x1="4" y1="4" x2="20" y2="20" />
-      <line x1="12" y1="4" x2="12" y2="20" strokeDasharray="2 2" />
-      <line x1="4" y1="12" x2="20" y2="12" strokeDasharray="2 2" />
-    </svg>
-  )
-}
-
-function IconRectangle() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="h-4 w-4">
-      <rect x="4" y="6" width="16" height="12" rx="1" />
-    </svg>
-  )
-}
-
-function IconArrow() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="h-4 w-4">
-      <line x1="4" y1="20" x2="20" y2="4" />
-      <polyline points="10,4 20,4 20,14" />
-    </svg>
-  )
-}
-
-function IconBrush() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="h-4 w-4">
-      <path d="M3 21c0 0 3-3 6-6s4-5 7-8 3-4 5-5" />
-      <circle cx="18" cy="5" r="2" fill="currentColor" stroke="none" />
-    </svg>
-  )
-}
-
-function IconText() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-4 w-4">
-      <text x="4" y="18" fontSize="16" fontWeight="bold" fill="currentColor" stroke="none" fontFamily="serif">T</text>
-    </svg>
-  )
-}
-
-function IconRuler() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="h-4 w-4">
-      <rect x="3" y="8" width="18" height="8" rx="1" />
-      <line x1="7" y1="8" x2="7" y2="12" />
-      <line x1="11" y1="8" x2="11" y2="14" />
-      <line x1="15" y1="8" x2="15" y2="12" />
-      <line x1="19" y1="8" x2="19" y2="14" />
-    </svg>
-  )
-}
-
-function IconPosition() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" strokeWidth="1.5" className="h-4 w-4">
-      <rect x="4" y="10" width="16" height="10" fill="rgba(38,166,154,0.2)" stroke="currentColor" />
-      <rect x="4" y="4" width="16" height="6" fill="rgba(239,83,80,0.2)" stroke="currentColor" />
-      <line x1="4" y1="10" x2="20" y2="10" stroke="currentColor" strokeWidth="1" />
-    </svg>
-  )
-}
+const IconCrosshair: React.FC = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+    <line x1="12" y1="1" x2="12" y2="23" />
+    <line x1="1" y1="12" x2="23" y2="12" />
+  </svg>
+)
 
 interface ToolGroup {
   id: string
@@ -149,37 +39,44 @@ interface ToolGroup {
 
 const TOOL_GROUPS: ToolGroup[] = [
   {
+    id: 'crosshair',
+    label: 'Cross',
+    icon: <IconCrosshair />,
+    tools: ['crosshair'],
+    defaultTool: 'crosshair',
+  },
+  {
     id: 'lines',
     label: 'Trend Lines',
-    icon: <IconTrendLine />,
+    icon: <SvgIcon svg={TOOL_SVG['trend-line']} />,
     tools: ['trend-line', 'ray', 'info-line', 'extended-line', 'trend-angle'],
     defaultTool: 'trend-line',
   },
   {
     id: 'horizontal',
-    label: 'Horizontal/Vertical',
-    icon: <IconHorizontal />,
+    label: 'Horizontal Lines',
+    icon: <SvgIcon svg={TOOL_SVG['horizontal-line']} />,
     tools: ['horizontal-line', 'horizontal-ray', 'vertical-line', 'cross-line'],
     defaultTool: 'horizontal-ray',
   },
   {
     id: 'channels',
-    label: 'Channels',
-    icon: <IconChannel />,
+    label: 'Parallel Channel',
+    icon: <SvgIcon svg={TOOL_SVG['parallel-channel']} />,
     tools: ['parallel-channel', 'regression-trend', 'flat-top-bottom', 'disjoint-channel'],
     defaultTool: 'parallel-channel',
   },
   {
     id: 'pitchforks',
-    label: 'Pitchforks',
-    icon: <IconPitchfork />,
+    label: 'Pitchfork',
+    icon: <SvgIcon svg={TOOL_SVG['andrews-pitchfork']} />,
     tools: ['andrews-pitchfork', 'schiff-pitchfork', 'modified-schiff-pitchfork', 'inside-pitchfork'],
     defaultTool: 'andrews-pitchfork',
   },
   {
     id: 'fib',
-    label: 'Fibonacci',
-    icon: <IconFib />,
+    label: 'Fib Retracement',
+    icon: <SvgIcon svg={TOOL_SVG['fib-retracement']} />,
     tools: [
       'fib-retracement', 'fib-extension', 'fib-channel', 'fib-time-zone',
       'fib-speed-fan', 'fib-time-extension', 'fib-circles', 'fib-spiral',
@@ -190,35 +87,35 @@ const TOOL_GROUPS: ToolGroup[] = [
   {
     id: 'gann',
     label: 'Gann',
-    icon: <IconGann />,
+    icon: <SvgIcon svg={TOOL_SVG['gann-box']} />,
     tools: ['gann-box', 'gann-fan', 'gann-square-fixed', 'gann-square'],
     defaultTool: 'gann-box',
   },
   {
     id: 'shapes',
-    label: 'Shapes',
-    icon: <IconRectangle />,
+    label: 'Geometric Shapes',
+    icon: <SvgIcon svg={TOOL_SVG['rectangle']} />,
     tools: ['rectangle', 'circle', 'triangle', 'ellipse', 'arc', 'path', 'polyline', 'curve', 'double-curve', 'rotated-rectangle'],
     defaultTool: 'rectangle',
   },
   {
     id: 'arrows',
-    label: 'Arrows & Markers',
-    icon: <IconArrow />,
+    label: 'Arrow',
+    icon: <SvgIcon svg={TOOL_SVG['arrow']} />,
     tools: ['arrow', 'arrow-marker', 'arrow-mark-up', 'arrow-mark-down'],
     defaultTool: 'arrow',
   },
   {
     id: 'brush',
-    label: 'Brush & Highlight',
-    icon: <IconBrush />,
+    label: 'Brush',
+    icon: <SvgIcon svg={TOOL_SVG['brush']} />,
     tools: ['brush', 'highlighter'],
     defaultTool: 'brush',
   },
   {
     id: 'annotations',
-    label: 'Text & Annotations',
-    icon: <IconText />,
+    label: 'Text',
+    icon: <SvgIcon svg={TOOL_SVG['text-annotation']} />,
     tools: [
       'text-annotation', 'callout', 'anchored-text', 'note', 'price-note',
       'price-label', 'flag-mark', 'pin', 'comment', 'signpost', 'table',
@@ -227,15 +124,15 @@ const TOOL_GROUPS: ToolGroup[] = [
   },
   {
     id: 'measurement',
-    label: 'Measurement',
-    icon: <IconRuler />,
+    label: 'Measure',
+    icon: <SvgIcon svg={TOOL_SVG['price-range']} />,
     tools: ['price-range', 'date-range', 'date-price-range'],
     defaultTool: 'price-range',
   },
   {
     id: 'trading',
-    label: 'Trading',
-    icon: <IconPosition />,
+    label: 'Prediction',
+    icon: <SvgIcon svg={TOOL_SVG['long-position']} />,
     tools: ['long-position', 'short-position', 'forecast', 'bars-pattern', 'projection'],
     defaultTool: 'long-position',
   },
@@ -243,19 +140,18 @@ const TOOL_GROUPS: ToolGroup[] = [
 
 export const TEXT_DRAWING_TYPES = [
   'text-annotation', 'callout', 'anchored-text', 'note', 'price-note',
-  'flag-mark', 'pin', 'comment', 'signpost', 'table',
+  'price-label', 'flag-mark', 'pin', 'comment', 'signpost', 'table',
 ]
 
 export default function DrawingToolbar({
   activeTool,
   onToolSelect,
-  drawingColor,
-  onColorChange,
-  lineWidth,
-  onLineWidthChange,
-  onClearAll,
   collapsed,
   onToggleCollapse,
+  onHideAll,
+  onClearAll,
+  hasDrawings = false,
+  allHidden = false,
 }: DrawingToolbarProps) {
   const registry = getToolRegistry()
   const { mode } = useMadhanTheme()
@@ -314,13 +210,15 @@ export default function DrawingToolbar({
   }
 
   return (
-    <div className="flex h-full w-[52px] shrink-0 flex-col" style={{ borderRight: `1px solid ${t.border}`, backgroundColor: t.panel }}>
-      <div className="flex flex-col gap-0.5 p-1">
-        {TOOL_GROUPS.map((group) => {
+    <div className="flex h-full w-[48px] shrink-0 flex-col" style={{ borderRight: `1px solid ${t.border}`, backgroundColor: t.panel }}>
+        <div className="flex flex-col gap-1 py-1">
+        {TOOL_GROUPS.map((group, i) => {
           const isActive = activeTool !== null && group.tools.includes(activeTool)
+          const isCrosshair = group.id === 'crosshair'
           return (
-            <div key={group.id} className="relative" ref={openFlyout === group.id ? flyoutRef : undefined}>
-              <div className="flex items-center">
+            <div key={group.id} className="group/toolbar relative" ref={openFlyout === group.id ? flyoutRef : undefined}>
+              {i === 1 && <div className="mx-2 my-0.5 border-t" style={{ borderColor: t.border }} />}
+              <div className="relative mx-auto flex h-8 w-[44px] items-center justify-center">
                 <button
                   className="flex h-8 w-8 items-center justify-center rounded transition-colors"
                   style={{
@@ -329,89 +227,109 @@ export default function DrawingToolbar({
                   }}
                   title={group.label}
                   onClick={() => handleGroupClick(group)}
+                  onMouseEnter={(e) => { if (!isActive) e.currentTarget.style.backgroundColor = t.hover }}
+                  onMouseLeave={(e) => { if (!isActive) e.currentTarget.style.backgroundColor = '' }}
                 >
                   {group.icon}
                 </button>
-                {group.tools.length > 1 && (
+                {!isCrosshair && group.tools.length > 1 && (
                   <button
-                    className="flex w-2.5 items-center justify-center"
+                    className="absolute right-0 top-1/2 flex h-3.5 w-3.5 -translate-y-1/2 items-center justify-center rounded-sm opacity-0 transition-opacity group-hover/toolbar:opacity-100"
                     style={{ color: t.textSecondary }}
                     onClick={(e) => handleFlyoutToggle(group.id, e)}
                   >
-                    <ChevronRight className="h-2 w-2" />
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="h-3 w-3">
+                      {openFlyout === group.id
+                        ? <polyline points="15,6 9,12 15,18" />
+                        : <polyline points="9,6 15,12 9,18" />
+                      }
+                    </svg>
                   </button>
                 )}
               </div>
 
               {openFlyout === group.id && (
                 <div
-                  className="absolute left-full top-0 z-50 ml-1 min-w-[180px] rounded py-1 shadow-xl"
+                  className="absolute left-full top-0 z-50 ml-1 min-w-[180px] rounded-md py-1 shadow-xl"
                   style={{ border: `1px solid ${t.border}`, backgroundColor: t.panel }}
+                  onMouseEnter={() => setOpenFlyout(group.id)}
+                  onMouseLeave={() => setOpenFlyout(null)}
                 >
                   <div
-                    className="px-2 py-1 text-[10px] font-semibold uppercase"
+                    className="px-3 py-1 text-[10px] font-semibold uppercase tracking-wider"
                     style={{ borderBottom: `1px solid ${t.border}`, color: t.textSecondary }}
                   >
                     {group.label}
                   </div>
-                  {group.tools.map((toolType) => (
-                    <button
-                      key={toolType}
-                      className="flex w-full items-center justify-between px-3 py-1.5 text-left text-[12px] transition-colors"
-                      style={{
-                        backgroundColor: activeTool === toolType ? t.active : undefined,
-                        color: activeTool === toolType ? '#fff' : t.text,
-                      }}
-                      onClick={() => handleFlyoutToolSelect(toolType)}
-                    >
-                      <span>{getToolName(toolType)}</span>
-                    </button>
-                  ))}
+                  {group.tools.map((toolType) => {
+                    const ToolIcon = TOOL_ICONS[toolType]
+                    return (
+                      <button
+                        key={toolType}
+                        className="flex w-full items-center gap-2 px-3 py-1 text-left text-[12px] transition-colors"
+                        style={{
+                          backgroundColor: activeTool === toolType ? t.active : undefined,
+                          color: activeTool === toolType ? '#fff' : t.text,
+                        }}
+                        onClick={() => handleFlyoutToolSelect(toolType)}
+                        onMouseEnter={(e) => { if (activeTool !== toolType) e.currentTarget.style.backgroundColor = t.hover }}
+                        onMouseLeave={(e) => { if (activeTool !== toolType) e.currentTarget.style.backgroundColor = '' }}
+                      >
+                        {ToolIcon && <span className="flex h-4 w-4 shrink-0 items-center justify-center">{<ToolIcon />}</span>}
+                        <span>{getToolName(toolType)}</span>
+                      </button>
+                    )
+                  })}
                 </div>
               )}
             </div>
           )
         })}
       </div>
-
-      <div className="mt-auto p-1" style={{ borderTop: `1px solid ${t.border}` }}>
-        <div className="flex flex-col items-center gap-1.5 py-1">
-          <input
-            type="color"
-            className="h-6 w-6 cursor-pointer rounded bg-transparent p-0"
-            style={{ border: `1px solid ${t.badge}` }}
-            value={drawingColor}
-            onChange={(e) => onColorChange(e.target.value)}
-            title="Drawing Color"
-          />
-          <div className="flex gap-0.5">
-            {[1, 2, 3].map((w) => (
-              <button
-                key={w}
-                className="flex h-5 w-5 items-center justify-center rounded text-[9px]"
-                style={{
-                  backgroundColor: lineWidth === w ? t.active : undefined,
-                  color: lineWidth === w ? '#fff' : t.textSecondary,
-                }}
-                onClick={() => onLineWidthChange(w)}
-                title={`${w}px`}
-              >
-                {w}
-              </button>
-            ))}
+      {hasDrawings && (
+        <div className="mt-auto flex flex-col gap-1 border-t py-1" style={{ borderColor: t.border }}>
+          <div className="mx-auto flex h-8 w-8 items-center justify-center">
+            <button
+              className="flex h-8 w-8 items-center justify-center rounded transition-colors"
+              style={{ color: t.textSecondary }}
+              title={allHidden ? 'Show All Drawings' : 'Hide All Drawings'}
+              onClick={onHideAll}
+              onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = t.hover }}
+              onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = '' }}
+            >
+              {allHidden ? (
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="h-4 w-4">
+                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                  <circle cx="12" cy="12" r="3" />
+                  <line x1="1" y1="1" x2="23" y2="23" strokeWidth="2" />
+                </svg>
+              ) : (
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="h-4 w-4">
+                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                  <circle cx="12" cy="12" r="3" />
+                </svg>
+              )}
+            </button>
           </div>
-          <button
-            className="flex h-7 w-7 items-center justify-center rounded"
-            style={{ color: t.textSecondary }}
-            title="Clear All Drawings"
-            onClick={onClearAll}
-            onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = t.danger; e.currentTarget.style.color = '#fff' }}
-            onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.color = t.textSecondary }}
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-          </button>
+          <div className="mx-auto flex h-8 w-8 items-center justify-center">
+            <button
+              className="flex h-8 w-8 items-center justify-center rounded transition-colors"
+              style={{ color: '#ef4444' }}
+              title="Delete All Drawings"
+              onClick={onClearAll}
+              onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'rgba(239,68,68,0.15)' }}
+              onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = '' }}
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="h-4 w-4">
+                <polyline points="3,6 5,6 21,6" />
+                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                <line x1="10" y1="11" x2="10" y2="17" />
+                <line x1="14" y1="11" x2="14" y2="17" />
+              </svg>
+            </button>
+          </div>
         </div>
-      </div>
+      )}
     </div>
   )
 }

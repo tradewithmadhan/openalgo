@@ -25,6 +25,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import { useDrawingSystem } from './useDrawingSystem'
 import { BarChart3, Home, Menu, Sun, Moon, Zap, ChevronLeft, ChevronRight, Wifi, WifiOff } from 'lucide-react'
 // import { toast } from 'sonner' // used via dynamic import below
 import { useMarketData } from '@/hooks/useMarketData'
@@ -36,6 +37,11 @@ import { cn } from '@/lib/utils'
 import { tradingApi } from '@/api/trading'
 import { setTimeOffset, getTimeOffset } from '@/utils/timeSync'
 import { chartTheme } from './chartTheme'
+import DrawingToolbar from './DrawingToolbar'
+import FloatingDrawingToolbar from './FloatingDrawingToolbar'
+import DrawingListPanel from './DrawingListPanel'
+import TextEditorModal from './TextEditorModal'
+import WidgetBar from './WidgetBar'
 import { PositionLinePrimitive, type PositionDatum, OrderLinePrimitive, type OrderLineDatum, VolumeProfilePrimitive } from './chartPrimitives'
 import { useOrderEventRefresh } from '@/hooks/useOrderEventRefresh'
 import RealtimeTable from './RealtimeTable'
@@ -279,6 +285,7 @@ export default function EzayChart() {
   const [showRealtime, setShowRealtime] = useState(() => loadSetting('showRealtime', false))
   const [volumeMode, setVolumeMode] = useState<'strike' | 'total'>(() => loadSetting('volumeMode', 'strike'))
   const [showEzaySignals, setShowEzaySignals] = useState(() => loadSetting('showEzaySignals', false))
+  const [widgetTab, setWidgetTab] = useState<string | null>(showEzaySignals ? 'ezay-signals' : null)
   const [showTrustMe, setShowTrustMe] = useState(() => loadSetting('showTrustMe', false))
   const showTrustMeRef = useRef(showTrustMe)
   const [showVP, setShowVP] = useState(() => loadSetting('showVP', false))
@@ -318,6 +325,43 @@ export default function EzayChart() {
 
   const cePositionDataRef = useRef<PositionDatum | null>(null)
   const pePositionDataRef = useRef<PositionDatum | null>(null)
+
+  const handleEzayChartClick = useCallback((param: any) => {
+    if (!param || !param.point) return
+    const { x, y } = param.point
+    const W = chartContainerRef.current?.clientWidth || 0
+    const H = chartContainerRef.current?.clientHeight || 0
+    const hitCe = cePositionRef.current?.hitTest(x, y, W, H)
+    if (hitCe) {
+      const pos = cePositionDataRef.current
+      if (pos) handleClosePositionRef.current(pos.symbol, pos.exchange, pos.product)
+      return
+    }
+    const hitPe = pePositionRef.current?.hitTest(x, y, W, H)
+    if (hitPe) {
+      const pos = pePositionDataRef.current
+      if (pos) handleClosePositionRef.current(pos.symbol, pos.exchange, pos.product)
+      return
+    }
+    const hitCeOrd = ceOrderRef.current?.hitTest(x, y, W, H)
+    if (hitCeOrd) {
+      handleCancelOrderRef.current(hitCeOrd as string)
+      return
+    }
+    const hitPeOrd = peOrderRef.current?.hitTest(x, y, W, H)
+    if (hitPeOrd) {
+      handleCancelOrderRef.current(hitPeOrd as string)
+      return
+    }
+    tradePanelClickRef.current(y)
+  }, [])
+
+  const drawing = useDrawingSystem({
+    chart: chartRef.current,
+    series: ceSeriesRef.current,
+    chartContainer: chartContainerRef.current,
+    onChartClick: handleEzayChartClick,
+  })
 
   const currentOhlcRef = useRef<Map<string, { time: number; open: number; high: number; low: number; close: number }>>(new Map())
   const apiCandleVolRef = useRef<Map<number, number>>(new Map())
@@ -1431,39 +1475,9 @@ export default function EzayChart() {
     chartRef.current = chart
     chartReadyRef.current = true
 
-    chart.subscribeClick((param: any) => {
-      if (!param || !param.point) return
-      const { x, y } = param.point
-      const W = chartContainerRef.current?.clientWidth || 0
-      const H = chartContainerRef.current?.clientHeight || 0
-      const hitCe = cePositionRef.current?.hitTest(x, y, W, H)
-      if (hitCe) {
-        const pos = cePositionDataRef.current
-        if (pos) handleClosePositionRef.current(pos.symbol, pos.exchange, pos.product)
-        return
-      }
-      const hitPe = pePositionRef.current?.hitTest(x, y, W, H)
-      if (hitPe) {
-        const pos = pePositionDataRef.current
-        if (pos) handleClosePositionRef.current(pos.symbol, pos.exchange, pos.product)
-        return
-      }
-      const hitCeOrd = ceOrderRef.current?.hitTest(x, y, W, H)
-      if (hitCeOrd) {
-        handleCancelOrderRef.current(hitCeOrd as string)
-        return
-      }
-      const hitPeOrd = peOrderRef.current?.hitTest(x, y, W, H)
-      if (hitPeOrd) {
-        handleCancelOrderRef.current(hitPeOrd as string)
-        return
-      }
-      tradePanelClickRef.current(y)
-    })
-
     const resizeObserver = new ResizeObserver(() => {
       if (!chartContainerRef.current || !chartRef.current) return
-      chartRef.current.applyOptions({ width: chartContainerRef.current.clientWidth, height: chartContainerRef.current.clientHeight })
+      try { chartRef.current.applyOptions({ width: chartContainerRef.current.clientWidth, height: chartContainerRef.current.clientHeight }) } catch {}
     })
     resizeObserver.observe(chartContainerRef.current)
 
@@ -1475,12 +1489,12 @@ export default function EzayChart() {
     return () => {
       if (updaterRef.current) window.clearTimeout(updaterRef.current)
       resizeObserver.disconnect()
-      chart.remove()
+      try { chart.remove() } catch {}
       chartRef.current = null
       chartReadyRef.current = false
-    trustMeUpRef.current = null
-    trustMeDownRef.current = null
-    strikeWatermarkRef.current = null
+      trustMeUpRef.current = null
+      trustMeDownRef.current = null
+      strikeWatermarkRef.current = null
     }
   }, [])
 
@@ -1495,10 +1509,11 @@ export default function EzayChart() {
   }, [madhanMode, getChartColors])
 
   useEffect(() => {
-    if (chartReadyRef.current && chartRef.current) {
+      if (chartReadyRef.current && chartRef.current) {
       chartTypeRef.current = chartType
       createAllSeries()
       applyData()
+
       // Re-apply visibility after series recreation
       if (ceIntrinsicRef.current) ceIntrinsicRef.current.applyOptions({ visible: showIntrinsic && showCE })
       if (peIntrinsicRef.current) peIntrinsicRef.current.applyOptions({ visible: showIntrinsic && showPE })
@@ -2371,6 +2386,7 @@ export default function EzayChart() {
                   backtestDateRef.current = today
                   pendingAutoSelectRef.current = true
                   setShowEzaySignals(true)
+                  setWidgetTab('ezay-signals')
                 }
                 clearAllChartData()
                 loadStrikes()
@@ -2430,7 +2446,12 @@ export default function EzayChart() {
             size="sm"
             variant={showEzaySignals ? 'default' : 'ghost'}
             className={cn('h-6 px-2 text-[10px] font-medium', showEzaySignals && 'bg-primary text-primary-foreground')}
-            onClick={() => { setShowEzaySignals(!showEzaySignals); saveSetting('showEzaySignals', !showEzaySignals) }}
+            onClick={() => {
+              const next = !showEzaySignals
+              setShowEzaySignals(next)
+              saveSetting('showEzaySignals', next)
+              setWidgetTab(next ? 'ezay-signals' : null)
+            }}
           >
             EzaySignals
           </Button>
@@ -2457,6 +2478,21 @@ export default function EzayChart() {
             onClick={() => { setShowRealtime(!showRealtime); saveSetting('showRealtime', !showRealtime) }}
           >
             Realtime
+          </Button>
+          <Button
+            size="sm"
+            variant={drawing.showDrawingPanel ? 'default' : 'outline'}
+            className="h-6 px-2 text-[10px]"
+            onClick={() => {
+              if (drawing.showDrawingPanel) {
+                drawing.setDrawingToolbarCollapsed((v) => !v)
+              } else {
+                drawing.setShowDrawingPanel(true)
+                drawing.setDrawingToolbarCollapsed(false)
+              }
+            }}
+          >
+            Drawings
           </Button>
         </div>
         <div className="ml-auto flex items-center gap-3">
@@ -2550,8 +2586,36 @@ export default function EzayChart() {
             </>
           )}
         </div>
+        {drawing.showDrawingPanel && (
+          <DrawingToolbar
+            activeTool={drawing.activeDrawingTool}
+            onToolSelect={drawing.handleToolSelect}
+            collapsed={drawing.drawingToolbarCollapsed}
+            onToggleCollapse={() => drawing.setDrawingToolbarCollapsed((v) => !v)}
+            onHideAll={() => {
+              if (!drawing.drawingManagerRef.current) return
+              const all = drawing.drawingManagerRef.current.getAllDrawings()
+              const anyVisible = all.some((d) => d.options.visible !== false)
+              for (const d of all) {
+                d.updateOptions({ visible: !anyVisible })
+                d.requestUpdate()
+              }
+              drawing.setTick((n) => n + 1)
+            }}
+            onClearAll={drawing.clearAllDrawingsFromList}
+            hasDrawings={drawing.drawingManagerRef.current ? drawing.drawingManagerRef.current.getAllDrawings().length > 0 : false}
+            allHidden={drawing.drawingManagerRef.current ? drawing.drawingManagerRef.current.getAllDrawings().length > 0 && drawing.drawingManagerRef.current.getAllDrawings().every((d) => d.options.visible === false) : false}
+          />
+        )}
         <div className="flex-1 min-h-0 min-w-0 relative" style={{ backgroundColor: t.panelDarker }}>
           <div ref={chartContainerRef} className="absolute inset-0" />
+          <FloatingDrawingToolbar
+            drawingManager={drawing.drawingManagerRef.current}
+            selectedDrawingId={drawing.selectedDrawingId}
+            onUpdate={() => drawing.setTick((n) => n + 1)}
+            onDelete={drawing.deleteDrawingFromList}
+            onDuplicate={drawing.duplicateDrawingFromList}
+          />
           {candleCountdown && (
             <div className="absolute top-2 z-10 rounded px-3 py-1.5 text-[15px] font-bold font-mono tracking-wide"
               style={{ backgroundColor: madhanMode === 'dark' ? 'rgba(0,0,0,0.85)' : 'rgba(255,255,255,0.9)', color: madhanMode === 'dark' ? '#e5e7eb' : '#1f2937', border: `1px solid ${madhanMode === 'dark' ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.1)'}`, right: 80 }}>
@@ -2672,8 +2736,31 @@ export default function EzayChart() {
           )}
           {showRealtime && <RealtimeTable onClose={() => setShowRealtime(false)} />}
         </div>
-        {showEzaySignals && <EzaySignals className="shrink-0" style={{ width: 320 }} backtestDate={isBacktest ? backtestDate : undefined} refreshTrigger={refreshTrigger} onFirstSignal={handleFirstSignal} onSignals={handleSignals} signalsData={signalsForPanel} signalsMeta={signalsMetaForPanel} lastTime={signalsLastTime} />}
+        <WidgetBar
+          activeTab={widgetTab}
+          onTabChange={(tab) => {
+            setWidgetTab(tab)
+            const v = tab === 'ezay-signals'
+            setShowEzaySignals(v)
+            saveSetting('showEzaySignals', v)
+          }}
+          ezaySignals={<EzaySignals className="h-full" refreshTrigger={refreshTrigger} onFirstSignal={handleFirstSignal} onSignals={handleSignals} signalsData={signalsForPanel} signalsMeta={signalsMetaForPanel} lastTime={signalsLastTime} />}
+        >
+          <DrawingListPanel
+            drawingManager={drawing.drawingManagerRef.current}
+            selectedDrawingId={drawing.selectedDrawingId}
+            onSelect={drawing.selectDrawingFromList}
+            onDelete={drawing.deleteDrawingFromList}
+            onDuplicate={drawing.duplicateDrawingFromList}
+            onClearAll={drawing.clearAllDrawingsFromList}
+          />
+        </WidgetBar>
       </div>
+      <TextEditorModal
+        drawing={drawing.editingTextDrawing}
+        onSave={drawing.handleTextEditorSave}
+        onClose={() => drawing.setEditingTextDrawing(null)}
+      />
     </div>
   )
 }

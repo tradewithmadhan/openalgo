@@ -19,15 +19,20 @@ const WIDGET_TABS: WidgetTab[] = [
 interface WidgetBarProps {
   children: React.ReactNode
   ezaySignals?: React.ReactNode
+  activeTab?: string | null
+  onTabChange?: (tabId: string | null) => void
 }
 
-export default function WidgetBar({ children, ezaySignals }: WidgetBarProps) {
-  const [activeTab, setActiveTab] = useState<string | null>(null)
+export default function WidgetBar({ children, ezaySignals, activeTab: controlledTab, onTabChange }: WidgetBarProps) {
+  const [internalTab, setInternalTab] = useState<string | null>(null)
+  const activeTab = controlledTab !== undefined ? controlledTab : internalTab
   const { mode } = useMadhanTheme()
   const t = chartTheme[mode]
 
   const toggleTab = (tabId: string) => {
-    setActiveTab((prev) => (prev === tabId ? null : tabId))
+    const next = activeTab === tabId ? null : tabId
+    if (onTabChange) onTabChange(next)
+    else setInternalTab(next)
   }
 
   const panelWidth = activeTab === 'ezay-signals' ? 320 : 200

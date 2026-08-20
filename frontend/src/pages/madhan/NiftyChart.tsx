@@ -18,7 +18,7 @@ import {
   type Time,
 } from 'lightweight-charts'
 import { indicatorRegistry } from 'lightweight-charts-indicators'
-import { DrawingManager, getToolRegistry, type IDrawing } from 'lightweight-charts-drawing'
+import { useDrawingSystem } from './useDrawingSystem'
 import type { Bar } from 'oakscriptjs'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -42,7 +42,8 @@ import { useMadhanTheme } from './useMadhanTheme'
 import { cn } from '@/lib/utils'
 import { setTimeOffset, getTimeOffset } from '@/utils/timeSync'
 import { chartTheme } from './chartTheme'
-import DrawingToolbar, { TEXT_DRAWING_TYPES } from './DrawingToolbar'
+import DrawingToolbar from './DrawingToolbar'
+import FloatingDrawingToolbar from './FloatingDrawingToolbar'
 import DrawingListPanel from './DrawingListPanel'
 import TextEditorModal from './TextEditorModal'
 import ChartLayout from './ChartLayout'
@@ -148,12 +149,6 @@ export default function NiftyChart() {
   const prevCloseRef = useRef<ISeriesApi<'Line'> | null>(null)
   const oiPrimitiveRef = useRef<any>(null)
   const coiPrimitiveRef = useRef<any>(null)
-  const drawingManagerRef = useRef<DrawingManager | null>(null)
-  const drawingAnchorsRef = useRef<{ time: Time; price: number }[]>([])
-  const drawingPreviewIdRef = useRef<string | null>(null)
-  const activeDrawingToolRef = useRef<string | null>(null)
-  const drawingColorRef = useRef('#3b82f6')
-  const lineWidthRef = useRef(2)
   const priceDataRef = useRef<Candle[]>([])
   const updaterRef = useRef<number | null>(null)
   const timeoutRef = useRef<number | null>(null)
@@ -218,14 +213,6 @@ export default function NiftyChart() {
   const [indicatorPanelResizing, setIndicatorPanelResizing] = useState(false)
   const indicatorPanelDragStart = useRef<{ mx: number; my: number; px: number; py: number } | null>(null)
   const indicatorPanelResizeStart = useRef<{ mx: number; w: number } | null>(null)
-  const [showDrawingPanel, setShowDrawingPanel] = useState(false)
-  const [drawingToolbarCollapsed, setDrawingToolbarCollapsed] = useState(false)
-  const [activeDrawingTool, setActiveDrawingTool] = useState<string | null>(null)
-  const [drawingColor, setDrawingColor] = useState('#3b82f6')
-  const [lineWidth, setLineWidth] = useState(2)
-  const [selectedDrawingId, setSelectedDrawingId] = useState<string | null>(null)
-  const [, setSelectedDrawing] = useState<IDrawing | null>(null)
-  const [editingTextDrawing, setEditingTextDrawing] = useState<IDrawing | null>(null)
   const [chartReady, setChartReady] = useState(false)
   const [crosshairOHLCV, setCrosshairOHLCV] = useState<{ time: string; open: number; high: number; low: number; close: number; volume?: number; change?: number; changePct?: number } | null>(null)
   const [niftyStatus, setNiftyStatus] = useState<string>('')
@@ -242,19 +229,6 @@ export default function NiftyChart() {
   const navigate = useNavigate()
   const { user } = useAuthStore()
   const profileMenuItems = useProfileMenuItems()
-
-  useEffect(() => {
-    activeDrawingToolRef.current = activeDrawingTool
-    if (!activeDrawingTool) drawingAnchorsRef.current = []
-  }, [activeDrawingTool])
-
-  useEffect(() => {
-    drawingColorRef.current = drawingColor
-  }, [drawingColor])
-
-  useEffect(() => {
-    lineWidthRef.current = lineWidth
-  }, [lineWidth])
 
   useEffect(() => {
     setIndicatorInputs((prev) => {
@@ -275,6 +249,12 @@ export default function NiftyChart() {
       return activeIndicators.length > 0 ? activeIndicators[0].key : null
     })
   }, [activeIndicators])
+
+  const drawing = useDrawingSystem({
+    chart: chartRef.current,
+    series: candleRef.current,
+    chartContainer: chartContainerRef.current,
+  })
 
   const [collapsedCategories, setCollapsedCategories] = useState<Record<string, boolean>>({})
   const collapseAllCategories = useCallback(() => {
@@ -416,136 +396,6 @@ export default function NiftyChart() {
     try { candle.attachPrimitive(volumeProfile as any) } catch {}
     volumeProfileRef.current = volumeProfile
     setChartReady(true)
-    const drawingManager = new DrawingManager()
-    drawingManager.attach(chart, candle, chartContainerRef.current)
-    drawingManagerRef.current = drawingManager
-
-    drawingManager.on('drawing:selected', (event) => {
-      if (event.drawingId) {
-        const d = drawingManager.getDrawing(event.drawingId)
-        setSelectedDrawingId(event.drawingId)
-        setSelectedDrawing(d ?? null)
-        chart.applyOptions({ handleScroll: { pressedMouseMove: false } })
-      }
-    })
-    drawingManager.on('drawing:deselected', () => {
-      setSelectedDrawingId(null)
-      setSelectedDrawing(null)
-      chart.applyOptions({ handleScroll: { pressedMouseMove: true } })
-    })
-
-    const padAnchors = (anchors: { time: Time; price: number }[], required: number) => {
-      if (anchors.length >= required) return anchors
-      const padded = [...anchors]
-      const last = anchors[anchors.length - 1]
-      while (padded.length < required) padded.push({ ...last })
-      return padded
-    }
-
-    const createDrawingPreview = (toolType: string, id: string, anchors: { time: Time; price: number }[]) => {
-      const registry = getToolRegistry()
-      const toolDef = registry.get(toolType)
-      const required = toolDef?.requiredAnchors ?? anchors.length
-      const padded = padAnchors(anchors, required)
-      const drawing = registry.createDrawing(toolType, id, padded, { lineColor: drawingColorRef.current, lineWidth: lineWidthRef.current })
-      if (drawing) drawing.setState('editing' as any)
-      return drawing
-    }
-
-    const finalizeDrawing = (toolType: string, id: string, anchors: { time: Time; price: number }[]) => {
-      if (!drawingManagerRef.current) return
-      const registry = getToolRegistry()
-      const drawing = registry.createDrawing(toolType, id, anchors, { lineColor: drawingColorRef.current, lineWidth: lineWidthRef.current })
-      if (drawing) {
-        drawing.setState('normal' as any)
-        drawingManagerRef.current.addDrawing(drawing)
-      }
-    }
-
-    const handleChartClick = (param: any) => {
-      const tool = activeDrawingToolRef.current
-      if (!drawingManagerRef.current || !param?.point) return
-      if (!tool) {
-        const hit = drawingManagerRef.current.hitTest({ x: param.point.x, y: param.point.y })
-        if (hit) {
-          drawingManagerRef.current.selectDrawing(hit.id)
-        } else {
-          drawingManagerRef.current.deselectAll()
-        }
-        return
-      }
-      if (param?.time == null) return
-      const price = candle.coordinateToPrice(param.point.y)
-      if (price == null) return
-      const anchor = { time: param.time as Time, price }
-
-      const registry = getToolRegistry()
-      const toolDef = registry.get(tool)
-      if (!toolDef) return
-      const required = toolDef.requiredAnchors
-
-      if (required === 1) {
-        const registry = getToolRegistry()
-        const drawing = registry.createDrawing(tool, `${tool}-${Date.now()}`, [anchor], { lineColor: drawingColorRef.current, lineWidth: lineWidthRef.current })
-        if (drawing) {
-          drawing.setState('normal' as any)
-          drawingManagerRef.current.addDrawing(drawing)
-        }
-        drawingManagerRef.current.setActiveTool(null)
-        setActiveDrawingTool(null)
-        chart.applyOptions({ handleScroll: { pressedMouseMove: true } })
-        return
-      }
-
-      drawingAnchorsRef.current.push(anchor)
-
-      if (drawingAnchorsRef.current.length === 1 && required >= 2) {
-        const previewId = `draw-preview-${Date.now()}`
-        drawingPreviewIdRef.current = previewId
-        const drawing = createDrawingPreview(tool, previewId, [anchor, anchor])
-        if (drawing) drawingManagerRef.current.addDrawing(drawing)
-        return
-      }
-
-      if (drawingAnchorsRef.current.length < required) {
-        if (drawingPreviewIdRef.current) {
-          drawingManagerRef.current.removeDrawing(drawingPreviewIdRef.current)
-          drawingPreviewIdRef.current = null
-        }
-        const previewId = `draw-preview-${Date.now()}`
-        drawingPreviewIdRef.current = previewId
-        const drawing = createDrawingPreview(tool, previewId, [...drawingAnchorsRef.current, anchor])
-        if (drawing) drawingManagerRef.current.addDrawing(drawing)
-        return
-      }
-
-      if (drawingPreviewIdRef.current) {
-        drawingManagerRef.current.removeDrawing(drawingPreviewIdRef.current)
-        drawingPreviewIdRef.current = null
-      }
-      finalizeDrawing(tool, `${tool}-${Date.now()}`, [...drawingAnchorsRef.current])
-      drawingAnchorsRef.current = []
-      drawingManagerRef.current.setActiveTool(null)
-      setActiveDrawingTool(null)
-      chart.applyOptions({ handleScroll: { pressedMouseMove: true } })
-    }
-
-    const handleChartCrosshairMove = (param: any) => {
-      const tool = activeDrawingToolRef.current
-      if (!tool || !drawingManagerRef.current || !drawingPreviewIdRef.current || drawingAnchorsRef.current.length === 0 || !param?.point || param?.time == null) return
-      const registry = getToolRegistry()
-      const toolDef = registry.get(tool)
-      if (!toolDef || toolDef.requiredAnchors < 2) return
-      const price = candle.coordinateToPrice(param.point.y)
-      if (price == null) return
-      drawingManagerRef.current.removeDrawing(drawingPreviewIdRef.current)
-      const previewAnchors = [...drawingAnchorsRef.current, { time: param.time as Time, price }]
-      const drawing = createDrawingPreview(tool, drawingPreviewIdRef.current, previewAnchors)
-      if (drawing) drawingManagerRef.current.addDrawing(drawing)
-    }
-
-    chart.subscribeClick(handleChartClick)
-    chart.subscribeCrosshairMove(handleChartCrosshairMove)
 
     const handleCrosshairOHLCV = (param: any) => {
       const pick = (c: Candle) => {
@@ -576,23 +426,6 @@ export default function NiftyChart() {
     }
     chart.subscribeCrosshairMove(handleCrosshairOHLCV)
 
-    const handleChartDblClick = (e: MouseEvent) => {
-      const tool = activeDrawingToolRef.current
-      if (tool) return
-      if (!drawingManagerRef.current || !chartContainerRef.current) return
-      const rect = chartContainerRef.current.getBoundingClientRect()
-      const x = e.clientX - rect.left
-      const y = e.clientY - rect.top
-      const hit = drawingManagerRef.current.hitTest({ x, y })
-      if (hit && TEXT_DRAWING_TYPES.includes(hit.type)) {
-        e.preventDefault()
-        e.stopPropagation()
-        drawingManagerRef.current.selectDrawing(hit.id)
-        setEditingTextDrawing(hit)
-      }
-    }
-    chartContainerRef.current.addEventListener('dblclick', handleChartDblClick)
-
     const resizeObserver = new ResizeObserver(() => {
       if (!chartContainerRef.current || !chartRef.current) return
       chartRef.current.applyOptions({
@@ -609,16 +442,7 @@ export default function NiftyChart() {
       if (updaterRef.current) window.clearInterval(updaterRef.current)
       if (timeoutRef.current) window.clearTimeout(timeoutRef.current)
       resizeObserver.disconnect()
-      chart.unsubscribeClick(handleChartClick)
-      chart.unsubscribeCrosshairMove(handleChartCrosshairMove)
       chart.unsubscribeCrosshairMove(handleCrosshairOHLCV)
-      if (chartContainerRef.current) {
-        chartContainerRef.current.removeEventListener('dblclick', handleChartDblClick)
-      }
-      if (drawingManagerRef.current) {
-        drawingManagerRef.current.detach()
-        drawingManagerRef.current = null
-      }
       indicatorSeriesRef.current.clear()
       sqrtPrimitiveRef.current = null
       coiLineSeriesRef.current = null
@@ -2648,69 +2472,6 @@ export default function NiftyChart() {
     repaintOverlay()
   }
 
-  const handleToolSelect = (toolType: string | null) => {
-    if (!drawingManagerRef.current) return
-    if (drawingPreviewIdRef.current) {
-      drawingManagerRef.current.removeDrawing(drawingPreviewIdRef.current)
-      drawingPreviewIdRef.current = null
-    }
-    drawingAnchorsRef.current = []
-    drawingManagerRef.current.setActiveTool(toolType)
-    setActiveDrawingTool(toolType)
-    if (chartRef.current) {
-      chartRef.current.applyOptions({ handleScroll: { pressedMouseMove: toolType == null } })
-    }
-  }
-
-  const clearDrawings = () => {
-    if (!drawingManagerRef.current) return
-    drawingManagerRef.current.clearAll()
-    drawingManagerRef.current.setActiveTool(null)
-    drawingAnchorsRef.current = []
-    drawingPreviewIdRef.current = null
-    setActiveDrawingTool(null)
-    setSelectedDrawingId(null)
-    setSelectedDrawing(null)
-    if (chartRef.current) {
-      chartRef.current.applyOptions({ handleScroll: { pressedMouseMove: true } })
-    }
-  }
-
-  const selectDrawingFromList = (id: string) => {
-    if (!drawingManagerRef.current) return
-    drawingManagerRef.current.selectDrawing(id)
-  }
-
-  const deleteDrawingFromList = (id: string) => {
-    if (!drawingManagerRef.current) return
-    drawingManagerRef.current.removeDrawing(id)
-    if (selectedDrawingId === id) {
-      setSelectedDrawingId(null)
-      setSelectedDrawing(null)
-    }
-  }
-
-  const handleTextEditorSave = () => {
-    setEditingTextDrawing(null)
-    drawingManagerRef.current?.deselectAll()
-  }
-
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedDrawingId && drawingManagerRef.current) {
-        if ((e.target as HTMLElement).tagName === 'INPUT' || (e.target as HTMLElement).tagName === 'TEXTAREA') return
-        drawingManagerRef.current.removeDrawing(selectedDrawingId)
-        setSelectedDrawingId(null)
-        setSelectedDrawing(null)
-      }
-      if (e.key === 'Escape' && activeDrawingTool) {
-        handleToolSelect(null)
-      }
-    }
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [selectedDrawingId, activeDrawingTool])
-
   const addIndicator = (indicatorId: string) => {
     const nextIndex = activeIndicators.filter((item) => item.indicatorId === indicatorId).length
     const key = `${indicatorId}-${Date.now()}-${nextIndex}`
@@ -2972,12 +2733,12 @@ export default function NiftyChart() {
           <Button variant={prevOhlcActive ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={() => setPrevOhlcActive((v) => !v)}>Prev OHLC</Button>
           <Button variant={sqrtActive ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={() => setSqrtActive((v) => !v)}>SQRT</Button>
           <Button variant={showIndicatorPanel ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={() => setShowIndicatorPanel((v) => !v)}>Indicators</Button>
-          <Button variant={showDrawingPanel ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={() => {
-            if (showDrawingPanel) {
-              setDrawingToolbarCollapsed((v) => !v)
+          <Button variant={drawing.showDrawingPanel ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={() => {
+            if (drawing.showDrawingPanel) {
+              drawing.setDrawingToolbarCollapsed((v) => !v)
             } else {
-              setShowDrawingPanel(true)
-              setDrawingToolbarCollapsed(false)
+              drawing.setShowDrawingPanel(true)
+              drawing.setDrawingToolbarCollapsed(false)
             }
           }}>Drawings</Button>
           <div className="flex items-center gap-1.5 rounded border px-1.5 py-0.5">
@@ -3041,17 +2802,25 @@ export default function NiftyChart() {
         <ChartLayout
           leftToolbar={
             <>
-              {showDrawingPanel && (
+              {drawing.showDrawingPanel && (
                 <DrawingToolbar
-                  activeTool={activeDrawingTool}
-                  onToolSelect={handleToolSelect}
-                  drawingColor={drawingColor}
-                  onColorChange={setDrawingColor}
-                  lineWidth={lineWidth}
-                  onLineWidthChange={setLineWidth}
-                  onClearAll={clearDrawings}
-                  collapsed={drawingToolbarCollapsed}
-                  onToggleCollapse={() => setDrawingToolbarCollapsed((v) => !v)}
+                  activeTool={drawing.activeDrawingTool}
+                  onToolSelect={drawing.handleToolSelect}
+                  collapsed={drawing.drawingToolbarCollapsed}
+                  onToggleCollapse={() => drawing.setDrawingToolbarCollapsed((v) => !v)}
+                  onHideAll={() => {
+                    if (!drawing.drawingManagerRef.current) return
+                    const all = drawing.drawingManagerRef.current.getAllDrawings()
+                    const anyVisible = all.some((d) => d.options.visible !== false)
+                    for (const d of all) {
+                      d.updateOptions({ visible: !anyVisible })
+                      d.requestUpdate()
+                    }
+                    drawing.setTick((n) => n + 1)
+                  }}
+                  onClearAll={drawing.clearAllDrawingsFromList}
+                  hasDrawings={drawing.drawingManagerRef.current ? drawing.drawingManagerRef.current.getAllDrawings().length > 0 : false}
+                  allHidden={drawing.drawingManagerRef.current ? drawing.drawingManagerRef.current.getAllDrawings().length > 0 && drawing.drawingManagerRef.current.getAllDrawings().every((d) => d.options.visible === false) : false}
                 />
               )}
             </>
@@ -3059,15 +2828,26 @@ export default function NiftyChart() {
           rightPanel={
             <WidgetBar ezaySignals={<EzaySignals className="h-full" refreshTrigger={refreshTrigger} />}>
               <DrawingListPanel
-                drawingManager={drawingManagerRef.current}
-                selectedDrawingId={selectedDrawingId}
-                onSelect={selectDrawingFromList}
-                onDelete={deleteDrawingFromList}
+                drawingManager={drawing.drawingManagerRef.current}
+                selectedDrawingId={drawing.selectedDrawingId}
+                onSelect={drawing.selectDrawingFromList}
+                onDelete={drawing.deleteDrawingFromList}
+                onDuplicate={drawing.duplicateDrawingFromList}
+                onClearAll={drawing.clearAllDrawingsFromList}
               />
             </WidgetBar>
           }
         >
-          <div ref={chartContainerRef} className="h-full w-full" />
+          <div className="relative h-full w-full">
+            <div ref={chartContainerRef} className="absolute inset-0" />
+            <FloatingDrawingToolbar
+              drawingManager={drawing.drawingManagerRef.current}
+              selectedDrawingId={drawing.selectedDrawingId}
+              onUpdate={() => drawing.setTick((n) => n + 1)}
+              onDelete={drawing.deleteDrawingFromList}
+              onDuplicate={drawing.duplicateDrawingFromList}
+            />
+          </div>
           {candleCountdown && (
             <div
               className="absolute z-30 pointer-events-none select-none"
@@ -3154,9 +2934,9 @@ export default function NiftyChart() {
         )}
       </Card>
       <TextEditorModal
-        drawing={editingTextDrawing}
-        onSave={handleTextEditorSave}
-        onClose={() => setEditingTextDrawing(null)}
+        drawing={drawing.editingTextDrawing}
+        onSave={drawing.handleTextEditorSave}
+        onClose={() => drawing.setEditingTextDrawing(null)}
       />
     </div>
   )
