@@ -10,9 +10,11 @@ interface DrawingToolbarProps {
   collapsed: boolean
   onToggleCollapse: () => void
   onHideAll?: () => void
+  onLockAll?: () => void
   onClearAll?: () => void
   hasDrawings?: boolean
   allHidden?: boolean
+  allLocked?: boolean
 }
 
 const SvgIcon: React.FC<{ svg: string }> = ({ svg }) => (
@@ -149,9 +151,11 @@ export default function DrawingToolbar({
   collapsed,
   onToggleCollapse,
   onHideAll,
+  onLockAll,
   onClearAll,
   hasDrawings = false,
   allHidden = false,
+  allLocked = false,
 }: DrawingToolbarProps) {
   const registry = getToolRegistry()
   const { mode } = useMadhanTheme()
@@ -307,6 +311,28 @@ export default function DrawingToolbar({
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="h-4 w-4">
                   <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
                   <circle cx="12" cy="12" r="3" />
+                </svg>
+              )}
+            </button>
+          </div>
+          <div className="mx-auto flex h-8 w-8 items-center justify-center">
+            <button
+              className="flex h-8 w-8 items-center justify-center rounded transition-colors"
+              style={{ color: t.textSecondary }}
+              title={allLocked ? 'Unlock All Drawings' : 'Lock All Drawings'}
+              onClick={onLockAll}
+              onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = t.hover }}
+              onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = '' }}
+            >
+              {allLocked ? (
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="h-4 w-4">
+                  <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                  <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                </svg>
+              ) : (
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="h-4 w-4">
+                  <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                  <path d="M7 11V7a5 5 0 0 1 9.9-1" />
                 </svg>
               )}
             </button>

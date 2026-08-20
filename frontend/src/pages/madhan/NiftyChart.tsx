@@ -2818,9 +2818,20 @@ export default function NiftyChart() {
                     }
                     drawing.setTick((n) => n + 1)
                   }}
+                  onLockAll={() => {
+                    if (!drawing.drawingManagerRef.current) return
+                    const all = drawing.drawingManagerRef.current.getAllDrawings()
+                    const anyLocked = all.some((d) => (d as any).options.locked)
+                    for (const d of all) {
+                      d.updateOptions({ locked: !anyLocked } as any)
+                      d.requestUpdate()
+                    }
+                    drawing.setTick((n) => n + 1)
+                  }}
                   onClearAll={drawing.clearAllDrawingsFromList}
                   hasDrawings={drawing.drawingManagerRef.current ? drawing.drawingManagerRef.current.getAllDrawings().length > 0 : false}
                   allHidden={drawing.drawingManagerRef.current ? drawing.drawingManagerRef.current.getAllDrawings().length > 0 && drawing.drawingManagerRef.current.getAllDrawings().every((d) => d.options.visible === false) : false}
+                  allLocked={drawing.drawingManagerRef.current ? drawing.drawingManagerRef.current.getAllDrawings().length > 0 && drawing.drawingManagerRef.current.getAllDrawings().every((d) => (d as any).options.locked) : false}
                 />
               )}
             </>

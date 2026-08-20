@@ -78,6 +78,24 @@ export function useDrawingSystem({ chart, series, chartContainer, onChartClick }
     setSelectedDrawingId(null)
   }, [])
 
+  const lockAllDrawings = useCallback(() => {
+    const dm = drawingManagerRef.current
+    if (!dm) return
+    dm.getAllDrawings().forEach((d: any) => {
+      d.update({ options: { locked: true } })
+    })
+    setTick((n) => n + 1)
+  }, [])
+
+  const unlockAllDrawings = useCallback(() => {
+    const dm = drawingManagerRef.current
+    if (!dm) return
+    dm.getAllDrawings().forEach((d: any) => {
+      d.update({ options: { locked: false } })
+    })
+    setTick((n) => n + 1)
+  }, [])
+
   const handleTextEditorSave = useCallback(() => {
     setEditingTextDrawing(null)
     drawingManagerRef.current?.deselectAll()
@@ -348,6 +366,8 @@ export function useDrawingSystem({ chart, series, chartContainer, onChartClick }
     deleteDrawingFromList,
     duplicateDrawingFromList,
     clearAllDrawingsFromList,
+    lockAllDrawings,
+    unlockAllDrawings,
     handleTextEditorSave,
     setTick,
   }
