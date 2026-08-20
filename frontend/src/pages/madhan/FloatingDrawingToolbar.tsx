@@ -1,6 +1,6 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import { type DrawingManager } from 'lightweight-charts-drawing'
-import { Trash2, Lock, Unlock, Copy, MoreHorizontal } from 'lucide-react'
+import { Trash2, Lock, Unlock, Copy, MoreHorizontal, GripVertical } from 'lucide-react'
 import { useMadhanTheme } from './useMadhanTheme'
 import { chartTheme } from './chartTheme'
 
@@ -45,6 +45,34 @@ export default function FloatingDrawingToolbar({
   const [showColorPicker, setShowColorPicker] = useState(false)
   const [showWidthStyle, setShowWidthStyle] = useState(false)
   const [showMoreMenu, setShowMoreMenu] = useState(false)
+  const [pos, setPos] = useState<{ x: number; y: number } | null>(null)
+  const dragRef = useRef<HTMLDivElement>(null)
+  const dragStartRef = useRef<{ mouseX: number; mouseY: number; elX: number; elY: number } | null>(null)
+
+  const handleDragStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    const el = dragRef.current
+    if (!el) return
+    const rect = el.getBoundingClientRect()
+    dragStartRef.current = { mouseX: e.clientX, mouseY: e.clientY, elX: rect.left, elY: rect.top }
+    const handleMove = (ev: MouseEvent) => {
+      if (!dragStartRef.current) return
+      const dx = ev.clientX - dragStartRef.current.mouseX
+      const dy = ev.clientY - dragStartRef.current.mouseY
+      setPos({ x: dragStartRef.current.elX + dx, y: dragStartRef.current.elY + dy })
+    }
+    const handleUp = () => {
+      dragStartRef.current = null
+      document.removeEventListener('mousemove', handleMove)
+      document.removeEventListener('mouseup', handleUp)
+    }
+    document.addEventListener('mousemove', handleMove)
+    document.addEventListener('mouseup', handleUp)
+  }, [])
+
+  useEffect(() => {
+    setPos(null)
+  }, [selectedDrawingId])
   const colorRef = useRef<HTMLDivElement>(null)
   const widthStyleRef = useRef<HTMLDivElement>(null)
   const moreRef = useRef<HTMLDivElement>(null)
@@ -100,9 +128,28 @@ export default function FloatingDrawingToolbar({
 
   return (
     <div
-      className="absolute left-1/2 top-3 z-50 flex -translate-x-1/2 items-center gap-0.5 rounded-lg px-1 py-1 shadow-xl"
-      style={{ backgroundColor: t.panelDarker, border: `1px solid ${t.border}` }}
+      ref={dragRef}
+      className="fixed z-50 flex items-center gap-0.5 rounded-lg px-1 py-1 shadow-xl"
+      style={{
+        backgroundColor: t.panelDarker,
+        border: `1px solid ${t.border}`,
+        left: pos?.x ?? undefined,
+        top: pos?.y ?? undefined,
+        ...(pos ? {} : { left: '50%', top: 12, transform: 'translateX(-50%)' }),
+      }}
     >
+      {/* Drag handle */}
+      <button
+        className="flex h-7 w-5 cursor-grab items-center justify-center rounded active:cursor-grabbing"
+        style={{ color: t.textSecondary }}
+        title="Drag"
+        onMouseDown={handleDragStart}
+      >
+        <GripVertical className="h-3.5 w-3.5" />
+      </button>
+
+      <div className="mx-0.5 h-5 w-px" style={{ backgroundColor: t.border }} />
+
       {/* Color picker */}
       <div className="relative" ref={colorRef}>
         <button
