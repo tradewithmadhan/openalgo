@@ -1049,9 +1049,9 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
                 const threshold = Math.max(5, lastSpot * 0.0002);
                 let lineColor = baseColor; // balanced
                 if (lastMeetValue > lastSpot + threshold) {
-                    lineColor = '#22c55e'; // CE expensive - bullish
-                } else if (lastMeetValue < lastSpot - threshold) {
                     lineColor = '#ef4444'; // PE expensive - bearish
+                } else if (lastMeetValue < lastSpot - threshold) {
+                    lineColor = '#22c55e'; // CE expensive - bullish
                 }
 
                 series = chartRef.current!.addSeries(LineSeries, {
@@ -1332,9 +1332,9 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
                             const threshold = Math.max(5, spotLtp * 0.0002);
                             let lineColor = baseColor;
                             if (meetValue > spotLtp + threshold) {
-                                lineColor = '#22c55e';
+                                lineColor = '#ef4444'; // PE expensive - bearish
                             } else if (meetValue < spotLtp - threshold) {
-                                lineColor = '#ef4444';
+                                lineColor = '#22c55e'; // CE expensive - bullish
                             }
                             series.applyOptions({ color: lineColor });
                             series.update({ time: time as any, value: meetValue });
