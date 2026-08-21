@@ -235,6 +235,8 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
     const [showITMDots, setShowITMDots] = useState(false);
     const itmDotsSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
     const itmDotsMarkersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
+    const [showMeet, setShowMeet] = useState(false);
+    const meetSeriesRefs = useRef<Map<number, ISeriesApi<"Line">>>(new Map());
     const histogramSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
     const [histogramMode, setHistogramMode] = useState<'strike_vol' | 'total_vol' | 'hlx_count'>('hlx_count');
     const [showHistogram, setShowHistogram] = useState(true);
@@ -516,6 +518,10 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
                 itmDotsSeriesRef.current = null;
             }
             itmDotsMarkersRef.current = null;
+            meetSeriesRefs.current.forEach((s) => {
+                try { chart.removeSeries(s); } catch {}
+            });
+            meetSeriesRefs.current.clear();
             if (histogramSeriesRef.current) {
                 try { chart.removeSeries(histogramSeriesRef.current); } catch {}
                 histogramSeriesRef.current = null;
@@ -529,7 +535,7 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
 
         // Update Spot Visibility
         spotSeriesRef.current.applyOptions({ visible: showSpot });
-        chartRef.current.priceScale('left').applyOptions({ visible: showSpot || showITMDots });
+        chartRef.current.priceScale('left').applyOptions({ visible: showSpot || showITMDots || showMeet });
 
         // Update Spot Data
         if (spotData && spotSeriesRef.current) {
@@ -950,6 +956,123 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
             itmDotsMarkersRef.current.setMarkers([]);
         }
 
+        // Meet lines - spot where CE = PE for each strike
+        // Formula: S_meet = spot + (PE LTP - CE LTP)
+        if (showMeet && chartRef.current && spotData) {
+            // Build sorted spot arrays for closest-match lookup
+            const spotTimes: number[] = [];
+            const spotPrices: number[] = [];
+            spotData.timestamps.forEach((tsMs, i) => {
+                spotTimes.push(Math.floor(tsMs / 1000));
+                spotPrices.push(spotData.prices[i]);
+            });
+
+            const findClosestSpot = (targetTs: number): number => {
+                if (spotTimes.length === 0) return 0;
+                let lo = 0, hi = spotTimes.length - 1;
+                while (lo < hi) {
+                    const mid = (lo + hi) >> 1;
+                    if (spotTimes[mid] < targetTs) lo = mid + 1;
+                    else hi = mid;
+                }
+                // Pick closest of lo and lo-1
+                if (lo > 0) {
+                    const dLo = Math.abs(spotTimes[lo] - targetTs);
+                    const dPrev = Math.abs(spotTimes[lo - 1] - targetTs);
+                    return dPrev < dLo ? spotPrices[lo - 1] : spotPrices[lo];
+                }
+                return spotPrices[0];
+            };
+
+            const meetColors = ['#f59e0b', '#a78bfa', '#34d399', '#f472b6', '#60a5fa'];
+            let colorIdx = 0;
+
+            strikes.forEach(strike => {
+                const ceSymbol = getSymbol(strike, 'CE');
+                const peSymbol = getSymbol(strike, 'PE');
+                if (!ceSymbol || !peSymbol) return;
+
+                const ceRaw = optionsData.get(ceSymbol);
+                const peRaw = optionsData.get(peSymbol);
+                if (!ceRaw || !ceRaw.length || !peRaw || !peRaw.length) return;
+
+                // Build sorted PE arrays for closest-match lookup
+                const peTimes: number[] = [];
+                const peCloses: number[] = [];
+                peRaw.forEach(d => {
+                    peTimes.push(d.timestamp);
+                    peCloses.push(d.close);
+                });
+
+                const findClosestPe = (targetTs: number): number => {
+                    if (peTimes.length === 0) return 0;
+                    let lo = 0, hi = peTimes.length - 1;
+                    while (lo < hi) {
+                        const mid = (lo + hi) >> 1;
+                        if (peTimes[mid] < targetTs) lo = mid + 1;
+                        else hi = mid;
+                    }
+                    if (lo > 0) {
+                        const dLo = Math.abs(peTimes[lo] - targetTs);
+                        const dPrev = Math.abs(peTimes[lo - 1] - targetTs);
+                        return dPrev < dLo ? peCloses[lo - 1] : peCloses[lo];
+                    }
+                    return peCloses[0];
+                };
+
+                let series = meetSeriesRefs.current.get(strike);
+                if (series) {
+                    chartRef.current!.removeSeries(series);
+                    meetSeriesRefs.current.delete(strike);
+                }
+
+                const baseColor = meetColors[colorIdx % meetColors.length];
+                colorIdx++;
+
+                // Iterate over CE timestamps, find closest spot and PE close
+                const meetData: { time: any; value: number }[] = [];
+                let lastMeetValue = 0;
+                ceRaw.forEach(ceCandle => {
+                    const tsSec = ceCandle.timestamp;
+                    const spotClose = findClosestSpot(tsSec);
+                    const peClose = findClosestPe(tsSec);
+                    if (!spotClose || !peClose) return;
+                    const meetValue = spotClose + (peClose - ceCandle.close);
+                    lastMeetValue = meetValue;
+                    meetData.push({ time: tsSec, value: meetValue });
+                });
+
+                if (meetData.length === 0) return;
+
+                // Determine color based on last meeting spot vs current spot
+                const lastSpot = spotData.prices[spotData.prices.length - 1] ?? 0;
+                const threshold = Math.max(5, lastSpot * 0.0002);
+                let lineColor = baseColor; // balanced
+                if (lastMeetValue > lastSpot + threshold) {
+                    lineColor = '#22c55e'; // CE expensive - bullish
+                } else if (lastMeetValue < lastSpot - threshold) {
+                    lineColor = '#ef4444'; // PE expensive - bearish
+                }
+
+                series = chartRef.current!.addSeries(LineSeries, {
+                    color: lineColor,
+                    lineWidth: 1,
+                    lineStyle: LineStyle.Dashed,
+                    priceScaleId: 'left',
+                    priceLineVisible: false,
+                    lastValueVisible: false,
+                    title: `${strike} Meet`,
+                });
+                series.setData(meetData);
+                meetSeriesRefs.current.set(strike, series);
+            });
+        } else if (chartRef.current) {
+            meetSeriesRefs.current.forEach((s) => {
+                try { chartRef.current!.removeSeries(s); } catch {}
+            });
+            meetSeriesRefs.current.clear();
+        }
+
         // Update Histogram
         if (histogramSeriesRef.current) {
             if (!showHistogram) {
@@ -1048,7 +1171,7 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
                 chartRef.current!.priceScale('histogram').applyOptions({ visible: false });
             }
         }
-    }, [crossStats, selectedStrikes, showOptions, optionsData, timeframe, showHighCross, showHighCrossCE, showHighCrossPE, showLowCross, showLowCrossCE, showLowCrossPE, showExtrinsic, showExtrinsicCE, showExtrinsicPE, showITMDots, spotData, showSpot, histogramMode, showHistogram]);
+    }, [crossStats, selectedStrikes, showOptions, optionsData, timeframe, showHighCross, showHighCrossCE, showHighCrossPE, showLowCross, showLowCrossCE, showLowCrossPE, showExtrinsic, showExtrinsicCE, showExtrinsicPE, showITMDots, showMeet, spotData, showSpot, histogramMode, showHistogram]);
 
     // WebSocket Real-time Updates Effect
     useEffect(() => {
@@ -1181,7 +1304,46 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
                 }
             }
         });
-    }, [wsData, strikes, timeframe]);
+
+        // Update Meet lines live (formula: S_meet = spot + (PE - CE))
+        if (showMeet && meetSeriesRefs.current.size > 0) {
+            const spotWs = wsData.get('NSE_INDEX:NIFTY');
+            const spotLtp = spotWs?.data?.ltp;
+            if (spotLtp) {
+                const meetColors = ['#f59e0b', '#a78bfa', '#34d399', '#f472b6', '#60a5fa'];
+                let colorIdx = 0;
+                strikes.forEach(strike => {
+                    const ceSymbol = getSymbol(strike, 'CE');
+                    const peSymbol = getSymbol(strike, 'PE');
+                    const baseColor = meetColors[colorIdx % meetColors.length];
+                    colorIdx++;
+
+                    const ceWs = ceSymbol ? wsData.get(`NFO:${ceSymbol}`) : null;
+                    const peWs = peSymbol ? wsData.get(`NFO:${peSymbol}`) : null;
+                    const ceLtp = ceWs?.data?.ltp;
+                    const peLtp = peWs?.data?.ltp;
+
+                    if (ceLtp !== undefined && peLtp !== undefined) {
+                        const meetValue = spotLtp + (peLtp - ceLtp);
+                        const time = Math.floor((Date.now() / 1000) / (timeframe * 60)) * (timeframe * 60);
+                        const series = meetSeriesRefs.current.get(strike);
+                        if (series) {
+                            // Dynamic color based on meet vs spot
+                            const threshold = Math.max(5, spotLtp * 0.0002);
+                            let lineColor = baseColor;
+                            if (meetValue > spotLtp + threshold) {
+                                lineColor = '#22c55e';
+                            } else if (meetValue < spotLtp - threshold) {
+                                lineColor = '#ef4444';
+                            }
+                            series.applyOptions({ color: lineColor });
+                            series.update({ time: time as any, value: meetValue });
+                        }
+                    }
+                });
+            }
+        }
+    }, [wsData, strikes, timeframe, showMeet]);
 
     return (
         <div className="flex h-[calc(100vh-140px)] w-full gap-2">
@@ -1237,6 +1399,21 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
                                 <div className="flex items-center space-x-0.5">
                                     <div className="w-1.5 h-1.5 rounded-full bg-emerald-500" title="CE ITM" />
                                     <div className="w-1.5 h-1.5 rounded-full bg-red-500" title="PE ITM" />
+                                </div>
+                            )}
+                            <div className="w-px h-3 bg-border" />
+                            <Label htmlFor="show-meet" className="text-[10px] font-semibold">Meet</Label>
+                            <Switch 
+                                id="show-meet" 
+                                checked={showMeet}
+                                onCheckedChange={setShowMeet}
+                                className="scale-75"
+                            />
+                            {showMeet && (
+                                <div className="flex items-center space-x-0.5">
+                                    <div className="w-1.5 h-1.5 rounded-full bg-amber-500" title="Balanced" />
+                                    <div className="w-1.5 h-1.5 rounded-full bg-emerald-500" title="Bullish" />
+                                    <div className="w-1.5 h-1.5 rounded-full bg-red-500" title="Bearish" />
                                 </div>
                             )}
                         </div>
