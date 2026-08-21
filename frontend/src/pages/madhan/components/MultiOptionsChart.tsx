@@ -2,7 +2,7 @@ import { useEffect, useState, useRef, useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { createChart, ColorType, type IChartApi, type ISeriesApi, LineSeries, CandlestickSeries, HistogramSeries, LineStyle } from 'lightweight-charts';
+import { createChart, ColorType, type IChartApi, type ISeriesApi, type ISeriesMarkersPluginApi, type Time, type SeriesMarker, LineSeries, CandlestickSeries, HistogramSeries, LineStyle, createSeriesMarkers } from 'lightweight-charts';
 import { useMadhanTheme } from '@/pages/madhan/useMadhanTheme';
 import { useMarketData } from '@/hooks/useMarketData';
 import { Switch } from '@/components/ui/switch';
@@ -136,6 +136,28 @@ const computeRunningMinLow = (data: OptionOHLC[], period: number): { time: any; 
     });
 };
 
+// Compute extrinsic value: option_close - intrinsic
+// CE intrinsic = max(spot - strike, 0), PE intrinsic = max(strike - spot, 0)
+const computeExtrinsic = (
+    optionData: OptionOHLC[],
+    spotData: SpotData,
+    strike: number,
+    type: 'CE' | 'PE'
+): { time: any; value: number }[] => {
+    if (!optionData.length || !spotData.timestamps.length) return [];
+    const spotLookup = new Map<number, number>();
+    spotData.timestamps.forEach((tsMs, i) => {
+        spotLookup.set(Math.floor(tsMs / 1000), spotData.prices[i]);
+    });
+    return optionData.map(d => {
+        const spotClose = spotLookup.get(d.timestamp) ?? 0;
+        const intrinsic = type === 'CE'
+            ? Math.max(spotClose - strike, 0)
+            : Math.max(strike - spotClose, 0);
+        return { time: d.timestamp, value: Math.max(d.close - intrinsic, 0) };
+    });
+};
+
 export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: MultiOptionsChartProps) {
     const { mode: madhanMode } = useMadhanTheme();
     const chartContainerRef = useRef<HTMLDivElement>(null);
@@ -206,6 +228,13 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
     const [showLowCrossCE, setShowLowCrossCE] = useState(true);
     const [showLowCrossPE, setShowLowCrossPE] = useState(true);
     const lowCrossSeriesRefs = useRef<Map<string, ISeriesApi<"Line">>>(new Map());
+    const [showExtrinsic, setShowExtrinsic] = useState(false);
+    const [showExtrinsicCE, setShowExtrinsicCE] = useState(true);
+    const [showExtrinsicPE, setShowExtrinsicPE] = useState(true);
+    const extrinsicSeriesRefs = useRef<Map<string, ISeriesApi<"Line">>>(new Map());
+    const [showITMDots, setShowITMDots] = useState(false);
+    const itmDotsSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+    const itmDotsMarkersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
     const histogramSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
     const [histogramMode, setHistogramMode] = useState<'strike_vol' | 'total_vol' | 'hlx_count'>('hlx_count');
     const [showHistogram, setShowHistogram] = useState(true);
@@ -431,6 +460,18 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
         });
         spotSeriesRef.current = spotSeries;
 
+        // ITM Dots Series (Left Scale) - transparent series for markers
+        const itmDotsSeries = chart.addSeries(LineSeries, {
+            color: 'transparent',
+            lineVisible: false,
+            lastValueVisible: false,
+            priceLineVisible: false,
+            crosshairMarkerVisible: false,
+            priceScaleId: 'left',
+        });
+        itmDotsSeriesRef.current = itmDotsSeries;
+        itmDotsMarkersRef.current = createSeriesMarkers(itmDotsSeries, []);
+
         // Initial Data load for Spot if available
         if (spotData) {
             const spotChartData = aggregateSpotData(spotData, timeframe);
@@ -466,6 +507,15 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
                 try { chart.removeSeries(s); } catch {}
             });
             lowCrossSeriesRefs.current.clear();
+            extrinsicSeriesRefs.current.forEach((s) => {
+                try { chart.removeSeries(s); } catch {}
+            });
+            extrinsicSeriesRefs.current.clear();
+            if (itmDotsSeriesRef.current) {
+                try { chart.removeSeries(itmDotsSeriesRef.current); } catch {}
+                itmDotsSeriesRef.current = null;
+            }
+            itmDotsMarkersRef.current = null;
             if (histogramSeriesRef.current) {
                 try { chart.removeSeries(histogramSeriesRef.current); } catch {}
                 histogramSeriesRef.current = null;
@@ -479,7 +529,7 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
 
         // Update Spot Visibility
         spotSeriesRef.current.applyOptions({ visible: showSpot });
-        chartRef.current.priceScale('left').applyOptions({ visible: showSpot });
+        chartRef.current.priceScale('left').applyOptions({ visible: showSpot || showITMDots });
 
         // Update Spot Data
         if (spotData && spotSeriesRef.current) {
@@ -808,6 +858,98 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
             lowCrossSeriesRefs.current.clear();
         }
 
+        // Extrinsic value lines - option premium minus intrinsic value
+        if (showExtrinsic && chartRef.current && spotData) {
+            strikes.forEach(strike => {
+                (['CE', 'PE'] as const).forEach(type => {
+                    const symbol = getSymbol(strike, type);
+                    if (!symbol) return;
+                    const key = `ext_${symbol}`;
+                    const shouldShow = (type === 'CE' ? showExtrinsicCE : showExtrinsicPE);
+                    const existing = extrinsicSeriesRefs.current.get(key);
+
+                    if (!shouldShow) {
+                        if (existing) {
+                            chartRef.current!.removeSeries(existing);
+                            extrinsicSeriesRefs.current.delete(key);
+                        }
+                        return;
+                    }
+
+                    const rawData = optionsData.get(symbol);
+                    if (!rawData || !rawData.length) return;
+
+                    if (existing) {
+                        chartRef.current!.removeSeries(existing);
+                        extrinsicSeriesRefs.current.delete(key);
+                    }
+
+                    const series = chartRef.current!.addSeries(LineSeries, {
+                        color: type === 'CE' ? '#06b6d4' : '#f97316',
+                        lineWidth: 1,
+                        lineStyle: LineStyle.Solid,
+                        priceScaleId: 'right',
+                        priceLineVisible: false,
+                        lastValueVisible: false,
+                        title: `${strike} ${type} Ext`,
+                    });
+
+                    const extData = computeExtrinsic(rawData, spotData, strike, type);
+                    series.setData(extData);
+                    extrinsicSeriesRefs.current.set(key, series);
+                });
+            });
+        } else {
+            extrinsicSeriesRefs.current.forEach((s) => {
+                try { chartRef.current!.removeSeries(s); } catch {}
+            });
+            extrinsicSeriesRefs.current.clear();
+        }
+
+        // ITM Dots - green for CE ITM (spot > strike), red for PE ITM (spot < strike)
+        if (showITMDots && spotData && itmDotsMarkersRef.current && itmDotsSeriesRef.current) {
+            const spotLookup = new Map<number, number>();
+            spotData.timestamps.forEach((tsMs, i) => {
+                spotLookup.set(Math.floor(tsMs / 1000), spotData.prices[i]);
+            });
+            // Set series data with spot prices so left scale auto-ranges correctly
+            const seriesData = spotData.timestamps.map((tsMs, i) => ({
+                time: Math.floor(tsMs / 1000) as Time,
+                value: spotData.prices[i],
+            }));
+            itmDotsSeriesRef.current.setData(seriesData);
+            const markers: SeriesMarker<Time>[] = [];
+            spotData.timestamps.forEach((tsMs) => {
+                const tsSec = Math.floor(tsMs / 1000);
+                const spotClose = spotLookup.get(tsSec) ?? 0;
+                if (!spotClose) return;
+                strikes.forEach(strike => {
+                    if (spotClose > strike) {
+                        markers.push({
+                            time: tsSec as Time,
+                            position: 'atPriceMiddle',
+                            price: strike,
+                            shape: 'circle',
+                            color: '#22c55e',
+                            size: 1,
+                        });
+                    } else if (spotClose < strike) {
+                        markers.push({
+                            time: tsSec as Time,
+                            position: 'atPriceMiddle',
+                            price: strike,
+                            shape: 'circle',
+                            color: '#ef4444',
+                            size: 1,
+                        });
+                    }
+                });
+            });
+            itmDotsMarkersRef.current.setMarkers(markers);
+        } else if (itmDotsMarkersRef.current) {
+            itmDotsMarkersRef.current.setMarkers([]);
+        }
+
         // Update Histogram
         if (histogramSeriesRef.current) {
             if (!showHistogram) {
@@ -906,7 +1048,7 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
                 chartRef.current!.priceScale('histogram').applyOptions({ visible: false });
             }
         }
-    }, [crossStats, selectedStrikes, showOptions, optionsData, timeframe, showHighCross, showHighCrossCE, showHighCrossPE, showLowCross, showLowCrossCE, showLowCrossPE, spotData, showSpot, histogramMode, showHistogram]);
+    }, [crossStats, selectedStrikes, showOptions, optionsData, timeframe, showHighCross, showHighCrossCE, showHighCrossPE, showLowCross, showLowCrossCE, showLowCrossPE, showExtrinsic, showExtrinsicCE, showExtrinsicPE, showITMDots, spotData, showSpot, histogramMode, showHistogram]);
 
     // WebSocket Real-time Updates Effect
     useEffect(() => {
@@ -1074,40 +1216,8 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
             <Card className="flex-1 flex flex-col">
                 <CardHeader className="p-1 flex flex-row items-center justify-between">
                     <CardTitle className="text-xs">Multi-Option Analysis</CardTitle>
-                    <div className="flex items-center space-x-4">
-                        <div className="flex items-center space-x-2 mr-2">
-                            <Label htmlFor="live-mode-multi" className="text-[10px] font-semibold flex items-center gap-1 cursor-pointer">
-                                {isLive ? <Zap className="h-3 w-3 text-yellow-500 fill-yellow-500" /> : <ZapOff className="h-3 w-3" />}
-                                Live
-                            </Label>
-                            <Switch 
-                                id="live-mode-multi" 
-                                checked={isLive}
-                                onCheckedChange={setIsLive}
-                                className="scale-75"
-                            />
-                        </div>
-                        <div className="flex items-center space-x-1 border rounded p-0.5">
-                            {[1, 3, 5, 15].map(tf => (
-                                <button
-                                    key={tf}
-                                    onClick={() => setTimeframe(tf as any)}
-                                    className={`px-2 py-0.5 text-[10px] rounded transition-colors ${timeframe === tf ? 'bg-primary text-primary-foreground' : 'hover:bg-accent text-muted-foreground'}`}
-                                >
-                                    {tf}m
-                                </button>
-                            ))}
-                        </div>
-                        <div className="flex items-center space-x-2">
-                            <Label htmlFor="show-options-multi" className="text-[10px] font-semibold">Options</Label>
-                            <Switch 
-                                id="show-options-multi" 
-                                checked={showOptions}
-                                onCheckedChange={setShowOptions}
-                                className="scale-75"
-                            />
-                        </div>
-                         <div className="flex items-center space-x-2">
+                    <div className="flex items-center space-x-2">
+                        <div className="flex items-center space-x-2 border rounded p-0.5">
                             <Label htmlFor="show-spot-multi" className="text-[10px] font-semibold">Spot</Label>
                             <Switch 
                                 id="show-spot-multi" 
@@ -1115,104 +1225,186 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
                                 onCheckedChange={setShowSpot}
                                 className="scale-75"
                             />
-                        </div>
-                        <div className="flex items-center space-x-2">
-                            <Label htmlFor="show-highcross" className="text-[10px] font-semibold">HighCross</Label>
+                            <div className="w-px h-3 bg-border" />
+                            <Label htmlFor="show-itm-dots" className="text-[10px] font-semibold">ITM</Label>
                             <Switch 
-                                id="show-highcross" 
-                                checked={showHighCross}
-                                onCheckedChange={setShowHighCross}
+                                id="show-itm-dots" 
+                                checked={showITMDots}
+                                onCheckedChange={setShowITMDots}
                                 className="scale-75"
                             />
+                            {showITMDots && (
+                                <div className="flex items-center space-x-0.5">
+                                    <div className="w-1.5 h-1.5 rounded-full bg-emerald-500" title="CE ITM" />
+                                    <div className="w-1.5 h-1.5 rounded-full bg-red-500" title="PE ITM" />
+                                </div>
+                            )}
                         </div>
-                        {showHighCross && (
-                            <>
-                                <div className="flex items-center space-x-1 ml-2">
-                                    <div className="w-2 h-2 rounded-sm bg-red-500" />
-                                    <Label htmlFor="show-highcross-ce" className="text-[10px]">CE</Label>
-                                    <Switch 
-                                        id="show-highcross-ce" 
-                                        checked={showHighCrossCE}
-                                        onCheckedChange={setShowHighCrossCE}
-                                        className="scale-75"
-                                    />
-                                </div>
-                                <div className="flex items-center space-x-1">
-                                    <div className="w-2 h-2 rounded-sm bg-blue-500" />
-                                    <Label htmlFor="show-highcross-pe" className="text-[10px]">PE</Label>
-                                    <Switch 
-                                        id="show-highcross-pe" 
-                                        checked={showHighCrossPE}
-                                        onCheckedChange={setShowHighCrossPE}
-                                        className="scale-75"
-                                    />
-                                </div>
-                            </>
-                        )}
-                        <div className="flex items-center space-x-2">
-                            <Label htmlFor="show-lowcross" className="text-[10px] font-semibold">LowCross</Label>
-                            <Switch 
-                                id="show-lowcross" 
-                                checked={showLowCross}
-                                onCheckedChange={setShowLowCross}
-                                className="scale-75"
-                            />
-                        </div>
-                        {showLowCross && (
-                            <>
-                                <div className="flex items-center space-x-1 ml-2">
-                                    <div className="w-2 h-2 rounded-sm bg-amber-500" />
-                                    <Label htmlFor="show-lowcross-ce" className="text-[10px]">CE</Label>
-                                    <Switch 
-                                        id="show-lowcross-ce" 
-                                        checked={showLowCrossCE}
-                                        onCheckedChange={setShowLowCrossCE}
-                                        className="scale-75"
-                                    />
-                                </div>
-                                <div className="flex items-center space-x-1">
-                                    <div className="w-2 h-2 rounded-sm bg-violet-500" />
-                                    <Label htmlFor="show-lowcross-pe" className="text-[10px]">PE</Label>
-                                    <Switch 
-                                        id="show-lowcross-pe" 
-                                        checked={showLowCrossPE}
-                                        onCheckedChange={setShowLowCrossPE}
-                                        className="scale-75"
-                                    />
-                                </div>
-                            </>
-                        )}
-                        <div className="flex items-center space-x-1 border rounded p-0.5">
-                            <button
-                                onClick={() => setHistogramMode('strike_vol')}
-                                className={`px-2 py-0.5 text-[10px] rounded transition-colors ${histogramMode === 'strike_vol' ? 'bg-primary text-primary-foreground' : 'hover:bg-accent text-muted-foreground'}`}
-                                title="Selected strike volume"
-                            >
-                                Strike Vol
-                            </button>
-                            <button
-                                onClick={() => setHistogramMode('total_vol')}
-                                className={`px-2 py-0.5 text-[10px] rounded transition-colors ${histogramMode === 'total_vol' ? 'bg-primary text-primary-foreground' : 'hover:bg-accent text-muted-foreground'}`}
-                                title="Total volume all strikes"
-                            >
-                                Total Vol
-                            </button>
-                            <button
-                                onClick={() => setHistogramMode('hlx_count')}
-                                className={`px-2 py-0.5 text-[10px] rounded transition-colors ${histogramMode === 'hlx_count' ? 'bg-primary text-primary-foreground' : 'hover:bg-accent text-muted-foreground'}`}
-                                title="HighCross/LowCross counts"
-                            >
-                                HLx Count
-                            </button>
-                        </div>
-                        <div className="flex items-center space-x-2">
-                            <Label htmlFor="show-histogram" className="text-[10px] font-semibold">Histogram</Label>
-                            <Switch
-                                id="show-histogram"
-                                checked={showHistogram}
-                                onCheckedChange={setShowHistogram}
-                                className="scale-75"
-                            />
+                        <div className="w-px h-4 bg-border" />
+                        <div className="flex items-center space-x-3 border rounded p-0.5">
+                            <div className="flex items-center space-x-2">
+                                <Label htmlFor="live-mode-multi" className="text-[10px] font-semibold flex items-center gap-1 cursor-pointer">
+                                    {isLive ? <Zap className="h-3 w-3 text-yellow-500 fill-yellow-500" /> : <ZapOff className="h-3 w-3" />}
+                                    Live
+                                </Label>
+                                <Switch 
+                                    id="live-mode-multi" 
+                                    checked={isLive}
+                                    onCheckedChange={setIsLive}
+                                    className="scale-75"
+                                />
+                            </div>
+                            <div className="flex items-center space-x-1 border rounded p-0.5">
+                                {[1, 3, 5, 15].map(tf => (
+                                    <button
+                                        key={tf}
+                                        onClick={() => setTimeframe(tf as any)}
+                                        className={`px-2 py-0.5 text-[10px] rounded transition-colors ${timeframe === tf ? 'bg-primary text-primary-foreground' : 'hover:bg-accent text-muted-foreground'}`}
+                                    >
+                                        {tf}m
+                                    </button>
+                                ))}
+                            </div>
+                            <div className="flex items-center space-x-2">
+                                <Label htmlFor="show-options-multi" className="text-[10px] font-semibold">Options</Label>
+                                <Switch 
+                                    id="show-options-multi" 
+                                    checked={showOptions}
+                                    onCheckedChange={setShowOptions}
+                                    className="scale-75"
+                                />
+                            </div>
+                            <div className="flex items-center space-x-2">
+                                <Label htmlFor="show-highcross" className="text-[10px] font-semibold">HighCross</Label>
+                                <Switch 
+                                    id="show-highcross" 
+                                    checked={showHighCross}
+                                    onCheckedChange={setShowHighCross}
+                                    className="scale-75"
+                                />
+                            </div>
+                            {showHighCross && (
+                                <>
+                                    <div className="flex items-center space-x-1 ml-2">
+                                        <div className="w-2 h-2 rounded-sm bg-red-500" />
+                                        <Label htmlFor="show-highcross-ce" className="text-[10px]">CE</Label>
+                                        <Switch 
+                                            id="show-highcross-ce" 
+                                            checked={showHighCrossCE}
+                                            onCheckedChange={setShowHighCrossCE}
+                                            className="scale-75"
+                                        />
+                                    </div>
+                                    <div className="flex items-center space-x-1">
+                                        <div className="w-2 h-2 rounded-sm bg-blue-500" />
+                                        <Label htmlFor="show-highcross-pe" className="text-[10px]">PE</Label>
+                                        <Switch 
+                                            id="show-highcross-pe" 
+                                            checked={showHighCrossPE}
+                                            onCheckedChange={setShowHighCrossPE}
+                                            className="scale-75"
+                                        />
+                                    </div>
+                                </>
+                            )}
+                            <div className="flex items-center space-x-2">
+                                <Label htmlFor="show-lowcross" className="text-[10px] font-semibold">LowCross</Label>
+                                <Switch 
+                                    id="show-lowcross" 
+                                    checked={showLowCross}
+                                    onCheckedChange={setShowLowCross}
+                                    className="scale-75"
+                                />
+                            </div>
+                            {showLowCross && (
+                                <>
+                                    <div className="flex items-center space-x-1 ml-2">
+                                        <div className="w-2 h-2 rounded-sm bg-amber-500" />
+                                        <Label htmlFor="show-lowcross-ce" className="text-[10px]">CE</Label>
+                                        <Switch 
+                                            id="show-lowcross-ce" 
+                                            checked={showLowCrossCE}
+                                            onCheckedChange={setShowLowCrossCE}
+                                            className="scale-75"
+                                        />
+                                    </div>
+                                    <div className="flex items-center space-x-1">
+                                        <div className="w-2 h-2 rounded-sm bg-violet-500" />
+                                        <Label htmlFor="show-lowcross-pe" className="text-[10px]">PE</Label>
+                                        <Switch 
+                                            id="show-lowcross-pe" 
+                                            checked={showLowCrossPE}
+                                            onCheckedChange={setShowLowCrossPE}
+                                            className="scale-75"
+                                        />
+                                    </div>
+                                </>
+                            )}
+                            <div className="flex items-center space-x-2">
+                                <Label htmlFor="show-extrinsic" className="text-[10px] font-semibold">Extrinsic</Label>
+                                <Switch 
+                                    id="show-extrinsic" 
+                                    checked={showExtrinsic}
+                                    onCheckedChange={setShowExtrinsic}
+                                    className="scale-75"
+                                />
+                            </div>
+                            {showExtrinsic && (
+                                <>
+                                    <div className="flex items-center space-x-1 ml-2">
+                                        <div className="w-2 h-2 rounded-sm bg-cyan-500" />
+                                        <Label htmlFor="show-extrinsic-ce" className="text-[10px]">CE</Label>
+                                        <Switch 
+                                            id="show-extrinsic-ce" 
+                                            checked={showExtrinsicCE}
+                                            onCheckedChange={setShowExtrinsicCE}
+                                            className="scale-75"
+                                        />
+                                    </div>
+                                    <div className="flex items-center space-x-1">
+                                        <div className="w-2 h-2 rounded-sm bg-orange-500" />
+                                        <Label htmlFor="show-extrinsic-pe" className="text-[10px]">PE</Label>
+                                        <Switch 
+                                            id="show-extrinsic-pe" 
+                                            checked={showExtrinsicPE}
+                                            onCheckedChange={setShowExtrinsicPE}
+                                            className="scale-75"
+                                        />
+                                    </div>
+                                </>
+                            )}
+                            <div className="flex items-center space-x-1 border rounded p-0.5">
+                                <button
+                                    onClick={() => setHistogramMode('strike_vol')}
+                                    className={`px-2 py-0.5 text-[10px] rounded transition-colors ${histogramMode === 'strike_vol' ? 'bg-primary text-primary-foreground' : 'hover:bg-accent text-muted-foreground'}`}
+                                    title="Selected strike volume"
+                                >
+                                    Strike Vol
+                                </button>
+                                <button
+                                    onClick={() => setHistogramMode('total_vol')}
+                                    className={`px-2 py-0.5 text-[10px] rounded transition-colors ${histogramMode === 'total_vol' ? 'bg-primary text-primary-foreground' : 'hover:bg-accent text-muted-foreground'}`}
+                                    title="Total volume all strikes"
+                                >
+                                    Total Vol
+                                </button>
+                                <button
+                                    onClick={() => setHistogramMode('hlx_count')}
+                                    className={`px-2 py-0.5 text-[10px] rounded transition-colors ${histogramMode === 'hlx_count' ? 'bg-primary text-primary-foreground' : 'hover:bg-accent text-muted-foreground'}`}
+                                    title="HighCross/LowCross counts"
+                                >
+                                    HLx Count
+                                </button>
+                            </div>
+                            <div className="flex items-center space-x-2">
+                                <Label htmlFor="show-histogram" className="text-[10px] font-semibold">Histogram</Label>
+                                <Switch
+                                    id="show-histogram"
+                                    checked={showHistogram}
+                                    onCheckedChange={setShowHistogram}
+                                    className="scale-75"
+                                />
+                            </div>
                         </div>
                     </div>
                 </CardHeader>
