@@ -252,7 +252,6 @@ export default function RealtimeTable({ onClose, standalone = false }: Props) {
 
   useEffect(() => {
     if (wsStatus !== 'connected') return
-    strikeSymbolsRef.current.clear()
     realtimeDataRef.current.clear()
     spotPriceRef.current = 0
     openAtmStrikeRef.current = null

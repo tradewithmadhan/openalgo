@@ -2414,7 +2414,7 @@ function NiftyChartInner() {
   useEffect(() => {
     if (ema34Ref.current) ema34Ref.current.applyOptions({ visible: emaActive })
     if (ema55Ref.current) ema55Ref.current.applyOptions({ visible: emaActive })
-  }, [emaActive])
+  }, [emaActive, chartReady])
 
   useEffect(() => {
     if (dayOpenRef.current) dayOpenRef.current.applyOptions({ visible: dayOpenActive })
