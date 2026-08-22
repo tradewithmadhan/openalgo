@@ -145,7 +145,7 @@ def detect_trade_signals(historical_data):
             sideways_count = 0
 
 
-def process_historical_atp_data(all_historical_data, current_atm_strike):
+def process_historical_atp_data(all_historical_data, current_atm_strike, instrument='NIFTY', strike_step=50):
     """
     Process raw DB data into historical_data list with all signal fields and trade_signal.
 
@@ -156,6 +156,8 @@ def process_historical_atp_data(all_historical_data, current_atm_strike):
         all_historical_data: list of dicts from get_current_day_historical_data()
             Each dict has: symbol, timestamp, oi, close, volume
         current_atm_strike: int, current ATM strike price
+        instrument: str, 'NIFTY' or 'BANKNIFTY'
+        strike_step: int, strike interval (50 for NIFTY, 100 for BANKNIFTY)
     """
     if not all_historical_data:
         return []
@@ -168,7 +170,7 @@ def process_historical_atp_data(all_historical_data, current_atm_strike):
     all_historical_data.sort(key=lambda x: x['timestamp'])
 
     for row in all_historical_data:
-        if row['symbol'] == 'NIFTY':
+        if row['symbol'] == instrument:
             nifty_by_ts[row['timestamp']] = row['close']
         else:
             data_by_ts[row['timestamp']].append(row)
@@ -232,7 +234,7 @@ def process_historical_atp_data(all_historical_data, current_atm_strike):
         if historical_spot_ltp == 0:
             continue
 
-        historical_atm_strike = round(historical_spot_ltp / 50) * 50
+        historical_atm_strike = round(historical_spot_ltp / strike_step) * strike_step
 
         # Find symbol and LTP for a given strike/suffix at this timestamp
         option_data_at_ts = data_by_ts.get(ts, [])
@@ -282,10 +284,10 @@ def process_historical_atp_data(all_historical_data, current_atm_strike):
         atm_call_symbol_ts, historical_call_ltp = _find_symbol_and_ltp(historical_atm_strike, 'CE')
         atm_put_symbol_ts, historical_put_ltp = _find_symbol_and_ltp(historical_atm_strike, 'PE')
 
-        itm1_call_symbol_ts, historical_itm1_call_ltp = _find_symbol_and_ltp(historical_atm_strike - 50, 'CE')
-        itm2_call_symbol_ts, historical_itm2_call_ltp = _find_symbol_and_ltp(historical_atm_strike - 100, 'CE')
-        itm1_put_symbol_ts, historical_itm1_put_ltp = _find_symbol_and_ltp(historical_atm_strike + 50, 'PE')
-        itm2_put_symbol_ts, historical_itm2_put_ltp = _find_symbol_and_ltp(historical_atm_strike + 100, 'PE')
+        itm1_call_symbol_ts, historical_itm1_call_ltp = _find_symbol_and_ltp(historical_atm_strike - strike_step, 'CE')
+        itm2_call_symbol_ts, historical_itm2_call_ltp = _find_symbol_and_ltp(historical_atm_strike - (2 * strike_step), 'CE')
+        itm1_put_symbol_ts, historical_itm1_put_ltp = _find_symbol_and_ltp(historical_atm_strike + strike_step, 'PE')
+        itm2_put_symbol_ts, historical_itm2_put_ltp = _find_symbol_and_ltp(historical_atm_strike + (2 * strike_step), 'PE')
 
         historical_call_atp = _calc_atp(atm_call_symbol_ts, historical_call_ltp)
         historical_put_atp = _calc_atp(atm_put_symbol_ts, historical_put_ltp)

@@ -5,6 +5,7 @@ import { RefreshCw } from 'lucide-react';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { useMadhanTheme } from '../useMadhanTheme';
+import { useInstrument } from '../InstrumentContext';
 import Plot from '@/lib/Plot2D';
 
 interface OiStrikeHistoryResponse {
@@ -34,6 +35,7 @@ function generateFullTimeLabels(): string[] {
 const FULL_TIME_LABELS = generateFullTimeLabels();
 
 export function OiActionChartPlotly({ refreshTrigger, atmStrike }: OiActionChartPlotlyProps) {
+  const { instrument, strikeStep } = useInstrument();
   const { mode } = useMadhanTheme();
   const [data, setData] = useState<OiStrikeHistoryResponse | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -43,7 +45,7 @@ export function OiActionChartPlotly({ refreshTrigger, atmStrike }: OiActionChart
   const fetchData = async () => {
     setIsLoading(true);
     try {
-      const response = await fetch(`/madhan/api/nifty/oi-strike-history?_=${Date.now()}`);
+      const response = await fetch(`/madhan/api/nifty/oi-strike-history?instrument=${instrument}&_=${Date.now()}`);
       const json = await response.json();
       if (json.status === 'success') {
         setData(json);
@@ -57,7 +59,7 @@ export function OiActionChartPlotly({ refreshTrigger, atmStrike }: OiActionChart
 
   useEffect(() => {
     fetchData();
-  }, [refreshTrigger]);
+  }, [refreshTrigger, instrument]);
 
   const { plotData, plotLayout } = useMemo(() => {
     if (!data || !data.timestamps || data.timestamps.length === 0 || !data.strikes) {
@@ -98,7 +100,7 @@ export function OiActionChartPlotly({ refreshTrigger, atmStrike }: OiActionChart
     // Build sparse maps per strike
     for (const strike of strikes) {
       const distance = Math.abs(strike - atm);
-      if (focusNearAtm && distance > 100) continue;
+      if (focusNearAtm && distance > strikeStep * 2) continue;
 
       const opacity = Math.max(0.15, 1.0 - Math.pow(distance / maxDistance, 0.5) * 0.85);
       const isAtm = strike === atm;

@@ -1555,16 +1555,22 @@ export class VolumeProfilePrimitive {
                   ctx.restore()
                 }
 
-                // Draw today POC line (solid, full color)
+                // Draw today POC line (solid, from current candle to right edge, 60% opacity)
                 if (self._pocPrice > 0) {
                   const pocY = self._series.priceToCoordinate(self._pocPrice)
                   if (pocY != null) {
+                    let startX = 0
+                    for (let i = self._developingPoc.length - 1; i >= 0; i--) {
+                      const x = self._timeScale.timeToCoordinate(self._developingPoc[i].time)
+                      if (x != null) { startX = x; break }
+                    }
                     ctx.save()
+                    ctx.globalAlpha = 0.6
                     ctx.strokeStyle = self._pocColor
                     ctx.lineWidth = 2
                     ctx.setLineDash([])
                     ctx.beginPath()
-                    ctx.moveTo(0, pocY)
+                    ctx.moveTo(startX, pocY)
                     ctx.lineTo(chartWidth, pocY)
                     ctx.stroke()
                     ctx.fillStyle = self._pocColor

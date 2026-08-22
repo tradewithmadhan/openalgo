@@ -51,6 +51,7 @@ import WidgetBar from './WidgetBar'
 import EzaySignals from './components/EzaySignals'
 import IndicatorPanel, { INDICATOR_CATEGORIES } from './IndicatorPanel'
 import { PlotFillPrimitive, LineBrPrimitive, ExtendedMarkerPrimitive, BgColorPrimitive, LabelPrimitive, BoxPrimitive, LineDrawingPrimitive, TablePrimitive, CrossPlotPrimitive, VolumeProfilePrimitive, applyTransparency } from './chartPrimitives'
+import { useInstrument, InstrumentProvider, type Instrument } from './InstrumentContext'
 
 type Candle = {
   time: number
@@ -134,6 +135,15 @@ function formatCompact(n: number): string {
 }
 
 export default function NiftyChart() {
+  return (
+    <InstrumentProvider>
+      <NiftyChartInner />
+    </InstrumentProvider>
+  );
+}
+
+function NiftyChartInner() {
+  const { instrument, setInstrument } = useInstrument();
   const chartContainerRef = useRef<HTMLDivElement | null>(null)
   const chartRef = useRef<IChartApi | null>(null)
   const candleRef = useRef<ISeriesApi<'Candlestick'> | null>(null)
@@ -217,7 +227,7 @@ export default function NiftyChart() {
   const [crosshairOHLCV, setCrosshairOHLCV] = useState<{ time: string; open: number; high: number; low: number; close: number; volume?: number; change?: number; changePct?: number } | null>(null)
   const [niftyStatus, setNiftyStatus] = useState<string>('')
   const [niftyRunning, setNiftyRunning] = useState<boolean>(false)
-  const wsSymbols = useMemo(() => niftyRunning ? [{ symbol: 'NIFTY', exchange: 'NSE_INDEX' }] : [], [niftyRunning])
+  const wsSymbols = useMemo(() => niftyRunning ? [{ symbol: instrument, exchange: 'NSE_INDEX' }] : [], [niftyRunning, instrument])
   const { data: wsData, isConnected, isConnecting, error: wsError, connect: wsConnect } = useMarketData({
     symbols: wsSymbols,
     mode: 'LTP',
@@ -365,11 +375,11 @@ export default function NiftyChart() {
     chart.priceScale('volume').applyOptions({
       scaleMargins: { top: 0.8, bottom: 0 },
     })
-    const dayOpen = chart.addSeries(LineSeries, { color: '#00FF00', lineWidth: 1, title: 'Day Open' })
-    const prevOpen = chart.addSeries(LineSeries, { color: '#FFA500', lineWidth: 1, title: 'Prev Open' })
-    const prevHigh = chart.addSeries(LineSeries, { color: '#0000FF', lineWidth: 1, title: 'Prev High' })
-    const prevLow = chart.addSeries(LineSeries, { color: '#FF69B4', lineWidth: 1, title: 'Prev Low' })
-    const prevClose = chart.addSeries(LineSeries, { color: '#FF0000', lineWidth: 1, title: 'Prev Close' })
+    const dayOpen = chart.addSeries(LineSeries, { color: '#00FF00', lineWidth: 1, title: 'Day Open', visible: dayOpenActive })
+    const prevOpen = chart.addSeries(LineSeries, { color: '#FFA500', lineWidth: 1, title: 'Prev Open', visible: prevOhlcActive })
+    const prevHigh = chart.addSeries(LineSeries, { color: '#0000FF', lineWidth: 1, title: 'Prev High', visible: prevOhlcActive })
+    const prevLow = chart.addSeries(LineSeries, { color: '#FF69B4', lineWidth: 1, title: 'Prev Low', visible: prevOhlcActive })
+    const prevClose = chart.addSeries(LineSeries, { color: '#FF0000', lineWidth: 1, title: 'Prev Close', visible: prevOhlcActive })
 
     chartRef.current = chart
     candleRef.current = candle
@@ -395,6 +405,7 @@ export default function NiftyChart() {
     const volumeProfile = new VolumeProfilePrimitive(candle, chart.timeScale())
     try { candle.attachPrimitive(volumeProfile as any) } catch {}
     volumeProfileRef.current = volumeProfile
+    createCoiTrendPane()
     setChartReady(true)
 
     const handleCrosshairOHLCV = (param: any) => {
@@ -436,7 +447,7 @@ export default function NiftyChart() {
     resizeObserver.observe(chartContainerRef.current)
 
     // Start NiftyFetcher on page open
-    fetch('/madhan/api/nifty/start', { method: 'POST' }).catch(() => {})
+    fetch(`/madhan/api/nifty/start?instrument=${instrument}`, { method: 'POST' }).catch(() => {})
 
     return () => {
       if (updaterRef.current) window.clearInterval(updaterRef.current)
@@ -445,6 +456,18 @@ export default function NiftyChart() {
       chart.unsubscribeCrosshairMove(handleCrosshairOHLCV)
       indicatorSeriesRef.current.clear()
       sqrtPrimitiveRef.current = null
+      if (oiPrimitiveRef.current && candleRef.current) {
+        try { (candleRef.current as any).detachPrimitive(oiPrimitiveRef.current) } catch {}
+      }
+      oiPrimitiveRef.current = null
+      if (coiPrimitiveRef.current && candleRef.current) {
+        try { (candleRef.current as any).detachPrimitive(coiPrimitiveRef.current) } catch {}
+      }
+      coiPrimitiveRef.current = null
+      if (coiHistoryPrimitiveRef.current && candleRef.current) {
+        try { (candleRef.current as any).detachPrimitive(coiHistoryPrimitiveRef.current) } catch {}
+      }
+      coiHistoryPrimitiveRef.current = null
       coiLineSeriesRef.current = null
       oiLineSeriesRef.current = null
       coiCandleSeriesRef.current = null
@@ -468,7 +491,7 @@ export default function NiftyChart() {
       chartRef.current = null
       setChartReady(false)
     }
-  }, [])
+  }, [instrument])
 
   useEffect(() => {
     if (!chartRef.current) return
@@ -918,7 +941,7 @@ export default function NiftyChart() {
 
   const fetchOiProfiles = async () => {
     if (!candleRef.current) return
-    const res = await fetch(`/madhan/api/nifty/oi_profile_data?_=${Date.now()}`)
+    const res = await fetch(`/madhan/api/nifty/oi_profile_data?instrument=${instrument}&_=${Date.now()}`)
     const json: OIProfileResponse = await res.json()
     if (!json?.oi?.strikes || !json?.coi?.strikes) return
     const seriesAny = candleRef.current as any
@@ -1017,12 +1040,13 @@ export default function NiftyChart() {
     coiPrimitiveRef.current.setAnchor(coiXRef.current / 100)
     coiPrimitiveRef.current.setStrike(coiShowStrikeRef.current)
     coiPrimitiveRef.current.setValues(coiShowValuesRef.current)
+    repaintOverlay()
   }
 
   const fetchCoiHistory = async () => {
     if (!candleRef.current) return
     try {
-      const res = await fetch(`/madhan/api/nifty/coi_history?days=30&_=${Date.now()}`)
+      const res = await fetch(`/madhan/api/nifty/coi_history?days=30&instrument=${instrument}&_=${Date.now()}`)
       const json: CoiHistoryResponse = await res.json()
       if (json?.status !== 'success' || !json?.data?.length) return
 
@@ -1139,8 +1163,8 @@ export default function NiftyChart() {
     if (!volumeProfileRef.current || !candleRef.current) return
     try {
       const [volRes, candlesRes] = await Promise.all([
-        fetch(`/madhan/api/nifty/ce-pe-volume-changes?strike_selection_mode=option1&upside_strikes=10&downside_strikes=10&_=${Date.now()}`),
-        fetch(`/madhan/nifty_live_data?interval=1m&_=${Date.now()}`),
+        fetch(`/madhan/api/nifty/ce-pe-volume-changes?strike_selection_mode=option1&upside_strikes=10&downside_strikes=10&instrument=${instrument}&_=${Date.now()}`),
+        fetch(`/madhan/nifty_live_data?interval=1m&instrument=${instrument}&_=${Date.now()}`),
       ])
       const volJson = await volRes.json()
       const candlesJson = await candlesRes.json()
@@ -1235,7 +1259,7 @@ export default function NiftyChart() {
     setWritersViewActive(next)
     writersViewActiveRef.current = next
     const mode = next ? 'option2' : 'option1'
-    fetch(`/madhan/api/nifty/coi-trend?strike_selection_mode=${mode}&_=${Date.now()}`)
+    fetch(`/madhan/api/nifty/coi-trend?strike_selection_mode=${mode}&instrument=${instrument}&_=${Date.now()}`)
       .then((r) => r.json())
       .then((json) => {
         if (json?.status === 'success' && json?.data) {
@@ -1409,7 +1433,7 @@ export default function NiftyChart() {
   const fetchCoiTrend = async () => {
     try {
       const mode = writersViewActiveRef.current ? 'option2' : 'option1'
-      const res = await fetch(`/madhan/api/nifty/coi-trend?strike_selection_mode=${mode}&_=${Date.now()}`)
+      const res = await fetch(`/madhan/api/nifty/coi-trend?strike_selection_mode=${mode}&instrument=${instrument}&_=${Date.now()}`)
       const json = await res.json()
       if (json?.status === 'success' && json?.data) {
         coiTrendDataRef.current = json.data
@@ -1423,7 +1447,7 @@ export default function NiftyChart() {
   const fetchOptionCombinedVolume = async () => {
     if (!optionVolumeRef.current) return
     const res = await fetch(
-      `/madhan/api/nifty/ce-pe-volume-changes?strike_selection_mode=option1&upside_strikes=10&downside_strikes=10&_=${Date.now()}`
+      `/madhan/api/nifty/ce-pe-volume-changes?strike_selection_mode=option1&upside_strikes=10&downside_strikes=10&instrument=${instrument}&_=${Date.now()}`
     )
     const json = await res.json()
     if (json?.status !== 'success' || !json?.data?.timestamps?.length) {
@@ -1745,10 +1769,10 @@ export default function NiftyChart() {
   const fetchSignalData = async () => {
     try {
       const today = new Date(Date.now() + getTimeOffset()).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' })
-      let res = await fetch(`/madhan/api/ezayChart_signals?_=${Date.now()}`)
+      let res = await fetch(`/madhan/api/ezayChart_signals?instrument=${instrument}&_=${Date.now()}`)
       let json = await res.json()
       if (json?.status !== 'success' || !Array.isArray(json.data)) {
-        res = await fetch(`/madhan/api/nifty/backtest_signals?date=${today}&_=${Date.now()}`)
+        res = await fetch(`/madhan/api/nifty/backtest_signals?date=${today}&instrument=${instrument}&_=${Date.now()}`)
         json = await res.json()
       }
       if (json?.status === 'success' && Array.isArray(json.data)) {
@@ -1776,7 +1800,7 @@ export default function NiftyChart() {
     if (!candleRef.current || !ema34Ref.current || !ema55Ref.current) return
     // Always pull 1-minute data and aggregate locally so the 09:08 pre-open
     // candle of today is never merged with the previous day's last candle.
-    const res = await fetch(`/madhan/nifty_live_data?interval=1m&_=${Date.now()}`)
+    const res = await fetch(`/madhan/nifty_live_data?interval=1m&instrument=${instrument}&_=${Date.now()}`)
     const json = await res.json()
     const rawData: Candle[] = json?.data || []
     const data = aggregateCandlesByDay(rawData, interval)
@@ -1790,7 +1814,7 @@ export default function NiftyChart() {
 
     // Re-apply live WS tick so the current running candle isn't lost when
     // the API response only contains completed candles (e.g. at candle boundaries).
-    const live = wsData.get('NSE_INDEX:NIFTY')
+    const live = wsData.get(`NSE_INDEX:${instrument}`)
     const ltp = live?.data?.ltp
     if (typeof ltp === 'number') {
       applyRealtimeLtp(ltp, live?.lastUpdate ?? Date.now())
@@ -1874,7 +1898,7 @@ export default function NiftyChart() {
     void refreshChartData().then(() => {
       if (chartRef.current) chartRef.current.timeScale().scrollToRealTime()
     })
-  }, [interval])
+  }, [interval, instrument])
 
   useEffect(() => {
     const intervalMs = getIntervalSeconds(interval) * 1000
@@ -1907,7 +1931,7 @@ export default function NiftyChart() {
 
   const fetchNiftyStatus = useCallback(async () => {
     try {
-      const res = await fetch(`/madhan/api/nifty/status?_=${Date.now()}`)
+      const res = await fetch(`/madhan/api/nifty/status?instrument=${instrument}&_=${Date.now()}`)
       const json = await res.json()
       if (json?.status === 'success' && json?.message) {
         setNiftyStatus(json.message)
@@ -1923,7 +1947,7 @@ export default function NiftyChart() {
       }
     } catch {}
     return null
-  }, [])
+  }, [instrument])
 
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout>
@@ -1967,10 +1991,10 @@ export default function NiftyChart() {
     checkAndRefresh()
     scheduleNextMinute()
     return () => { clearTimeout(timer); clearInterval(pollInterval) }
-  }, [fetchNiftyStatus])
+  }, [fetchNiftyStatus, instrument])
 
   useEffect(() => {
-    const live = wsData.get('NSE_INDEX:NIFTY')
+    const live = wsData.get(`NSE_INDEX:${instrument}`)
     const ltp = live?.data?.ltp
     if (typeof ltp !== 'number') return
     const timestamp = live?.lastUpdate ?? Date.now()
@@ -2394,14 +2418,14 @@ export default function NiftyChart() {
 
   useEffect(() => {
     if (dayOpenRef.current) dayOpenRef.current.applyOptions({ visible: dayOpenActive })
-  }, [dayOpenActive])
+  }, [dayOpenActive, chartReady])
 
   useEffect(() => {
     if (prevOpenRef.current) prevOpenRef.current.applyOptions({ visible: prevOhlcActive })
     if (prevHighRef.current) prevHighRef.current.applyOptions({ visible: prevOhlcActive })
     if (prevLowRef.current) prevLowRef.current.applyOptions({ visible: prevOhlcActive })
     if (prevCloseRef.current) prevCloseRef.current.applyOptions({ visible: prevOhlcActive })
-  }, [prevOhlcActive])
+  }, [prevOhlcActive, chartReady])
 
   useEffect(() => {
     sqrtActiveRef.current = sqrtActive
@@ -2460,14 +2484,24 @@ export default function NiftyChart() {
     }
   }, [activeIndicators])
 
-  const toggleOi = () => {
-    if (!oiPrimitiveRef.current) return
+  const toggleOi = async () => {
+    if (!oiPrimitiveRef.current) {
+      await fetchOiProfiles()
+      setOiActive(true)
+      repaintOverlay()
+      return
+    }
     setOiActive(oiPrimitiveRef.current.toggle())
     repaintOverlay()
   }
 
-  const toggleCoi = () => {
-    if (!coiPrimitiveRef.current) return
+  const toggleCoi = async () => {
+    if (!coiPrimitiveRef.current) {
+      await fetchOiProfiles()
+      setCoiActive(true)
+      repaintOverlay()
+      return
+    }
     setCoiActive(coiPrimitiveRef.current.toggle())
     repaintOverlay()
   }
@@ -2714,6 +2748,24 @@ export default function NiftyChart() {
 
       <Card className="flex flex-1 w-full flex-col overflow-hidden rounded-none border-0 py-0 gap-0 bg-card">
         <div className="shrink-0 flex flex-wrap items-center gap-1.5 px-2 py-1.5">
+          {/* Instrument Toggle */}
+          <div className="flex items-center bg-muted rounded-md p-0.5">
+            {(['NIFTY', 'BANKNIFTY'] as Instrument[]).map((inst) => (
+              <button
+                key={inst}
+                onClick={() => setInstrument(inst)}
+                className={cn(
+                  "px-2.5 py-1 text-[11px] font-medium rounded transition-colors",
+                  instrument === inst
+                    ? "bg-primary text-primary-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                {inst}
+              </button>
+            ))}
+          </div>
+          <div className="h-4 w-px bg-border" />
           <div className="flex items-center gap-1">
             <Label className="text-[11px]">Interval</Label>
             <Select value={interval} onValueChange={setIntervalValue}>

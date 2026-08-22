@@ -8,6 +8,7 @@ import { useMarketData } from '@/hooks/useMarketData';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { Zap, ZapOff } from 'lucide-react';
+import { useInstrument } from '../InstrumentContext';
 
 interface MultiOptionsChartProps {
     refreshTrigger: number;
@@ -159,6 +160,7 @@ const computeExtrinsic = (
 };
 
 export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: MultiOptionsChartProps) {
+    const { instrument, strikeStep } = useInstrument();
     const { mode: madhanMode } = useMadhanTheme();
     const chartContainerRef = useRef<HTMLDivElement>(null);
     const chartRef = useRef<IChartApi | null>(null);
@@ -198,8 +200,8 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
             const year = dateObj.getFullYear().toString().slice(-2);
             const monthNames = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
             const month = monthNames[dateObj.getMonth()];
-            // NSE Symbol format: NIFTY + DD + MMM + YY + Strike + CE/PE
-            return `NIFTY${day}${month}${year}${strike}${type}`;
+            // NSE Symbol format: Instrument + DD + MMM + YY + Strike + CE/PE
+            return `${instrument}${day}${month}${year}${strike}${type}`;
         } catch (e) {
             console.error("Error parsing expiry date", e);
             return null;
@@ -244,7 +246,7 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
     // Symbols for WebSocket subscription
     const wsSymbols = useMemo(() => {
         const syms: Array<{ symbol: string; exchange: string }> = [
-            { symbol: 'NIFTY', exchange: 'NSE_INDEX' }
+            { symbol: instrument, exchange: 'NSE_INDEX' }
         ];
 
         if (showOptions && expiryDate && strikes.length > 0) {
@@ -256,7 +258,7 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
             });
         }
         return syms;
-    }, [strikes, expiryDate, showOptions]);
+    }, [instrument, strikes, expiryDate, showOptions]);
 
     // WebSocket Hook
     const { data: wsData } = useMarketData({
@@ -275,20 +277,19 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
         if (atmStrike && atmStrike > 0) {
             const newStrikes = [];
             for (let i = -10; i <= 10; i++) {
-                newStrikes.push(atmStrike + (i * 50));
+                newStrikes.push(atmStrike + (i * strikeStep));
             }
             newStrikes.sort((a, b) => b - a); // Higher strikes on top
             setStrikes(newStrikes);
-            // Default select ATM
             setSelectedStrikes(new Set([atmStrike]));
         }
-    }, [atmStrike]);
+    }, [atmStrike, instrument]);
 
     // Fetch cross-change stats from backend
     useEffect(() => {
         const fetchCrossStats = async () => {
             try {
-                const response = await fetch(`/madhan/api/nifty/hx_lx_vol?_=${Date.now()}`);
+                const response = await fetch(`/madhan/api/nifty/hx_lx_vol?instrument=${instrument}&_=${Date.now()}`);
                 const json = await response.json();
                 if (json.status === 'success') {
                     setCrossStats(json.data);
@@ -302,13 +303,13 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
             const interval = setInterval(fetchCrossStats, 60000);
             return () => clearInterval(interval);
         }
-    }, [refreshTrigger, showHighCross, showLowCross, atmStrike, expiryDate, histogramMode]);
+    }, [refreshTrigger, showHighCross, showLowCross, atmStrike, expiryDate, histogramMode, instrument]);
 
     // Fetch Spot Data
     useEffect(() => {
         const fetchSpotData = async () => {
             try {
-                const response = await fetch(`/madhan/api/nifty/spot-data?_=${Date.now()}`);
+                const response = await fetch(`/madhan/api/nifty/spot-data?instrument=${instrument}&_=${Date.now()}`);
                 const json = await response.json();
                 if (json.status === 'success') {
                     setSpotData(json.data);
@@ -318,12 +319,12 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
             }
         };
         fetchSpotData();
-    }, [refreshTrigger]);
+    }, [refreshTrigger, instrument]);
 
     // Fetch data for specific symbol
     const fetchSymbolData = async (symbol: string) => {
         try {
-            const response = await fetch(`/madhan/api/nifty/option-ohlc?symbol=${symbol}&_=${Date.now()}`);
+            const response = await fetch(`/madhan/api/nifty/option-ohlc?instrument=${instrument}&symbol=${symbol}&_=${Date.now()}`);
             const json = await response.json();
             if (json.status === 'success') {
                 const { timestamps, open, high, low, close, volume, oi } = json.data;
@@ -363,7 +364,7 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
             if (ceSymbol) fetchSymbolData(ceSymbol);
             if (peSymbol) fetchSymbolData(peSymbol);
         });
-    }, [strikes, expiryDate, refreshTrigger]);
+    }, [strikes, expiryDate, refreshTrigger, instrument]);
 
     // Toggle strike selection
     const toggleStrike = (strike: number) => {
@@ -480,7 +481,7 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
             spotSeriesRef.current.setData(spotChartData);
             if (spotChartData.length > 0) {
                 const last = spotChartData[spotChartData.length - 1];
-                lastUpdateTimeRef.current.set('NIFTY', last.time as number);
+                lastUpdateTimeRef.current.set(instrument, last.time as number);
             }
         }
         
@@ -543,7 +544,7 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
             spotSeriesRef.current.setData(spotChartData);
             if (spotChartData.length > 0) {
                 const last = spotChartData[spotChartData.length - 1];
-                lastUpdateTimeRef.current.set('NIFTY', last.time as number);
+                lastUpdateTimeRef.current.set(instrument, last.time as number);
             }
         }
 
@@ -1178,19 +1179,19 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
         if (!wsData || wsData.size === 0 || !chartRef.current) return;
 
         // Process Spot update
-        const spotWs = wsData.get('NSE_INDEX:NIFTY');
+        const spotWs = wsData.get(`NSE_INDEX:${instrument}`);
         if (spotWs?.data?.ltp && spotSeriesRef.current) {
             const ltp = spotWs.data.ltp;
             const rawTime = (spotWs.lastUpdate || Date.now()) / 1000;
             const time = Math.floor(rawTime / (timeframe * 60)) * (timeframe * 60);
 
-            const lastTime = lastUpdateTimeRef.current.get('NIFTY');
+            const lastTime = lastUpdateTimeRef.current.get(instrument);
             if (lastTime === undefined || time >= lastTime) {
                 spotSeriesRef.current.update({
                     time: time as any,
                     value: ltp
                 });
-                lastUpdateTimeRef.current.set('NIFTY', time);
+                lastUpdateTimeRef.current.set(instrument, time);
             }
         }
 
@@ -1307,7 +1308,7 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
 
         // Update Meet lines live (formula: S_meet = spot + (PE - CE))
         if (showMeet && meetSeriesRefs.current.size > 0) {
-            const spotWs = wsData.get('NSE_INDEX:NIFTY');
+            const spotWs = wsData.get(`NSE_INDEX:${instrument}`);
             const spotLtp = spotWs?.data?.ltp;
             if (spotLtp) {
                 const meetColors = ['#f59e0b', '#a78bfa', '#34d399', '#f472b6', '#60a5fa'];

@@ -36,17 +36,17 @@ def get_valid_trading_day(
 
 def extract_strike(symbol: str) -> int | None:
     """
-    Extract NIFTY strike from option symbols.
+    Extract strike price from NIFTY or BANKNIFTY option symbols.
 
-    Format-aware parsing: NIFTY{DDMMMYY}{STRIKE}{CE|PE}
+    Format-aware parsing: {INSTRUMENT}{DDMMMYY}{STRIKE}{CE|PE}
     Examples:
         NIFTY29AUG2524000CE → 24000
+        BANKNIFTY29AUG2552000CE → 52000
         NIFTY01JAN26100000CE → 100000
-        NIFTY15MAR2523500PE → 23500
 
-    Returns None for non-NIFTY or malformed symbols.
+    Returns None for non-NIFTY/BANKNIFTY or malformed symbols.
     """
-    m = re.match(r'^NIFTY\d{2}[A-Z]{3}\d{2}(\d+)(CE|PE)$', symbol)
+    m = re.match(r'^(?:NIFTY|BANKNIFTY)\d{2}[A-Z]{3}\d{2}(\d+)(CE|PE)$', symbol)
     if not m:
         return None
     return int(m.group(1))
@@ -74,6 +74,17 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 class NiftyData(Base):
     """SQLAlchemy model for storing Nifty 1-minute data."""
     __tablename__ = 'nifty_data'
+    timestamp = Column(Integer, primary_key=True, unique=True, comment="Unix timestamp in seconds")
+    open = Column(Float)
+    high = Column(Float)
+    low = Column(Float)
+    close = Column(Float)
+    volume = Column(Integer)
+    oi = Column(Integer)
+
+class BankNiftyData(Base):
+    """SQLAlchemy model for storing BankNifty 1-minute data."""
+    __tablename__ = 'banknifty_data'
     timestamp = Column(Integer, primary_key=True, unique=True, comment="Unix timestamp in seconds")
     open = Column(Float)
     high = Column(Float)
@@ -167,8 +178,8 @@ def store_nifty_data(df: pd.DataFrame):
     finally:
         session.close()
 
-def store_option_data(df: pd.DataFrame):
-    """Efficiently upserts (inserts or updates) Nifty options data into the database."""
+def store_banknifty_data(df: pd.DataFrame):
+    """Efficiently upserts (inserts or updates) BankNifty data into the database."""
     if df.empty:
         return
 
@@ -178,32 +189,59 @@ def store_option_data(df: pd.DataFrame):
         if not records:
             return
 
-        # SQLite has a variable limit (~999). With 8 columns, max ~124 rows per batch.
-        BATCH_SIZE = 100
-        total_upserted = 0
-
-        for i in range(0, len(records), BATCH_SIZE):
-            chunk = records[i:i + BATCH_SIZE]
-            stmt = insert(OptionData).values(chunk)
-
-            # On conflict (duplicate timestamp and symbol), update the existing row
-            update_dict = {
-                c.name: getattr(stmt.excluded, c.name) 
-                for c in OptionData.__table__.columns 
-                if c.name not in ['id', 'timestamp', 'symbol']
-            }
-            on_conflict_stmt = stmt.on_conflict_do_update(
-                index_elements=['timestamp', 'symbol'],
-                set_=update_dict
-            )
-
-            session.execute(on_conflict_stmt)
-            total_upserted += len(chunk)
-
+        stmt = insert(BankNiftyData).values(records)
+        
+        # On conflict (duplicate timestamp), update the existing row
+        update_dict = {c.name: getattr(stmt.excluded, c.name) for c in BankNiftyData.__table__.columns if c.name != 'timestamp'}
+        on_conflict_stmt = stmt.on_conflict_do_update(
+            index_elements=['timestamp'],
+            set_=update_dict
+        )
+        
+        session.execute(on_conflict_stmt)
         session.commit()
-        logger.info(f"Upserted {total_upserted} Option data records at {datetime.now().strftime('%H:%M:%S')}.")
+        logger.info(f"Upserted {len(records)} BankNifty data records at {datetime.now().strftime('%H:%M:%S')}.")
     except SQLAlchemyError as e:
         session.rollback()
+        logger.error(f"Database error during BankNifty data upsert: {e}")
+    finally:
+        session.close()
+
+def store_option_data(df: pd.DataFrame):
+    """Efficiently upserts (inserts or updates) Nifty options data into the database."""
+    if df.empty:
+        return
+
+    session = SessionLocal()
+    try:
+        raw_conn = session.connection().connection
+        cursor = raw_conn.cursor()
+
+        # SQLite performance PRAGMAs for bulk writes
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA synchronous=NORMAL")
+        cursor.execute("PRAGMA cache_size=-64000")  # 64MB cache
+
+        records = df[['symbol', 'timestamp', 'open', 'high', 'low', 'close', 'volume', 'oi']].to_dict(orient='records')
+        if not records:
+            return
+
+        # Use raw INSERT OR REPLACE — much faster than ORM on_conflict_do_update
+        sql = "INSERT OR REPLACE INTO option_data (symbol, timestamp, open, high, low, close, volume, oi) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+        values = [(r['symbol'], r['timestamp'], r['open'], r['high'], r['low'], r['close'], r['volume'], r['oi']) for r in records]
+
+        # Batch insert — SQLite handles up to 999 variables; 8 cols × 120 rows = 960
+        BATCH_SIZE = 120
+        total_upserted = 0
+        for i in range(0, len(values), BATCH_SIZE):
+            chunk = values[i:i + BATCH_SIZE]
+            cursor.executemany(sql, chunk)
+            total_upserted += len(chunk)
+
+        raw_conn.commit()
+        logger.info(f"Upserted {total_upserted} Option data records at {datetime.now().strftime('%H:%M:%S')}.")
+    except Exception as e:
+        raw_conn.rollback()
         logger.error(f"Database error during Option data upsert: {e}")
     finally:
         session.close()
@@ -281,6 +319,7 @@ def clear_madhan_db():
     try:
         # Clear data from all tables while preserving schemas
         session.query(NiftyData).delete()
+        session.query(BankNiftyData).delete()
         session.query(OptionData).delete()
         session.query(PreviousDayOI).delete()
         session.query(TrackedSymbol).delete()
@@ -358,7 +397,7 @@ def get_nifty_data(limit: int = 500, end_ts: int = None):
     finally:
         session.close()
 
-def get_option_data(end_ts: int = None):
+def get_option_data(end_ts: int = None, instrument: str = 'NIFTY'):
     """
     Retrieves the latest record, total count, and cumulative day volume for each tracked option symbol.
     If end_ts is provided, it returns the state as of that timestamp (Replay mode).
@@ -374,7 +413,7 @@ def get_option_data(end_ts: int = None):
 
         # Subquery to rank records and get count
         # For 'rn' (latest record), we only filter by end_ts if provided to maintain backward compatibility
-        rn_filter = [OptionData.timestamp <= end_ts] if end_ts else []
+        rn_filter = [OptionData.timestamp <= end_ts, OptionData.symbol.startswith(instrument)] if end_ts else [OptionData.symbol.startswith(instrument)]
         
         # For 'day_volume', we always want to sum from the start of the current day session
         vol_filter = [OptionData.timestamp >= start_ts]
@@ -424,7 +463,7 @@ def get_option_data(end_ts: int = None):
     finally:
         session.close()
 
-def get_consistent_current_option_data(end_ts: int = None):
+def get_consistent_current_option_data(end_ts: int = None, instrument: str = 'NIFTY'):
     """
     Returns option data at the last timestamp where ALL tracked symbols are present.
     This prevents partial/inconsistent data during incremental fetch when different
@@ -434,7 +473,7 @@ def get_consistent_current_option_data(end_ts: int = None):
     try:
         from sqlalchemy.orm import aliased
 
-        tracked_symbols = [r[0] for r in session.query(TrackedSymbol.symbol).all()]
+        tracked_symbols = [r[0] for r in session.query(TrackedSymbol.symbol).filter(TrackedSymbol.symbol.startswith(instrument)).all()]
         if not tracked_symbols:
             return []
         
@@ -445,7 +484,7 @@ def get_consistent_current_option_data(end_ts: int = None):
         start_ts = int(start_of_day.timestamp())
         
         # Find the latest timestamp where all expected symbols have data
-        ts_filter = [OptionData.timestamp >= start_ts]
+        ts_filter = [OptionData.timestamp >= start_ts, OptionData.symbol.startswith(instrument)]
         if end_ts:
             ts_filter.append(OptionData.timestamp <= end_ts)
         
@@ -462,10 +501,10 @@ def get_consistent_current_option_data(end_ts: int = None):
         if not latest_consistent_ts:
             # Fallback: return whatever is available (raw per-symbol latest)
             logger.warning(f"No consistent timestamp found with all {expected_count} symbols. Falling back to raw data.")
-            return get_option_data(end_ts=end_ts)
+            return get_option_data(end_ts=end_ts, instrument=instrument)
         
         # Get all option data at the consistent timestamp, with day volume
-        vol_filter = [OptionData.timestamp >= start_ts]
+        vol_filter = [OptionData.timestamp >= start_ts, OptionData.symbol.startswith(instrument)]
         if end_ts:
             vol_filter.append(OptionData.timestamp <= end_ts)
         
@@ -478,7 +517,7 @@ def get_consistent_current_option_data(end_ts: int = None):
                 func.sum(case((and_(*vol_filter), OptionData.volume), else_=0)).over(
                     partition_by=OptionData.symbol
                 ).label('total_day_volume')
-            ).filter(OptionData.timestamp == latest_consistent_ts)
+            ).filter(OptionData.timestamp == latest_consistent_ts, OptionData.symbol.startswith(instrument))
         ).subquery()
         
         option_data_alias = aliased(OptionData, subq)
@@ -505,7 +544,7 @@ def get_consistent_current_option_data(end_ts: int = None):
     finally:
         session.close()
 
-def get_previous_day_oi():
+def get_previous_day_oi(instrument: str = 'NIFTY'):
     """
     Retrieves previous day OI records from the database.
     Filters for data belonging to the valid trading day immediately preceding the current trading day.
@@ -523,12 +562,13 @@ def get_previous_day_oi():
         start_ts = int(start_of_day.timestamp())
         end_ts = int(end_of_day.timestamp())
 
-        logger.info(f"Fetching previous day OI for date: {prev_trading_day} (TS: {start_ts} to {end_ts})")
+        logger.info(f"Fetching previous day OI for {instrument} on date: {prev_trading_day} (TS: {start_ts} to {end_ts})")
 
-        # First, try to get data for the exact previous trading day
+        # First, try to get data for the exact previous trading day, filtered by instrument
         results = session.query(PreviousDayOI).filter(
             PreviousDayOI.timestamp >= start_ts,
-            PreviousDayOI.timestamp <= end_ts
+            PreviousDayOI.timestamp <= end_ts,
+            PreviousDayOI.symbol.startswith(instrument)
         ).order_by(PreviousDayOI.symbol).all()
 
         if results:
@@ -541,7 +581,7 @@ def get_previous_day_oi():
         # Fallback: If no data for the exact date, return whatever is in the table (likely stale data)
         # This prevents the UI from breaking if the fetcher missed a day or calculated the wrong date.
         logger.warning(f"No data found for {prev_trading_day}. Falling back to latest available data in table.")
-        results = session.query(PreviousDayOI).order_by(PreviousDayOI.symbol).all()
+        results = session.query(PreviousDayOI).filter(PreviousDayOI.symbol.startswith(instrument)).order_by(PreviousDayOI.symbol).all()
         
         return [
             {'symbol': r.symbol, 'oi': r.oi, 'close': r.close, 'timestamp': r.timestamp}
@@ -565,24 +605,59 @@ def get_nifty_data_count():
     finally:
         session.close()
 
-def validate_backfill_consistency(tracked_symbols: list) -> dict:
+def get_banknifty_data(limit: int = 500, end_ts: int = None):
+    """Retrieves BankNifty data records, optionally up to end_ts."""
+    session = SessionLocal()
+    try:
+        query = session.query(BankNiftyData)
+        if end_ts:
+            query = query.filter(BankNiftyData.timestamp <= end_ts)
+        
+        # Query and order by timestamp descending, then limit
+        results = query.order_by(BankNiftyData.timestamp.desc()).limit(limit).all()
+        # Reverse the results to get ascending order for display
+        results.reverse()
+        return [
+            {'timestamp': r.timestamp, 'open': r.open, 'high': r.high, 'low': r.low, 'close': r.close, 'volume': r.volume, 'oi': r.oi}
+            for r in results
+        ]
+    except Exception as e:
+        logger.error(f"Error fetching BankNifty data: {e}")
+        return []
+    finally:
+        session.close()
+
+def get_banknifty_data_count():
+    """Retrieves the total count of BankNifty data records."""
+    session = SessionLocal()
+    try:
+        count = session.query(func.count(BankNiftyData.timestamp)).scalar()
+        return count or 0
+    except Exception as e:
+        logger.error(f"Error counting BankNifty data: {e}")
+        return 0
+    finally:
+        session.close()
+
+def validate_backfill_consistency(tracked_symbols: list, instrument: str = 'NIFTY'):
     """
-    Validates that all tracked symbols + NIFTY have the same last timestamp.
+    Validates that all tracked symbols + spot (NIFTY/BANKNIFTY) have the same last timestamp.
     Returns a dict with validation results.
     """
     session = SessionLocal()
     try:
-        result = {"nifty": {}, "options": {}, "consistent": True, "issues": []}
+        spot_class = BankNiftyData if instrument == 'BANKNIFTY' else NiftyData
+        result = {instrument.lower(): {}, "options": {}, "consistent": True, "issues": []}
 
-        # Check NIFTY last timestamp
-        nifty_last = session.query(func.max(NiftyData.timestamp)).scalar()
-        if nifty_last:
-            nifty_count = session.query(func.count(NiftyData.timestamp)).scalar()
-            result["nifty"] = {"last_ts": nifty_last, "records": nifty_count}
+        # Check spot last timestamp
+        spot_last = session.query(func.max(spot_class.timestamp)).scalar()
+        if spot_last:
+            spot_count = session.query(func.count(spot_class.timestamp)).scalar()
+            result[instrument.lower()] = {"last_ts": spot_last, "records": spot_count}
         else:
-            result["nifty"] = {"last_ts": None, "records": 0}
+            result[instrument.lower()] = {"last_ts": None, "records": 0}
             result["consistent"] = False
-            result["issues"].append("NIFTY has no data")
+            result["issues"].append(f"{instrument} has no data")
 
         # Check each tracked symbol's last timestamp and record count
         if tracked_symbols:
@@ -629,7 +704,7 @@ def validate_backfill_consistency(tracked_symbols: list) -> dict:
             "total_tracked": total_options,
             "filled": filled_options,
             "missing": total_options - filled_options,
-            "nifty_records": result["nifty"]["records"],
+            f"{instrument.lower()}_records": result[instrument.lower()]["records"],
             "expected_last_ts": result.get("expected_last_ts"),
         }
 
@@ -641,7 +716,7 @@ def validate_backfill_consistency(tracked_symbols: list) -> dict:
         session.close()
 
 
-def get_nth_candle_oi_for_all_symbols(n: int):
+def get_nth_candle_oi_for_all_symbols(n: int, instrument: str = 'NIFTY'):
     """
     For the current day, gets the OI of the Nth candle for all tracked symbols.
     """
@@ -651,19 +726,20 @@ def get_nth_candle_oi_for_all_symbols(n: int):
         start_of_day = datetime.combine(today, time.min)
         start_of_day_ts = int(start_of_day.timestamp())
 
-        # Subquery for NiftyData
-        nifty_subq = (
+        # Subquery for Spot Data (NIFTY or BANKNIFTY)
+        spot_class = BankNiftyData if instrument == 'BANKNIFTY' else NiftyData
+        spot_subq = (
             select(
-                literal_column("'NIFTY'").label("symbol"),
-                func.coalesce(NiftyData.oi, 0).label('oi'),
+                literal_column(f"'{instrument}'").label("symbol"),
+                func.coalesce(spot_class.oi, 0).label('oi'),
                 func.row_number().over(
-                    order_by=NiftyData.timestamp.asc()
+                    order_by=spot_class.timestamp.asc()
                 ).label('rn')
             ).filter(
-                NiftyData.timestamp >= start_of_day_ts
+                spot_class.timestamp >= start_of_day_ts
             ).subquery()
         )
-        nth_nifty_candle = session.query(nifty_subq).filter(nifty_subq.c.rn == n).all()
+        nth_spot_candle = session.query(spot_subq).filter(spot_subq.c.rn == n).all()
 
         # Subquery for OptionData
         option_subq = (
@@ -675,49 +751,50 @@ def get_nth_candle_oi_for_all_symbols(n: int):
                     order_by=OptionData.timestamp.asc()
                 ).label('rn')
             ).filter(
-                OptionData.timestamp >= start_of_day_ts
+                OptionData.timestamp >= start_of_day_ts,
+                OptionData.symbol.startswith(instrument)
             ).subquery()
         )
         nth_option_candles = session.query(option_subq).filter(option_subq.c.rn == n).all()
 
         # Combine results into a dictionary
-        oi_map = {row.symbol: row.oi for row in nth_nifty_candle}
+        oi_map = {row.symbol: row.oi for row in nth_spot_candle}
         oi_map.update({row.symbol: row.oi for row in nth_option_candles})
 
         return oi_map
 
     except Exception as e:
-        # Improved error logging with ordinal suffix and full traceback
         suffix = {1: 'st', 2: 'nd', 3: 'rd'}.get(n % 10, 'th') if n % 100 not in (11, 12, 13) else 'th'
         logger.error(f"Error fetching {n}{suffix} candle OI: {e}", exc_info=True)
         return {}
     finally:
         session.close()
 
-def get_current_day_historical_data(end_ts: int = None):
-    """Fetches all 1-minute candle data for the current day for Nifty and Options, optionally up to end_ts."""
+def get_current_day_historical_data(end_ts: int = None, instrument: str = 'NIFTY'):
+    """Fetches all 1-minute candle data for the current day for Nifty/BankNifty and Options, optionally up to end_ts."""
     session = SessionLocal()
     try:
         today = get_valid_trading_day(exchange="NSE")
         start_of_day = datetime.combine(today, time.min)
         start_of_day_ts = int(start_of_day.timestamp())
 
-        nifty_filter = [NiftyData.timestamp >= start_of_day_ts]
-        option_filter = [OptionData.timestamp >= start_of_day_ts]
+        spot_class = BankNiftyData if instrument == 'BANKNIFTY' else NiftyData
+        spot_filter = [spot_class.timestamp >= start_of_day_ts]
+        option_filter = [OptionData.timestamp >= start_of_day_ts, OptionData.symbol.startswith(instrument)]
         if end_ts:
-            nifty_filter.append(NiftyData.timestamp <= end_ts)
+            spot_filter.append(spot_class.timestamp <= end_ts)
             option_filter.append(OptionData.timestamp <= end_ts)
 
-        nifty_data_query = session.query(
-            literal_column("'NIFTY'").label("symbol"),
-            NiftyData.timestamp,
-            func.coalesce(NiftyData.oi, 0).label("oi"),
-            NiftyData.high,
-            NiftyData.low,
-            NiftyData.close,
-            func.coalesce(NiftyData.volume, 0).label("volume"),
-        ).filter(*nifty_filter)
-        nifty_data = nifty_data_query.all()
+        spot_data_query = session.query(
+            literal_column(f"'{instrument}'").label("symbol"),
+            spot_class.timestamp,
+            func.coalesce(spot_class.oi, 0).label("oi"),
+            spot_class.high,
+            spot_class.low,
+            spot_class.close,
+            func.coalesce(spot_class.volume, 0).label("volume"),
+        ).filter(*spot_filter)
+        spot_data = spot_data_query.all()
         option_data = session.query(
             OptionData.symbol,
             OptionData.timestamp,
@@ -728,7 +805,7 @@ def get_current_day_historical_data(end_ts: int = None):
             func.coalesce(OptionData.volume, 0).label("volume"),
         ).filter(*option_filter).all()
 
-        combined_data = [row._asdict() for row in nifty_data] + [row._asdict() for row in option_data]
+        combined_data = [row._asdict() for row in spot_data] + [row._asdict() for row in option_data]
         
         return combined_data
 
@@ -750,6 +827,24 @@ def get_last_option_candle_timestamp():
         ).scalar()
     except Exception as e:
         logger.error(f"Error fetching last option candle timestamp: {e}")
+        return None
+    finally:
+        session.close()
+
+
+def get_last_option_candle_timestamp_for_instrument(instrument: str = 'NIFTY'):
+    """Returns the latest OptionData timestamp for today filtered by instrument prefix, or None."""
+    session = SessionLocal()
+    try:
+        today = get_valid_trading_day(exchange="NSE")
+        start_of_day = datetime.combine(today, time.min)
+        start_of_day_ts = int(start_of_day.timestamp())
+        return session.query(func.max(OptionData.timestamp)).filter(
+            OptionData.timestamp >= start_of_day_ts,
+            OptionData.symbol.startswith(instrument)
+        ).scalar()
+    except Exception as e:
+        logger.error(f"Error fetching last option candle timestamp for {instrument}: {e}")
         return None
     finally:
         session.close()
@@ -784,6 +879,21 @@ def get_current_day_instrument_data(symbol: str):
             ).order_by(NiftyData.timestamp.asc()).all()
             
             return [row._asdict() for row in nifty_data]
+        elif symbol == 'BANKNIFTY':
+            # Query BankNifty data
+            banknifty_data = session.query(
+                BankNiftyData.timestamp,
+                BankNiftyData.open,
+                BankNiftyData.high,
+                BankNiftyData.low,
+                BankNiftyData.close,
+                BankNiftyData.volume,
+                func.coalesce(BankNiftyData.oi, 0).label('oi')
+            ).filter(
+                BankNiftyData.timestamp >= start_of_day_ts
+            ).order_by(BankNiftyData.timestamp.asc()).all()
+            
+            return [row._asdict() for row in banknifty_data]
         else:
             # Query Option data for the specific symbol
             option_data = session.query(
@@ -812,7 +922,7 @@ def get_instrument_data_for_date(symbol: str, target_date):
     """Fetches all 1-minute candle data for a specific date and instrument/symbol.
 
     Args:
-        symbol: 'NIFTY' for spot data, or an option symbol like 'NIFTY29AUG2524000CE'
+        symbol: 'NIFTY', 'BANKNIFTY' for spot data, or an option symbol like 'NIFTY29AUG2524000CE'
         target_date: date object for the target trading day
     """
     session = SessionLocal()
@@ -837,6 +947,21 @@ def get_instrument_data_for_date(symbol: str, target_date):
             ).order_by(NiftyData.timestamp.asc()).all()
 
             return [row._asdict() for row in nifty_data]
+        elif symbol == 'BANKNIFTY':
+            banknifty_data = session.query(
+                BankNiftyData.timestamp,
+                BankNiftyData.open,
+                BankNiftyData.high,
+                BankNiftyData.low,
+                BankNiftyData.close,
+                BankNiftyData.volume,
+                func.coalesce(BankNiftyData.oi, 0).label('oi')
+            ).filter(
+                BankNiftyData.timestamp >= start_ts,
+                BankNiftyData.timestamp <= end_ts
+            ).order_by(BankNiftyData.timestamp.asc()).all()
+
+            return [row._asdict() for row in banknifty_data]
         else:
             option_data = session.query(
                 OptionData.timestamp,
@@ -861,7 +986,7 @@ def get_instrument_data_for_date(symbol: str, target_date):
         session.close()
 
 
-def get_coi_history(days: int = 30):
+def get_coi_history(days: int = 30, instrument: str = 'NIFTY'):
     """
     Returns daily COI (Change in OI) history for all tracked option symbols.
     Uses ROW_NUMBER() partitioned by symbol+date to get last candle OI per day,
@@ -896,6 +1021,7 @@ def get_coi_history(days: int = 30):
             ).filter(
                 OptionData.timestamp >= start_ts,
                 OptionData.timestamp <= end_ts,
+                OptionData.symbol.startswith(instrument),
             )
         ).subquery()
 
@@ -1004,6 +1130,19 @@ def get_lot_size(unix_ts: int) -> int:
     if dt >= date(2007, 2, 1):
         return 50
     return 50
+
+
+def get_banknifty_lot_size(unix_ts: int) -> int:
+    """Returns historical BankNifty lot size based on date."""
+    IST = _pytz.timezone('Asia/Kolkata')
+    dt = datetime.fromtimestamp(unix_ts, tz=IST).date()
+    if dt >= date(2025, 1, 1):
+        return 30
+    if dt >= date(2024, 11, 1):
+        return 15
+    if dt >= date(2024, 4, 1):
+        return 15
+    return 25
 
 
 def _parquet_path(date_str: str) -> str:

@@ -39,6 +39,7 @@ import { useAuthStore } from '@/stores/authStore'
 import { useThemeStore } from '@/stores/themeStore'
 import { useProfileMenuItems } from '@/hooks/useProfileMenuItems'
 import { useMadhanTheme } from './useMadhanTheme'
+import { useInstrument, InstrumentProvider, type Instrument } from './InstrumentContext'
 import Plot from '@/lib/Plot2D'
 
 interface ATPLTPData {
@@ -60,6 +61,15 @@ interface ATPLTPData {
 }
 
 export default function ATPLTPStrategy() {
+  return (
+    <InstrumentProvider>
+      <ATPLTPStrategyInner />
+    </InstrumentProvider>
+  );
+}
+
+function ATPLTPStrategyInner() {
+  const { instrument, setInstrument } = useInstrument();
   const navigate = useNavigate()
   const { user } = useAuthStore()
   const { appMode, toggleAppMode, isTogglingMode } = useThemeStore()
@@ -93,7 +103,7 @@ export default function ATPLTPStrategy() {
   const liveSpotRef = useRef(0)
   const [liveSpot, setLiveSpot] = useState(0)
 
-  const wsSymbols = useMemo(() => fetcherRunning ? [{ symbol: 'NIFTY', exchange: 'NSE_INDEX' }] : [], [fetcherRunning])
+  const wsSymbols = useMemo(() => fetcherRunning ? [{ symbol: instrument, exchange: 'NSE_INDEX' }] : [], [fetcherRunning, instrument])
 
   const { data: wsData } = useMarketData({ symbols: wsSymbols, mode: 'LTP' })
 
@@ -144,7 +154,7 @@ export default function ATPLTPStrategy() {
   const fetchATPLTPData = useCallback(async () => {
     try {
       setError(null)
-      const response = await fetch(`/madhan/api/atp-ltp-data?_=${Date.now()}`, {
+      const response = await fetch(`/madhan/api/atp-ltp-data?instrument=${instrument}&_=${Date.now()}`, {
         credentials: 'include',
         headers: { Accept: 'application/json' },
       })
@@ -163,7 +173,7 @@ export default function ATPLTPStrategy() {
     } catch (_e) {
       setError('Failed to fetch ATP-LTP data')
     }
-  }, [])
+  }, [instrument])
 
   const refreshData = useCallback(async () => {
     setIsRefreshing(true)
@@ -185,7 +195,7 @@ export default function ATPLTPStrategy() {
       if (isFetching) return
       isFetching = true
       try {
-        const res = await fetch(`/madhan/api/nifty/status?_=${Date.now()}`)
+        const res = await fetch(`/madhan/api/nifty/status?instrument=${instrument}&_=${Date.now()}`)
         const json = await res.json()
         if (json?.status === 'success' && json?.server_time) {
           const serverMs = new Date(json.server_time).getTime()
@@ -225,11 +235,11 @@ export default function ATPLTPStrategy() {
     fetchStatusAndCheck()
     scheduleNextMinute()
     return () => { clearTimeout(timer); clearInterval(pollInterval) }
-  }, [fetchATPLTPData])
+  }, [fetchATPLTPData, instrument])
 
   useEffect(() => {
     if (!wsData || wsData.size === 0) return
-    const spotEntry = wsData.get('NSE_INDEX:NIFTY')
+    const spotEntry = wsData.get(`NSE_INDEX:${instrument}`)
     const spotLtp = spotEntry?.data?.ltp
     if (spotLtp) {
       liveSpotRef.current = spotLtp
@@ -494,7 +504,6 @@ export default function ATPLTPStrategy() {
           </div>
 
           <div className="flex items-center gap-2">
-             {/* Mode Badge */}
             <Badge
                 variant={appMode === "live" ? "default" : "secondary"}
                 className={cn(
@@ -600,6 +609,24 @@ export default function ATPLTPStrategy() {
                <span className="text-sm" style={{ color: fetcherRunning ? (madhanMode === 'dark' ? '#4ade80' : '#16a34a') : (madhanMode === 'dark' ? '#f87171' : '#dc2626') }}>
                  {statusMessage}
                </span>
+            </div>
+            <span className="text-muted-foreground/30">|</span>
+            {/* Instrument Toggle */}
+            <div className="flex items-center bg-muted rounded-md p-0.5">
+              {(['NIFTY', 'BANKNIFTY'] as Instrument[]).map((inst) => (
+                <button
+                  key={inst}
+                  onClick={() => setInstrument(inst)}
+                  className={cn(
+                    "px-2.5 py-1 text-[11px] font-medium rounded transition-colors",
+                    instrument === inst
+                      ? "bg-primary text-primary-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground"
+                  )}
+                >
+                  {inst}
+                </button>
+              ))}
             </div>
           </div>
         </div>

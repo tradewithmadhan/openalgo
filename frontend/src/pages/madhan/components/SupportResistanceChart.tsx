@@ -6,6 +6,7 @@ import { RefreshCw } from 'lucide-react';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { useMadhanTheme } from '@/pages/madhan/useMadhanTheme';
+import { useInstrument } from '../InstrumentContext';
 
 import { Zap, ZapOff } from 'lucide-react';
 import { showToast } from '@/utils/toast';
@@ -25,6 +26,7 @@ interface SupportResistanceChartProps {
 }
 
 export function SupportResistanceChart({ refreshTrigger }: SupportResistanceChartProps) {
+    const { instrument } = useInstrument();
     const { mode: madhanMode } = useMadhanTheme();
     const chartContainerRef = useRef<HTMLDivElement>(null);
     const chartRef = useRef<IChartApi | null>(null);
@@ -128,13 +130,13 @@ export function SupportResistanceChart({ refreshTrigger }: SupportResistanceChar
                             // Subscribe to NIFTY
                             socket.send(JSON.stringify({ 
                                 action: 'subscribe', 
-                                symbols: [{ symbol: 'NIFTY', exchange: 'NSE_INDEX' }],
+                                symbols: [{ symbol: instrument, exchange: 'NSE_INDEX' }],
                                 mode: 1 // LTP
                             }));
                         } else if (type === 'market_data' && message.data) {
                             const { symbol, exchange, data } = message;
                             // console.log('[WS] Data received:', symbol, data.ltp, data.timestamp);
-                            if (symbol === 'NIFTY' && exchange === 'NSE_INDEX' && data.ltp && spotSeriesRef.current) {
+                            if (symbol === instrument && exchange === 'NSE_INDEX' && data.ltp && spotSeriesRef.current) {
                                 // Update chart
                                 let rawTime: number;
                                 if (data.timestamp) {
@@ -216,7 +218,7 @@ export function SupportResistanceChart({ refreshTrigger }: SupportResistanceChar
     const fetchData = async () => {
         setIsLoading(true);
         try {
-            const response = await fetch(`/madhan/api/nifty/support-resistance?_=${Date.now()}`);
+            const response = await fetch(`/madhan/api/nifty/support-resistance?instrument=${instrument}&_=${Date.now()}`);
             const json = await response.json();
             if (json.status === 'success') {
                 setData(json.data);
@@ -230,7 +232,7 @@ export function SupportResistanceChart({ refreshTrigger }: SupportResistanceChar
 
     const fetchSpotData = async () => {
         try {
-            const response = await fetch(`/madhan/api/nifty/spot-data?_=${Date.now()}`);
+            const response = await fetch(`/madhan/api/nifty/spot-data?instrument=${instrument}&_=${Date.now()}`);
             const json = await response.json();
             if (json.status === 'success') {
                 setSpotData(json.data);
@@ -243,7 +245,7 @@ export function SupportResistanceChart({ refreshTrigger }: SupportResistanceChar
     useEffect(() => {
         fetchData();
         fetchSpotData();
-    }, [refreshTrigger]);
+    }, [refreshTrigger, instrument]);
 
     useEffect(() => {
         if (!chartContainerRef.current) return;

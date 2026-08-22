@@ -17,6 +17,7 @@ import { useAuthStore } from '@/stores/authStore'
 import { useProfileMenuItems } from '@/hooks/useProfileMenuItems'
 import { cn } from '@/lib/utils'
 import { useMadhanTheme } from './useMadhanTheme'
+import { useInstrument, type Instrument } from './InstrumentContext'
 
 type StrikeSymbol = { symbol: string; exchange: string; strike: number; type: string }
 
@@ -38,6 +39,7 @@ type TableRow = {
 type Props = { onClose?: () => void; standalone?: boolean }
 
 export default function RealtimeTable({ onClose, standalone = false }: Props) {
+  const { instrument, strikeStep, setInstrument } = useInstrument();
   const socketRef = useRef<WebSocket | null>(null)
   const strikeSymbolsRef = useRef<Map<string, StrikeSymbol>>(new Map())
   const realtimeDataRef = useRef<Map<string, ProcessedData>>(new Map())
@@ -80,56 +82,9 @@ export default function RealtimeTable({ onClose, standalone = false }: Props) {
     recalculate()
   }, [])
 
-  const connect = useCallback(async () => {
-    if (socketRef.current?.readyState === WebSocket.OPEN) return
-    try {
-      setWsStatus('connecting')
-      const configRes = await fetch('/api/websocket/config')
-      const config = await configRes.json()
-      if (config.status !== 'success') throw new Error('Failed to get WS config')
-
-      const ws = new WebSocket(config.websocket_url)
-      socketRef.current = ws
-
-      ws.onopen = async () => {
-        const keyRes = await fetch('/api/websocket/apikey')
-        const keyData = await keyRes.json()
-        if (keyData.status === 'success' && keyData.api_key) {
-          ws.send(JSON.stringify({ action: 'authenticate', api_key: keyData.api_key }))
-        }
-      }
-
-      ws.onmessage = (event) => {
-        try {
-          const msg = JSON.parse(event.data)
-          if (msg.type === 'auth' && msg.status === 'success') {
-            setWsStatus('connected')
-            loadStrikeSymbols()
-          } else if (msg.type === 'market_data') {
-            handleMarketData(msg)
-          }
-        } catch {}
-      }
-
-      ws.onclose = () => { setWsStatus('disconnected'); socketRef.current = null }
-      ws.onerror = () => { setWsStatus('disconnected') }
-    } catch {
-      setWsStatus('disconnected')
-    }
-  }, [])
-
-  const disconnect = useCallback(() => {
-    socketRef.current?.close()
-    socketRef.current = null
-    strikeSymbolsRef.current.clear()
-    realtimeDataRef.current.clear()
-    setWsStatus('disconnected')
-    setTableData([])
-  }, [])
-
   const loadStrikeSymbols = useCallback(async () => {
     try {
-      const res = await fetch(`/madhan/api/strikes?_=${Date.now()}`)
+      const res = await fetch(`/madhan/api/strikes?instrument=${instrument}&_=${Date.now()}`)
       const data = await res.json()
       if (data.status !== 'success') return
 
@@ -142,37 +97,31 @@ export default function RealtimeTable({ onClose, standalone = false }: Props) {
       } else {
         const strikes: number[] = data.data || []
         strikes.forEach((s) => {
-          symbols.set(`${s}_CE`, { symbol: `NIFTY${s}CE`, exchange: 'NFO', strike: s, type: 'CE' })
-          symbols.set(`${s}_PE`, { symbol: `NIFTY${s}PE`, exchange: 'NFO', strike: s, type: 'PE' })
+          symbols.set(`${s}_CE`, { symbol: `${instrument}${s}CE`, exchange: 'NFO', strike: s, type: 'CE' })
+          symbols.set(`${s}_PE`, { symbol: `${instrument}${s}PE`, exchange: 'NFO', strike: s, type: 'PE' })
         })
       }
-      strikeSymbolsRef.current = symbols
-
       const ws = socketRef.current
+      const oldSymbols = Array.from(strikeSymbolsRef.current.values()).map((s) => ({ symbol: s.symbol, exchange: s.exchange }))
+      oldSymbols.push({ symbol: instrument === 'NIFTY' ? 'BANKNIFTY' : 'NIFTY', exchange: 'NSE_INDEX' })
+      strikeSymbolsRef.current = symbols
       if (ws?.readyState !== WebSocket.OPEN) return
+      if (oldSymbols.length > 0) {
+        ws.send(JSON.stringify({ action: 'unsubscribe', symbols: oldSymbols }))
+      }
       const subs = Array.from(symbols.values()).map((s) => ({ symbol: s.symbol, exchange: s.exchange }))
-      subs.push({ symbol: 'NIFTY', exchange: 'NSE_INDEX' })
+      subs.push({ symbol: instrument, exchange: 'NSE_INDEX' })
       ws.send(JSON.stringify({ action: 'subscribe', symbols: subs, mode: 2 }))
     } catch (err) {
       console.error('Error loading strike symbols:', err)
     }
-  }, [])
+  }, [instrument])
 
-  const handleMarketData = useCallback((data: any) => {
-    const key = `${data.exchange}:${data.symbol}`
-    const md = data.data || data
-    const processed: ProcessedData = {
-      ltp: md.ltp, volume: md.volume, change: md.change, open: md.open,
-      high: md.high, low: md.low, close: md.close,
-      average_price: md.average_price, percent_change: md.percent_change,
-    }
-    realtimeDataRef.current.set(key, processed)
+  const loadStrikeSymbolsRef = useRef(loadStrikeSymbols)
+  useEffect(() => { loadStrikeSymbolsRef.current = loadStrikeSymbols }, [loadStrikeSymbols])
 
-    if (data.exchange === 'NSE_INDEX' && data.symbol === 'NIFTY') {
-      spotPriceRef.current = parseFloat(md.ltp || spotPriceRef.current)
-    }
-    recalculate()
-  }, [])
+  const instrumentRef = useRef(instrument)
+  useEffect(() => { instrumentRef.current = instrument }, [instrument])
 
   const recalculate = useCallback(() => {
     const symbols = strikeSymbolsRef.current
@@ -234,9 +183,82 @@ export default function RealtimeTable({ onClose, standalone = false }: Props) {
     setTableData(rows)
   }, [])
 
+  const handleMarketData = useCallback((data: any) => {
+    const key = `${data.exchange}:${data.symbol}`
+    const md = data.data || data
+    const processed: ProcessedData = {
+      ltp: md.ltp, volume: md.volume, change: md.change, open: md.open,
+      high: md.high, low: md.low, close: md.close,
+      average_price: md.average_price, percent_change: md.percent_change,
+    }
+    realtimeDataRef.current.set(key, processed)
+
+    if (data.exchange === 'NSE_INDEX' && data.symbol === instrumentRef.current) {
+      spotPriceRef.current = parseFloat(md.ltp || spotPriceRef.current)
+    }
+    recalculate()
+  }, [])
+
+  const connect = useCallback(async () => {
+    if (socketRef.current?.readyState === WebSocket.OPEN) return
+    try {
+      setWsStatus('connecting')
+      const configRes = await fetch('/api/websocket/config')
+      const config = await configRes.json()
+      if (config.status !== 'success') throw new Error('Failed to get WS config')
+
+      const ws = new WebSocket(config.websocket_url)
+      socketRef.current = ws
+
+      ws.onopen = async () => {
+        const keyRes = await fetch('/api/websocket/apikey')
+        const keyData = await keyRes.json()
+        if (keyData.status === 'success' && keyData.api_key) {
+          ws.send(JSON.stringify({ action: 'authenticate', api_key: keyData.api_key }))
+        }
+      }
+
+      ws.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data)
+          if (msg.type === 'auth' && msg.status === 'success') {
+            setWsStatus('connected')
+            loadStrikeSymbolsRef.current()
+          } else if (msg.type === 'market_data') {
+            handleMarketData(msg)
+          }
+        } catch {}
+      }
+
+      ws.onclose = () => { setWsStatus('disconnected'); socketRef.current = null }
+      ws.onerror = () => { setWsStatus('disconnected') }
+    } catch {
+      setWsStatus('disconnected')
+    }
+  }, [handleMarketData])
+
+  const disconnect = useCallback(() => {
+    socketRef.current?.close()
+    socketRef.current = null
+    strikeSymbolsRef.current.clear()
+    realtimeDataRef.current.clear()
+    setWsStatus('disconnected')
+    setTableData([])
+  }, [])
+
   useEffect(() => {
     return () => { socketRef.current?.close() }
   }, [])
+
+  useEffect(() => {
+    if (wsStatus !== 'connected') return
+    strikeSymbolsRef.current.clear()
+    realtimeDataRef.current.clear()
+    spotPriceRef.current = 0
+    openAtmStrikeRef.current = null
+    setTableData([])
+    loadStrikeSymbols()
+  }, [instrument, wsStatus, loadStrikeSymbols])
 
   const cellBg = (cond: boolean, color: 'green' | 'red') => {
     if (!cond) return undefined
@@ -266,6 +288,23 @@ export default function RealtimeTable({ onClose, standalone = false }: Props) {
       <div className="flex items-center gap-1 ml-2">
         <Checkbox checked={showAllStrikes} onCheckedChange={(v) => handleToggleAll(!!v)} />
         <Label className="text-[10px]" style={{ color: t.textSecondary }}>All Strikes</Label>
+      </div>
+      <span style={{ color: t.textSecondary }}>|</span>
+      <div className="flex items-center bg-muted rounded-md p-0.5">
+        {(['NIFTY', 'BANKNIFTY'] as Instrument[]).map((inst) => (
+          <button
+            key={inst}
+            onClick={() => setInstrument(inst)}
+            className={cn(
+              "px-2 py-0.5 text-[10px] font-medium rounded transition-colors",
+              instrument === inst
+                ? "bg-primary text-primary-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground"
+            )}
+          >
+            {inst}
+          </button>
+        ))}
       </div>
     </div>
   )
@@ -301,7 +340,7 @@ export default function RealtimeTable({ onClose, standalone = false }: Props) {
               const combinedExtrinsic = parseFloat(row.combinedExtrinsic)
               const ceHigh = parseFloat(row.ceHigh), peHigh = parseFloat(row.peHigh)
               const isOpenAtm = row.strike === openAtmStrikeRef.current
-              const isCurrentAtm = row.strike === Math.round(spotPriceRef.current / 50) * 50
+              const isCurrentAtm = row.strike === Math.round(spotPriceRef.current / strikeStep) * strikeStep
 
               return (
                 <tr

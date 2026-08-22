@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import { useMadhanTheme } from '../useMadhanTheme'
 import { chartTheme } from '../chartTheme'
 import { cn } from '@/lib/utils'
+import { useInstrument } from '../InstrumentContext'
 
 export type SignalRow = {
   time: number
@@ -49,6 +50,9 @@ const formatTime = (ts: number) => {
 }
 
 export default function EzaySignals({ className, style, backtestDate, refreshTrigger, onFirstSignal, onSignals, signalsData, signalsMeta, lastTime: lastTimeProp }: EzaySignalsProps) {
+  const { instrument } = useInstrument()
+  const instrumentRef = useRef(instrument)
+  useEffect(() => { instrumentRef.current = instrument }, [instrument])
   const { mode: themeMode } = useMadhanTheme()
   const t = chartTheme[themeMode]
   const [data, setData] = useState<SignalRow[]>([])
@@ -73,8 +77,8 @@ export default function EzaySignals({ className, style, backtestDate, refreshTri
       setSignals({ ce_pe: { time: 0, type: '', strike: 0 }, ce_pe_hc: { time: 0, type: '', strike: 0 }, cp: { time: 0, strike: 0 }, cp_open: { time: 0, strike: 0 }, th: { time: 0, type: '', strike: 0 }, ir: [] })
       setLastTime(0)
       const url = backtestDate
-        ? `/madhan/api/nifty/backtest_signals?date=${backtestDate}&_=${Date.now()}`
-        : `/madhan/api/ezayChart_signals?_=${Date.now()}`
+        ? `/madhan/api/nifty/backtest_signals?instrument=${instrumentRef.current}&date=${backtestDate}&_=${Date.now()}`
+        : `/madhan/api/ezayChart_signals?instrument=${instrumentRef.current}&_=${Date.now()}`
       const res = await fetch(url)
       const json = await res.json()
       if (json.status === 'success' && json.data) {

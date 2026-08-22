@@ -8,6 +8,7 @@ import { Label } from '@/components/ui/label';
 import { useMadhanTheme } from '@/pages/madhan/useMadhanTheme';
 import { Zap, ZapOff } from 'lucide-react';
 import { showToast } from '@/utils/toast';
+import { useInstrument } from '../InstrumentContext';
 
 interface CoiTrendData {
     timestamps: number[];
@@ -20,6 +21,7 @@ interface CoiTrendChartProps {
 }
 
 export function CoiTrendChart({ refreshTrigger }: CoiTrendChartProps) {
+    const { instrument } = useInstrument();
     const { mode: madhanMode } = useMadhanTheme();
     const chartContainerRef = useRef<HTMLDivElement>(null);
     const chartRef = useRef<IChartApi | null>(null);
@@ -70,6 +72,7 @@ export function CoiTrendChart({ refreshTrigger }: CoiTrendChartProps) {
                 upside_strikes: '10',
                 downside_strikes: '10'
             });
+            params.set('instrument', instrument);
             const response = await fetch(`/madhan/api/nifty/coi-trend?${params.toString()}&_=${Date.now()}`);
             const json = await response.json();
             if (json.status === 'success') {
@@ -84,7 +87,7 @@ export function CoiTrendChart({ refreshTrigger }: CoiTrendChartProps) {
 
     const fetchSpotData = async () => {
         try {
-            const response = await fetch(`/madhan/api/nifty/spot-data?_=${Date.now()}`);
+            const response = await fetch(`/madhan/api/nifty/spot-data?instrument=${instrument}&_=${Date.now()}`);
             const json = await response.json();
             if (json.status === 'success') {
                 setSpotData(json.data);
@@ -153,7 +156,7 @@ export function CoiTrendChart({ refreshTrigger }: CoiTrendChartProps) {
                             showToast.success('Live connection established');
                             socket.send(JSON.stringify({
                                 action: 'subscribe',
-                                symbols: [{ symbol: 'NIFTY', exchange: 'NSE_INDEX' }],
+                                symbols: [{ symbol: instrument, exchange: 'NSE_INDEX' }],
                                 mode: 1,
                             }));
                         } else if (type === 'market_data' && message.data) {
@@ -162,7 +165,7 @@ export function CoiTrendChart({ refreshTrigger }: CoiTrendChartProps) {
                             const ltp = typeof ltpRaw === 'string' ? Number(ltpRaw) : ltpRaw;
 
                             if (
-                                symbol === 'NIFTY' &&
+                                symbol === instrument &&
                                 exchange === 'NSE_INDEX' &&
                                 Number.isFinite(ltp) &&
                                 ltp > 0 &&
@@ -259,7 +262,7 @@ export function CoiTrendChart({ refreshTrigger }: CoiTrendChartProps) {
     useEffect(() => {
         fetchData();
         fetchSpotData();
-    }, [refreshTrigger, strikeMode]);
+    }, [refreshTrigger, strikeMode, instrument]);
 
     useEffect(() => {
         if (!chartContainerRef.current) return;

@@ -6,6 +6,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { useMadhanTheme } from '../useMadhanTheme';
+import { useInstrument } from '../InstrumentContext';
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -54,6 +55,7 @@ interface CePeStrikeVolumeChangesChartProps {
 }
 
 export function CePeStrikeVolumeChangesChart({ refreshTrigger, atmStrike }: CePeStrikeVolumeChangesChartProps) {
+  const { instrument, strikeStep } = useInstrument();
   const { mode } = useMadhanTheme();
   const [data, setData] = useState<CePeStrikeVolumeChangesData | null>(null);
   const [spotData, setSpotData] = useState<SpotData | null>(null);
@@ -69,15 +71,13 @@ export function CePeStrikeVolumeChangesChart({ refreshTrigger, atmStrike }: CePe
     if (atmStrike) {
       const newStrikes = [];
       for (let i = -10; i <= 10; i++) {
-        newStrikes.push(atmStrike + (i * 50));
+        newStrikes.push(atmStrike + (i * strikeStep));
       }
       newStrikes.sort((a, b) => b - a);
       setStrikes(newStrikes);
-      if (!selectedStrike) {
-        setSelectedStrike(atmStrike.toString());
-      }
+      setSelectedStrike(atmStrike.toString());
     }
-  }, [atmStrike]);
+  }, [atmStrike, instrument]);
 
   const fetchData = async () => {
     if (!selectedStrike) return;
@@ -86,6 +86,7 @@ export function CePeStrikeVolumeChangesChart({ refreshTrigger, atmStrike }: CePe
       const params = new URLSearchParams({
         strike_price: selectedStrike,
       });
+      params.set('instrument', instrument);
       const response = await fetch(`/madhan/api/nifty/ce-pe-strike-volume-changes?${params.toString()}&_=${Date.now()}`);
       const json = await response.json();
       if (json.timestamps) {
@@ -100,7 +101,7 @@ export function CePeStrikeVolumeChangesChart({ refreshTrigger, atmStrike }: CePe
 
   const fetchSpotData = async () => {
     try {
-      const response = await fetch(`/madhan/api/nifty/spot-data?_=${Date.now()}`);
+      const response = await fetch(`/madhan/api/nifty/spot-data?instrument=${instrument}&_=${Date.now()}`);
       const json = await response.json();
       if (json.status === 'success') {
         setSpotData(json.data);
@@ -113,7 +114,7 @@ export function CePeStrikeVolumeChangesChart({ refreshTrigger, atmStrike }: CePe
   useEffect(() => {
     fetchData();
     fetchSpotData();
-  }, [refreshTrigger, selectedStrike]);
+  }, [refreshTrigger, selectedStrike, instrument]);
 
   const chartData: ChartData<'bar' | 'line'> = useMemo(() => {
     if (!data || !data.timestamps || data.timestamps.length === 0) {

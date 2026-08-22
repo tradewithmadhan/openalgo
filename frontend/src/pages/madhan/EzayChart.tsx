@@ -44,7 +44,8 @@ import TextEditorModal from './TextEditorModal'
 import WidgetBar from './WidgetBar'
 import { PositionLinePrimitive, type PositionDatum, OrderLinePrimitive, type OrderLineDatum, VolumeProfilePrimitive } from './chartPrimitives'
 import { useOrderEventRefresh } from '@/hooks/useOrderEventRefresh'
-import RealtimeTable from './RealtimeTable'
+import { useInstrument, InstrumentProvider, type Instrument } from './InstrumentContext'
+
 import EzaySignals, { type SignalRow, type FirstSignalInfo, type BackendSignals } from './components/EzaySignals'
 import QuickTradePanel from './components/QuickTradePanel'
 
@@ -205,6 +206,17 @@ function aggregateTrustMe(data: TrustMeEntry[], intervalMin: number): TrustMeEnt
 }
 
 export default function EzayChart() {
+  return (
+    <InstrumentProvider>
+      <EzayChartInner />
+    </InstrumentProvider>
+  );
+}
+
+function EzayChartInner() {
+  const { instrument, strikeStep, setInstrument } = useInstrument();
+  const instrumentRef = useRef(instrument)
+  useEffect(() => { instrumentRef.current = instrument }, [instrument])
   const chartContainerRef = useRef<HTMLDivElement | null>(null)
   const chartRef = useRef<IChartApi | null>(null)
   const strikeListRef = useRef<HTMLDivElement | null>(null)
@@ -282,7 +294,6 @@ export default function EzayChart() {
   const [chartInfo, setChartInfo] = useState('')
   const [atmStrike, setAtmStrike] = useState<number | null>(null)
   const [strikePanelOpen, setStrikePanelOpen] = useState(() => loadSetting('strikePanelOpen', true))
-  const [showRealtime, setShowRealtime] = useState(() => loadSetting('showRealtime', false))
   const [volumeMode, setVolumeMode] = useState<'strike' | 'total'>(() => loadSetting('volumeMode', 'strike'))
   const [showEzaySignals, setShowEzaySignals] = useState(() => loadSetting('showEzaySignals', false))
   const [widgetTab, setWidgetTab] = useState<string | null>(showEzaySignals ? 'ezay-signals' : null)
@@ -320,7 +331,7 @@ export default function EzayChart() {
   const [rangeLoading, setRangeLoading] = useState(false)
   const [rangeVisibleStrategies, setRangeVisibleStrategies] = useState<Set<string>>(new Set(['CE-PE', 'CP']))
 
-  const currentAtmStrike = liveSpot > 0 ? Math.round(liveSpot / 50) * 50 : null
+  const currentAtmStrike = liveSpot > 0 ? Math.round(liveSpot / strikeStep) * strikeStep : null
   const [candleCountdown, setCandleCountdown] = useState('')
 
   const cePositionDataRef = useRef<PositionDatum | null>(null)
@@ -426,7 +437,7 @@ export default function EzayChart() {
   const wsSymbols = useMemo(() => {
     if (isBacktest) return []
     const syms: Array<{ symbol: string; exchange: string }> = [
-      { symbol: 'NIFTY', exchange: 'NSE_INDEX' },
+      { symbol: instrument, exchange: 'NSE_INDEX' },
     ]
     if (fetcherRunning) {
       if (ceSymbol) syms.push({ symbol: ceSymbol, exchange: 'NFO' })
@@ -969,7 +980,7 @@ export default function EzayChart() {
     setRangeLoading(true)
     setRangeResults(null)
     try {
-      const res = await fetch(`/madhan/api/nifty/backtest_range?from=${rangeFrom}&to=${rangeTo}&_=${Date.now()}`)
+      const res = await fetch(`/madhan/api/nifty/backtest_range?from=${rangeFrom}&to=${rangeTo}&instrument=${instrument}&_=${Date.now()}`)
       const json: RangeResponse = await res.json()
       if (json.status === 'error' || !json.strategies) return
       setRangeResults(json)
@@ -980,7 +991,7 @@ export default function EzayChart() {
     } finally {
       setRangeLoading(false)
     }
-  }, [rangeFrom, rangeTo])
+  }, [rangeFrom, rangeTo, instrument])
 
   const saveRangeBacktest = useCallback(() => {
     if (!rangeResults) return
@@ -1046,7 +1057,7 @@ export default function EzayChart() {
     try {
       // In backtest mode, load from parquet via backtest endpoint
       if (isBacktest && backtestDate) {
-        const res = await fetch(`/madhan/api/nifty/backtest_chart_data?date=${backtestDate}&strike=${selectedStrike}&_=${Date.now()}`)
+        const res = await fetch(`/madhan/api/nifty/backtest_chart_data?date=${backtestDate}&strike=${selectedStrike}&instrument=${instrumentRef.current}&_=${Date.now()}`)
         const json: OptionDataResponse = await res.json()
         if (json.status !== 'success' || !json.data) return
         rawDataRef.current = json.data
@@ -1085,7 +1096,7 @@ export default function EzayChart() {
         return
       }
       // Live mode — existing logic
-      const res = await fetch(`/madhan/api/ezayChart_data?strike=${selectedStrike}&include_previous_day=true&_=${Date.now()}`)
+      const res = await fetch(`/madhan/api/ezayChart_data?strike=${selectedStrike}&include_previous_day=true&instrument=${instrumentRef.current}&_=${Date.now()}`)
       const json: OptionDataResponse = await res.json()
       if (json.status !== 'success' || !json.data) return
       if (String(json.data.strike) !== selectedStrikeRef.current) return
@@ -1126,7 +1137,7 @@ export default function EzayChart() {
   const updateLiveData = useCallback(async () => {
     if (!selectedStrike) return
     try {
-      const res = await fetch(`/madhan/api/ezayChart_data?strike=${selectedStrike}&_=${Date.now()}`)
+      const res = await fetch(`/madhan/api/ezayChart_data?strike=${selectedStrike}&instrument=${instrumentRef.current}&_=${Date.now()}`)
       const json: OptionDataResponse = await res.json()
       if (json.status !== 'success' || !json.data) return
       if (String(json.data.strike) !== selectedStrikeRef.current) return
@@ -1484,7 +1495,7 @@ export default function EzayChart() {
     loadStrikes()
 
     // Start NiftyFetcher on page open
-    fetch('/madhan/api/nifty/start', { method: 'POST' }).catch(() => {})
+    fetch(`/madhan/api/nifty/start?instrument=${instrument}`, { method: 'POST' }).catch(() => {})
 
     return () => {
       if (updaterRef.current) window.clearTimeout(updaterRef.current)
@@ -1624,8 +1635,8 @@ export default function EzayChart() {
     signalsLastFetchedRef.current = Date.now()
     try {
       const url = bt && dt
-        ? `/madhan/api/nifty/backtest_signals?date=${dt}&_=${Date.now()}`
-        : `/madhan/api/ezayChart_signals?_=${Date.now()}`
+        ? `/madhan/api/nifty/backtest_signals?date=${dt}&instrument=${instrument}&_=${Date.now()}`
+        : `/madhan/api/ezayChart_signals?instrument=${instrument}&_=${Date.now()}`
       const res = await fetch(url)
       const json = await res.json()
       if (json.status !== 'success' || !json.data) return
@@ -1690,12 +1701,12 @@ export default function EzayChart() {
         if (downData.length) trustMeDownRef.current.setData(downData)
       }
     } catch {}
-  }, [madhanMode, volumeMode, showEzaySignals])
+  }, [madhanMode, volumeMode, showEzaySignals, instrument])
 
   // Single fetch: signals + hx_lx_vol data consumed by Total Volume, TrustMe, and EzaySignals
   useEffect(() => {
     refetchSignals()
-  }, [madhanMode, isBacktest, backtestDate, selectedStrike, refetchSignals])
+  }, [madhanMode, isBacktest, backtestDate, refetchSignals])
 
   // Volume mode: toggle series visibility + render total volume from cached data
   useEffect(() => {
@@ -1926,7 +1937,7 @@ export default function EzayChart() {
       if (isFetching) return
       isFetching = true
       try {
-        const res = await fetch(`/madhan/api/nifty/status?_=${Date.now()}`)
+        const res = await fetch(`/madhan/api/nifty/status?instrument=${instrument}&_=${Date.now()}`)
         const json = await res.json()
         if (json?.status === 'success' && json?.server_time) {
           const serverMs = new Date(json.server_time).getTime()
@@ -1970,7 +1981,7 @@ export default function EzayChart() {
       scheduleNextMinute()
     }
     return () => { window.clearTimeout(timer); window.clearInterval(pollInterval) }
-  }, [selectedStrike, updateLiveData, isBacktest])
+  }, [selectedStrike, updateLiveData, isBacktest, instrument])
 
   useEffect(() => {
     if (!strikeListRef.current || !selectedStrike) return
@@ -2072,7 +2083,7 @@ export default function EzayChart() {
     const bucketSec = intervalMin * 60
     const time = Math.floor(nowSec / bucketSec) * bucketSec as Time
 
-    const spotEntry = wsData.get('NSE_INDEX:NIFTY')
+    const spotEntry = wsData.get(`NSE_INDEX:${instrument}`)
     const spotLtp = spotEntry?.data?.ltp
     if (spotLtp) {
       liveSpotRef.current = spotLtp
@@ -2198,7 +2209,7 @@ export default function EzayChart() {
       const dt = backtestDateRef.current
       // In backtest mode, load strikes from parquet data for the selected date
       if (bt && dt) {
-        const res = await fetch(`/madhan/api/nifty/backtest_strikes?date=${dt}&_=${Date.now()}`)
+        const res = await fetch(`/madhan/api/nifty/backtest_strikes?date=${dt}&instrument=${instrument}&_=${Date.now()}`)
         const json = await res.json()
         if (json.status === 'success' && json.data) {
           const sorted = json.data.sort((a: number, b: number) => b - a)
@@ -2210,7 +2221,7 @@ export default function EzayChart() {
         return
       }
       // Live mode — existing logic
-      const res = await fetch(`/madhan/api/strikes?_=${Date.now()}`)
+      const res = await fetch(`/madhan/api/strikes?instrument=${instrument}&_=${Date.now()}`)
       const json = await res.json()
       if (json.status === 'success' && json.data) {
         const sorted = json.data.sort((a: number, b: number) => b - a)
@@ -2225,6 +2236,11 @@ export default function EzayChart() {
       console.error('Error loading strikes:', err)
     }
   }
+
+  useEffect(() => {
+    setSelectedStrike('')
+    loadStrikes()
+  }, [instrument])
 
   return (
     <div className={cn("h-full w-full p-0 flex flex-col madhan-theme", madhanMode === 'dark' ? 'dark' : 'madhan-light')} style={madhanStyle}>
@@ -2297,6 +2313,24 @@ export default function EzayChart() {
       </div>
 
       <div className="shrink-0 flex flex-wrap items-center gap-2 px-3 py-2" style={{ backgroundColor: t.panelDarker, borderBottom: `1px solid ${t.border}` }}>
+        {/* Instrument Toggle */}
+        <div className="flex items-center bg-muted rounded-md p-0.5">
+          {(['NIFTY', 'BANKNIFTY'] as Instrument[]).map((inst) => (
+            <button
+              key={inst}
+              onClick={() => setInstrument(inst)}
+              className={cn(
+                "px-2.5 py-1 text-[11px] font-medium rounded transition-colors",
+                instrument === inst
+                  ? "bg-primary text-primary-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground"
+              )}
+            >
+              {inst}
+            </button>
+          ))}
+        </div>
+        <div className="h-4 w-px bg-border" />
         <div className="flex items-center gap-1.5">
           <Label className="text-[11px]" style={{ color: t.textSecondary }}>Time:</Label>
           <Select value={interval} onValueChange={(v) => { setInterval(v); saveSetting('interval', v) }}>
@@ -2473,14 +2507,6 @@ export default function EzayChart() {
           </Button>
           <Button
             size="sm"
-            variant={showRealtime ? 'default' : 'ghost'}
-            className="h-6 px-2 text-[10px]"
-            onClick={() => { setShowRealtime(!showRealtime); saveSetting('showRealtime', !showRealtime) }}
-          >
-            Realtime
-          </Button>
-          <Button
-            size="sm"
             variant={drawing.showDrawingPanel ? 'default' : 'outline'}
             className="h-6 px-2 text-[10px]"
             onClick={() => {
@@ -2498,7 +2524,7 @@ export default function EzayChart() {
         <div className="ml-auto flex items-center gap-3">
           {liveSpot > 0 && (
             <span className="text-[11px] font-mono font-semibold" style={{ color: t.text }}>
-              NIFTY {liveSpot.toFixed(2)}
+              {instrument} {liveSpot.toFixed(2)}
             </span>
           )}
           {ceLtpDisplay > 0 && (
@@ -2745,7 +2771,6 @@ export default function EzayChart() {
               </div>
             </div>
           )}
-          {showRealtime && <RealtimeTable onClose={() => setShowRealtime(false)} />}
         </div>
         <WidgetBar
           activeTab={widgetTab}

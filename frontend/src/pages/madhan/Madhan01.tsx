@@ -33,6 +33,7 @@ import { useAlertStore } from '@/stores/alertStore'
 import { useMadhanSignalStore } from '@/stores/madhanSignalStore'
 import { useProfileMenuItems } from '@/hooks/useProfileMenuItems'
 import { useMadhanTheme } from './useMadhanTheme'
+import { InstrumentProvider, useInstrument, type Instrument } from './InstrumentContext'
 import { CoiTrendChart } from './components/CoiTrendChart'
 import { CePeChangesChart } from './components/CePeChangesChart'
 import { CePeStrikeChangesChart } from './components/CePeStrikeChangesChart'
@@ -51,6 +52,7 @@ interface NiftyStatus {
   last_update: string | null
   server_time: string | null
   nifty_record_count: number
+  banknifty_record_count: number
   open_atm_strike: number
   current_atm_strike: number
   expiry_date: string | null
@@ -93,7 +95,16 @@ interface UnifiedStrikeRow {
 }
 
 export default function Madhan01() {
+  return (
+    <InstrumentProvider>
+      <Madhan01Inner />
+    </InstrumentProvider>
+  )
+}
+
+function Madhan01Inner() {
   const navigate = useNavigate()
+  const { instrument, setInstrument } = useInstrument()
   const { user } = useAuthStore()
   const { appMode, toggleAppMode, isTogglingMode } = useThemeStore()
   const { mode: madhanMode, toggleMode: toggleMadhanMode, style: madhanStyle } = useMadhanTheme()
@@ -123,7 +134,7 @@ export default function Madhan01() {
   const fetchStatus = useCallback(async () => {
     try {
       setError(null)
-      const response = await fetch(`/madhan/api/nifty/status?_=${Date.now()}`, {
+      const response = await fetch(`/madhan/api/nifty/status?instrument=${instrument}&_=${Date.now()}`, {
         credentials: 'include',
         headers: { Accept: 'application/json' },
       })
@@ -152,13 +163,13 @@ export default function Madhan01() {
       setError('Failed to fetch Nifty status')
       return null
     }
-  }, [])
+  }, [instrument])
 
   const startFetcher = useCallback(async () => {
     try {
       setIsLoading(true)
       setError(null)
-      const response = await fetch('/madhan/api/nifty/start', {
+      const response = await fetch(`/madhan/api/nifty/start?instrument=${instrument}`, {
         method: 'POST',
         credentials: 'include',
         headers: { Accept: 'application/json' },
@@ -181,7 +192,7 @@ export default function Madhan01() {
     try {
       setIsLoading(true)
       setError(null)
-      const response = await fetch('/madhan/api/nifty/stop', {
+      const response = await fetch(`/madhan/api/nifty/stop?instrument=${instrument}`, {
         method: 'POST',
         credentials: 'include',
         headers: { Accept: 'application/json' },
@@ -208,7 +219,7 @@ export default function Madhan01() {
 
   const fetchPrevDayOi = useCallback(async () => {
     try {
-      const response = await fetch(`/madhan/api/nifty/previous-day-oi?_=${Date.now()}`, {
+      const response = await fetch(`/madhan/api/nifty/previous-day-oi?instrument=${instrument}&_=${Date.now()}`, {
         credentials: 'include',
         headers: { Accept: 'application/json' },
       })
@@ -221,16 +232,16 @@ export default function Madhan01() {
       }
     } catch {
     }
-  }, [])
+  }, [instrument])
 
   const fetchLiveData = useCallback(async (): Promise<number | null> => {
     try {
       const [niftyResponse, optionResponse] = await Promise.all([
-        fetch(`/madhan/api/nifty/data?_=${Date.now()}`, {
+        fetch(`/madhan/api/nifty/data?instrument=${instrument}&_=${Date.now()}`, {
           credentials: 'include',
           headers: { Accept: 'application/json' },
         }),
-        fetch(`/madhan/api/nifty/option-data?_=${Date.now()}`, {
+        fetch(`/madhan/api/nifty/option-data?instrument=${instrument}&_=${Date.now()}`, {
           credentials: 'include',
           headers: { Accept: 'application/json' },
         }),
@@ -267,7 +278,7 @@ export default function Madhan01() {
     } catch {
         return null
     }
-  }, [])
+  }, [instrument])
 
   useEffect(() => {
     let timeoutId: ReturnType<typeof setTimeout>
@@ -556,7 +567,7 @@ export default function Madhan01() {
       <div className="flex-1 overflow-auto p-2 space-y-4">
       <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
         <div className="space-y-1">
-          <h1 className="text-2xl font-bold tracking-tight">Nifty 1-Min Data Fetcher</h1>
+          <h1 className="text-2xl font-bold tracking-tight">Data Fetcher</h1>
           <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
             <div className="flex items-center gap-1">
               <span className={`flex h-2 w-2 rounded-full ${status?.is_running ? "bg-emerald-500 animate-pulse" : "bg-red-500"}`} />
@@ -565,9 +576,31 @@ export default function Madhan01() {
               </span>
             </div>
             <span className="text-muted-foreground/30">|</span>
+            {/* Instrument Toggle */}
+            <div className="flex items-center bg-muted rounded-md p-0.5">
+              {(['NIFTY', 'BANKNIFTY'] as Instrument[]).map((inst) => (
+                <button
+                  key={inst}
+                  onClick={() => setInstrument(inst)}
+                  className={cn(
+                    "px-2.5 py-1 text-xs font-medium rounded transition-colors",
+                    instrument === inst
+                      ? "bg-primary text-primary-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground"
+                  )}
+                >
+                  {inst}
+                </button>
+              ))}
+            </div>
+            <span className="text-muted-foreground/30">|</span>
             <div className="flex items-center gap-1">
-               <span className="font-semibold">Nifty Records:</span>
-               <span className="text-primary font-mono">{status?.nifty_record_count?.toLocaleString('en-IN') ?? 0}</span>
+               <span className="font-semibold">Records:</span>
+               <span className="text-primary font-mono">
+                 {instrument === 'BANKNIFTY'
+                   ? (status?.banknifty_record_count?.toLocaleString('en-IN') ?? 0)
+                   : (status?.nifty_record_count?.toLocaleString('en-IN') ?? 0)}
+               </span>
             </div>
             <span className="text-muted-foreground/30">|</span>
             <div className="flex items-center gap-1">
@@ -1108,7 +1141,9 @@ export default function Madhan01() {
                             const candleCount =
                             'candle_count' in row && row.candle_count != null
                                 ? row.candle_count.toLocaleString('en-IN')
-                                : status?.nifty_record_count?.toLocaleString('en-IN') ?? '0'
+                                : (instrument === 'BANKNIFTY'
+                                    ? status?.banknifty_record_count?.toLocaleString('en-IN')
+                                    : status?.nifty_record_count?.toLocaleString('en-IN')) ?? '0'
                             
                             return (
                             <tr key={`${symbol}-${row.timestamp}`} className={rowClass}>

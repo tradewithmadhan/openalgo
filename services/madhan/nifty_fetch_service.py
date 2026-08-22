@@ -1,5 +1,7 @@
 """
-A background service to fetch and store Nifty 1-minute data.
+A background service to fetch and store NIFTY and BANKNIFTY 1-minute data.
+Uses a single thread running both instruments sequentially (NIFTY first, then BANKNIFTY)
+with synchronized timing to fire at xx:00.100 each minute.
 """
 import os
 import threading
@@ -12,7 +14,15 @@ import pytz
 from utils.logging import get_logger
 from services.history_service import get_history
 from services.expiry_service import get_expiry_dates
-from database.madhan_db import store_nifty_data, store_option_data, store_previous_day_oi, NiftyData, OptionData, SessionLocal, get_tracked_symbols, save_tracked_symbols, save_fetcher_state, get_fetcher_state,get_valid_trading_day,clear_madhan_db, validate_backfill_consistency, get_current_day_historical_data, get_last_option_candle_timestamp
+from database.madhan_db import (
+    store_nifty_data, store_banknifty_data, store_option_data, store_previous_day_oi,
+    NiftyData, BankNiftyData, OptionData, SessionLocal,
+    get_tracked_symbols, save_tracked_symbols, save_fetcher_state, get_fetcher_state,
+    get_valid_trading_day, clear_madhan_db, validate_backfill_consistency,
+    get_current_day_historical_data, get_last_option_candle_timestamp,
+    get_last_option_candle_timestamp_for_instrument,
+    get_lot_size, get_banknifty_lot_size
+)
 from database.market_calendar_db import is_market_holiday, get_market_timings_for_date
 from database.auth_db import get_first_available_api_key_with_user
 from utils.session import has_login_this_trading_session
@@ -40,9 +50,184 @@ def get_trading_days():
         return None, None
 
 
+class IndexDataFetcher:
+    """Config + per-instrument state and methods for fetching one index (NIFTY or BANKNIFTY)."""
+
+    def __init__(self, instrument_name, spot_symbol, exchange, strike_step, store_fn, lot_size_fn):
+        self.instrument_name = instrument_name
+        self.spot_symbol = spot_symbol
+        self.exchange = exchange
+        self.strike_step = strike_step
+        self.store_fn = store_fn
+        self.lot_size_fn = lot_size_fn
+
+        # Per-instrument state
+        self.open_atm_strike = 0
+        self.current_atm_strike = 0
+        self.expiry_date = None
+        self.trading_date = None
+        self.option_symbols = []
+        self.last_update = None
+        self.status = "Idle"
+
+    def _load_state(self):
+        """Loads persisted state from database for this instrument."""
+        try:
+            prefix = self.instrument_name.lower()
+            all_symbols = get_tracked_symbols()
+            self.option_symbols = [s for s in all_symbols if s.startswith(self.instrument_name)]
+            self.open_atm_strike = int(get_fetcher_state(f'{prefix}_open_atm_strike') or 0)
+            self.current_atm_strike = int(get_fetcher_state(f'{prefix}_current_atm_strike') or 0)
+            self.expiry_date = get_fetcher_state(f'{prefix}_expiry_date')
+            self.trading_date = get_valid_trading_day(exchange="NSE")
+
+            if self.open_atm_strike > 0:
+                logger.info(f"[{self.instrument_name}] Loaded persisted Open ATM strike: {self.open_atm_strike}")
+            if self.current_atm_strike > 0:
+                logger.info(f"[{self.instrument_name}] Loaded persisted Current ATM strike: {self.current_atm_strike}")
+            if self.expiry_date:
+                logger.info(f"[{self.instrument_name}] Loaded persisted Expiry Date: {self.expiry_date}")
+        except Exception as e:
+            logger.error(f"[{self.instrument_name}] Could not load persisted state: {e}")
+
+    def _save_state(self):
+        """Persists current state to database for this instrument."""
+        prefix = self.instrument_name.lower()
+        save_fetcher_state(f'{prefix}_open_atm_strike', self.open_atm_strike)
+        save_fetcher_state(f'{prefix}_current_atm_strike', self.current_atm_strike)
+        save_fetcher_state(f'{prefix}_expiry_date', self.expiry_date)
+
+    def _get_atm_strike_and_symbols(self, df, api_key):
+        """Calculates Open ATM strike and generates option symbols for this instrument."""
+        try:
+            today_str = get_valid_trading_day(exchange="NSE").strftime('%Y-%m-%d')
+            today_df = df[pd.to_datetime(df['timestamp'], unit='s').dt.strftime('%Y-%m-%d') == today_str]
+
+            last_candle_timestamp = 0
+            if today_df.empty:
+                logger.warning(f"[{self.instrument_name}] No data for today. Deferring ATM calculation.")
+                self.open_atm_strike = 0
+                save_fetcher_state(f'{self.instrument_name.lower()}_open_atm_strike', 0)
+                self.option_symbols = []
+                self._fetch_and_save_expiry(api_key)
+                return
+
+            open_price = today_df['open'].iloc[0]
+            last_candle_timestamp = today_df['timestamp'].iloc[-1]
+            logger.info(f"[{self.instrument_name}] Today's open price: {open_price}")
+
+            self.open_atm_strike = round(open_price / self.strike_step) * self.strike_step
+            logger.info(f"[{self.instrument_name}] Calculated Open ATM strike: {self.open_atm_strike}")
+            save_fetcher_state(f'{self.instrument_name.lower()}_open_atm_strike', self.open_atm_strike)
+
+            self._fetch_and_save_expiry(api_key)
+            if not self.expiry_date:
+                return
+
+            self._generate_option_symbols()
+
+            if last_candle_timestamp > 0:
+                self.last_update = datetime.fromtimestamp(last_candle_timestamp, pytz.timezone('Asia/Kolkata'))
+                logger.info(f"[{self.instrument_name}] Set last_update from candle timestamp: {self.last_update}")
+
+        except Exception as e:
+            logger.exception(f"[{self.instrument_name}] Error in _get_atm_strike_and_symbols: {e}")
+
+    def _fetch_and_save_expiry(self, api_key):
+        """Fetches and saves the expiry date for this instrument's options."""
+        try:
+            success, expiry_data, _ = get_expiry_dates(
+                symbol=self.instrument_name, exchange="NFO",
+                instrumenttype="options", api_key=api_key
+            )
+            if not success or not expiry_data.get('data'):
+                logger.error(f"[{self.instrument_name}] Could not fetch expiry dates: {expiry_data.get('message')}")
+                self.expiry_date = None
+                return
+
+            current_date_dt = get_valid_trading_day(exchange="NSE")
+            self.expiry_date = expiry_data['data'][0]
+            expiry_date_dt = datetime.strptime(self.expiry_date, "%d-%b-%y").date()
+
+            if current_date_dt == expiry_date_dt and len(expiry_data['data']) > 1:
+                self.expiry_date = expiry_data['data'][1]
+                logger.info(f"[{self.instrument_name}] Current date matches expiry, using next: {self.expiry_date}")
+
+            save_fetcher_state(f'{self.instrument_name.lower()}_expiry_date', self.expiry_date)
+            logger.info(f"[{self.instrument_name}] Selected expiry date: {self.expiry_date}")
+        except Exception as e:
+            logger.exception(f"[{self.instrument_name}] Error fetching expiry date: {e}")
+            self.expiry_date = None
+
+    def _generate_option_symbols(self):
+        """Generates option symbols based on open_atm_strike and expiry_date."""
+        if not self.open_atm_strike or not self.expiry_date:
+            logger.warning(f"[{self.instrument_name}] Cannot generate option symbols: ATM or expiry not set.")
+            return
+
+        expiry_for_symbol = datetime.strptime(self.expiry_date, "%d-%b-%y").strftime("%d%b%y").upper()
+
+        symbols_to_track = []
+        for i in range(-10, 11):
+            strike = self.open_atm_strike + (i * self.strike_step)
+            symbols_to_track.append(f"{self.instrument_name}{expiry_for_symbol}{strike}CE")
+            symbols_to_track.append(f"{self.instrument_name}{expiry_for_symbol}{strike}PE")
+
+        existing = get_tracked_symbols()
+        other_instruments = [s for s in existing if not s.startswith(self.instrument_name)]
+        self.option_symbols = sorted(list(set(other_instruments + symbols_to_track)))
+        save_tracked_symbols(self.option_symbols)
+        logger.info(f"[{self.instrument_name}] Generated {len(symbols_to_track)} option symbols around ATM {self.open_atm_strike}.")
+
+    def get_live_data(self, api_key, interval='1m', days_back=1):
+        """Get OHLC data for this instrument for the lightweight chart."""
+        try:
+            logger.info(f"[{self.instrument_name}] Fetching live data: {self}")
+            end_date = datetime.now()
+            start_date = end_date - timedelta(days=7)
+
+            success, result, status_code = get_history(
+                symbol=self.spot_symbol, exchange=self.exchange, interval=interval,
+                start_date=start_date.strftime('%Y-%m-%d'),
+                end_date=end_date.strftime('%Y-%m-%d'),
+                api_key=api_key
+            )
+
+            if not success or result.get('status') != 'success':
+                return False, {
+                    'status': 'error',
+                    'message': result.get('message', f'Failed to fetch {self.instrument_name} data')
+                }, status_code or 500
+
+            chart_data = []
+            for data in result.get('data', []):
+                try:
+                    chart_data.append({
+                        "time": int(pd.to_datetime(data['timestamp'], unit='s').timestamp()),
+                        "open": float(data['open']),
+                        "high": float(data['high']),
+                        "low": float(data['low']),
+                        "close": float(data['close'])
+                    })
+                except (KeyError, ValueError, TypeError) as e:
+                    logger.error(f"Error processing data point: {e}")
+                    continue
+
+            return True, {
+                "status": "success",
+                "data": chart_data,
+                "last_updated": datetime.utcnow().isoformat()
+            }, 200
+
+        except Exception as e:
+            logger.error(f"Error in {self.instrument_name} get_live_data: {e}", exc_info=True)
+            return False, {'status': 'error', 'message': 'Internal server error'}, 500
+
+
 class NiftyDataFetcher:
     """
-    A singleton class to manage the background fetching of Nifty data.
+    A singleton class to manage the background fetching of NIFTY and BANKNIFTY data.
+    Runs both instruments sequentially in a single thread.
     """
     _instance = None
     _lock = threading.Lock()
@@ -77,16 +262,26 @@ class NiftyDataFetcher:
         self.stop_event = threading.Event()
         self.status = "Idle"
         self.api_key = None
-        self.option_symbols = [] # Initialize empty, load later
-        self.last_update = None
-        
-        # Initialize state variables with defaults
-        self.open_atm_strike = 0
-        self.current_atm_strike = 0
-        self.expiry_date = None
-        self.trading_date = None
         
         self.request_delay = self._get_request_delay()
+
+        # Create per-instrument configs
+        self.nifty = IndexDataFetcher(
+            instrument_name="NIFTY",
+            spot_symbol="NIFTY",
+            exchange="NSE_INDEX",
+            strike_step=50,
+            store_fn=store_nifty_data,
+            lot_size_fn=get_lot_size,
+        )
+        self.banknifty = IndexDataFetcher(
+            instrument_name="BANKNIFTY",
+            spot_symbol="BANKNIFTY",
+            exchange="NSE_INDEX",
+            strike_step=100,
+            store_fn=store_banknifty_data,
+            lot_size_fn=get_banknifty_lot_size,
+        )
 
         # Start auto-start scheduler (daemon thread sleeps until 9:15 AM IST)
         scheduler_thread = threading.Thread(target=self._auto_start_scheduler, daemon=True)
@@ -112,23 +307,9 @@ class NiftyDataFetcher:
         return df
 
     def _load_state(self):
-        """Loads persisted state from database. Safe to call only after DB init."""
-        try:
-            self.option_symbols = get_tracked_symbols()
-            self.open_atm_strike = int(get_fetcher_state('open_atm_strike') or 0)
-            self.current_atm_strike = int(get_fetcher_state('current_atm_strike') or 0)
-            self.expiry_date = get_fetcher_state('expiry_date')
-            self.trading_date = get_valid_trading_day(exchange="NSE")
-            
-            if self.open_atm_strike > 0:
-                logger.info(f"Loaded persisted Open ATM strike: {self.open_atm_strike}")
-            if self.current_atm_strike > 0:
-                logger.info(f"Loaded persisted Current ATM strike: {self.current_atm_strike}")
-            if self.expiry_date:
-                logger.info(f"Loaded persisted Expiry Date: {self.expiry_date}")
-        except Exception as e:
-            logger.error(f"Could not load persisted fetcher state: {e}")
-            # Keep defaults
+        """Loads persisted state from database for both instruments."""
+        self.nifty._load_state()
+        self.banknifty._load_state()
 
     def start(self, api_key: str):
         """Starts the data fetching thread."""
@@ -140,11 +321,11 @@ class NiftyDataFetcher:
         if self.thread and self.thread.is_alive():
             logger.info("Waiting for old fetcher thread to exit...")
             self.thread.join(timeout=5)
-            
-        # Ensure state is loaded before starting
-        self._load_state()
-            
+
+        # Clear DB first, then load state — ensures stale TrackedSymbol/FetcherState
+        # from a previous run doesn't pollute config.option_symbols
         clear_madhan_db()
+        self._load_state()
         self.api_key = api_key
         self.stop_event.clear()
         self.thread = threading.Thread(target=self._run, daemon=True)
@@ -293,158 +474,15 @@ class NiftyDataFetcher:
             self.start(api_key)
         
     def get_nifty_live_data(self, interval: str = '1m', days_back: int = 1):
-        """
-        Get NIFTY OHLC data for the lightweight chart.
-        
-        Args:
-            api_key: The API key for authentication
-            interval: The time interval for the data (default: '1m')
-            days_back: Number of days of historical data to fetch (default: 1)
-            
-        Returns:
-            tuple: (success, result, status_code)
-        """
-        try:
-            #logger.info(f"API Key: {self.api_key}")
-            logger.info(f"starting nifty live fetch: {self}")
-            # Calculate date range
-            end_date = datetime.now()
-            start_date = end_date - timedelta(days=7) # Fetch 7 days to be safe
-            start_date_str = start_date.strftime('%Y-%m-%d')
-            end_date_str = end_date.strftime('%Y-%m-%d')
-            
-            # Fetch data using get_history
-            success, result, status_code = get_history(
-                symbol="NIFTY",
-                exchange="NSE_INDEX",
-                interval=interval,
-                start_date=start_date.strftime('%Y-%m-%d'),
-                end_date=end_date.strftime('%Y-%m-%d'),
-                api_key=self.api_key
-            )
-            
-            if not success or result.get('status') != 'success':
-                return False, {
-                    'status': 'error',
-                    'message': result.get('message', 'Failed to fetch NIFTY data')
-                }, status_code or 500
-                
-            # Process the data for the chart
-            chart_data = []
-            for data in result.get('data', []):
-                try:
-                    chart_data.append({
-                        "time": int(pd.to_datetime(data['timestamp'], unit='s').timestamp()),
-                        "open": float(data['open']),
-                        "high": float(data['high']),
-                        "low": float(data['low']),
-                        "close": float(data['close'])
-                    })
-                except (KeyError, ValueError, TypeError) as e:
-                    logger.error(f"Error processing data point: {e}")
-                    continue
+        """Get NIFTY OHLC data for the lightweight chart. Delegates to nifty config."""
+        return self.nifty.get_live_data(self.api_key, interval, days_back)
 
-            return True, {
-                "status": "success",
-                "data": chart_data,
-                "last_updated": datetime.utcnow().isoformat()
-            }, 200
+    def get_instrument_live_data(self, instrument: str, interval: str = '1m', days_back: int = 1):
+        """Get OHLC data for any instrument for the lightweight chart."""
+        config = self.nifty if instrument == 'NIFTY' else self.banknifty
+        return config.get_live_data(self.api_key, interval, days_back)
 
-        except Exception as e:
-            logger.error(f"Error in get_nifty_live_data: {e}", exc_info=True)
-            return False, {
-                'status': 'error', 
-                'message': 'Internal server error'
-            }, 500
-
-    def _get_atm_strike_and_symbols(self, df: pd.DataFrame):
-        """Calculates Open ATM strike and generates a list of option symbols to track."""
-        try:
-            # 1. Find the open price for the current day
-            today_str = get_valid_trading_day(exchange="NSE").strftime('%Y-%m-%d') 
-            today_df = df[pd.to_datetime(df['timestamp'], unit='s').dt.strftime('%Y-%m-%d') == today_str]
-            
-            last_candle_timestamp = 0
-            if today_df.empty:
-                logger.warning("No data for today found. Deferring Open ATM calculation until market opens.")
-                self.open_atm_strike = 0
-                save_fetcher_state('open_atm_strike', 0)
-                # Clear stale symbols since we don't know today's ATM yet
-                self.option_symbols = []
-                save_tracked_symbols([])
-                # Still fetch and save expiry date for later symbol generation
-                self._fetch_and_save_expiry()
-                return
-
-            open_price = today_df['open'].iloc[0]
-            last_candle_timestamp = today_df['timestamp'].iloc[-1]
-            logger.info(f"Today's open price for NIFTY is: {open_price}")
-
-            # 2. Calculate Open ATM strike (rounded to nearest 50)
-            self.open_atm_strike = round(open_price / 50) * 50
-            logger.info(f"Calculated Open ATM strike: {self.open_atm_strike}")
-            save_fetcher_state('open_atm_strike', self.open_atm_strike)
-
-            # 3. Get the first expiry date for NIFTY options
-            self._fetch_and_save_expiry()
-            if not self.expiry_date:
-                return
-
-            # 4. Generate list of option symbols
-            self._generate_option_symbols()
-
-            # 5. Set last_update from the candle timestamp
-            if last_candle_timestamp > 0:
-                # Create a timezone-aware datetime object in IST
-                self.last_update = datetime.fromtimestamp(last_candle_timestamp, pytz.timezone('Asia/Kolkata'))
-                logger.info(f"Set last_update from Nifty open candle timestamp: {self.last_update}")
-
-        except Exception as e:
-            logger.exception(f"Error in _get_atm_strike_and_symbols: {e}")
-
-    def _fetch_and_save_expiry(self):
-        """Fetches and saves the expiry date for NIFTY options."""
-        try:
-            success, expiry_data, _ = get_expiry_dates(symbol="NIFTY", exchange="NFO", instrumenttype="options", api_key=self.api_key)
-            if not success or not expiry_data.get('data'):
-                logger.error(f"Could not fetch expiry dates: {expiry_data.get('message')}")
-                self.expiry_date = None
-                return
-            
-            current_date_dt = get_valid_trading_day(exchange="NSE")
-            self.expiry_date = expiry_data['data'][0]
-            expiry_date_dt = datetime.strptime(self.expiry_date, "%d-%b-%y").date()
-            
-            # If current date matches expiry date, use next expiry if available
-            if current_date_dt == expiry_date_dt and len(expiry_data['data']) > 1:
-                self.expiry_date = expiry_data['data'][1]
-                logger.info(f"Current date matches expiry, using next expiry: {self.expiry_date}")
-            
-            save_fetcher_state('expiry_date', self.expiry_date)
-            logger.info(f"Selected expiry date: {self.expiry_date}")
-        except Exception as e:
-            logger.exception(f"Error fetching expiry date: {e}")
-            self.expiry_date = None
-
-    def _generate_option_symbols(self):
-        """Generates option symbols based on current open_atm_strike and expiry_date."""
-        if not self.open_atm_strike or not self.expiry_date:
-            logger.warning("Cannot generate option symbols: open_atm_strike or expiry_date not set.")
-            return
-        
-        expiry_for_symbol = datetime.strptime(self.expiry_date, "%d-%b-%y").strftime("%d%b%y").upper()
-        
-        symbols_to_track = []
-        for i in range(-10, 11):
-            strike = self.open_atm_strike + (i * 50)
-            symbols_to_track.append(f"NIFTY{expiry_for_symbol}{strike}CE")
-            symbols_to_track.append(f"NIFTY{expiry_for_symbol}{strike}PE")
-
-        self.option_symbols = sorted(list(set(symbols_to_track)))
-        save_tracked_symbols(self.option_symbols)
-        logger.info(f"Generated {len(self.option_symbols)} option symbols to track around Open ATM {self.open_atm_strike}.")
-
-    def _fetch_single_option_data(self, symbol, start_date_str, end_date_str, max_retries=2):
+    def _fetch_single_option_data(self, config, symbol, start_date_str, end_date_str, max_retries=2):
         """Fetches data for a single option symbol. Returns DataFrame or None."""
         for attempt in range(max_retries + 1):
             try:
@@ -464,18 +502,19 @@ class NiftyDataFetcher:
                     logger.error(f"Failed after {max_retries + 1} attempts for {symbol}: {e}")
         return None
 
-    def _fetch_and_store_options_data(self, start_date_str, end_date_str, symbols=None):
-        """Fetches and stores historical data for option symbols in parallel.
+    def _fetch_and_store_options_data(self, config, start_date_str, end_date_str, symbols=None):
+        """Fetches and stores historical data for option symbols in parallel for a given instrument config.
         
         Args:
+            config: IndexDataFetcher config (self.nifty or self.banknifty)
             start_date_str: Start date string
             end_date_str: End date string
-            symbols: Optional list of specific symbols to fetch. If None, fetches all tracked symbols.
+            symbols: Optional list of specific symbols to fetch. If None, fetches config's tracked symbols.
         
         Returns:
             list: Failed symbols that need retry.
         """
-        symbols_to_fetch = symbols if symbols else self.option_symbols
+        symbols_to_fetch = symbols if symbols else config.option_symbols
         if not symbols_to_fetch:
             return []
         
@@ -487,7 +526,7 @@ class NiftyDataFetcher:
         except (ValueError, IndexError, ZeroDivisionError):
             max_workers = 4  # Default fallback
         
-        logger.info(f"Fetching {len(symbols_to_fetch)} option symbols with {max_workers} parallel workers")
+        logger.info(f"[{config.instrument_name}] Fetching {len(symbols_to_fetch)} option symbols with {max_workers} parallel workers")
         
         fetch_start = time.time()
         successful_fetches = 0
@@ -496,7 +535,7 @@ class NiftyDataFetcher:
         
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_to_symbol = {
-                executor.submit(self._fetch_single_option_data, symbol, start_date_str, end_date_str): symbol 
+                executor.submit(self._fetch_single_option_data, config, symbol, start_date_str, end_date_str): symbol 
                 for symbol in symbols_to_fetch
             }
             
@@ -516,28 +555,24 @@ class NiftyDataFetcher:
             db_start = time.time()
             store_option_data(pd.concat(all_dfs, ignore_index=True))
             db_elapsed = time.time() - db_start
-            logger.info(f"Option data fetch completed: {successful_fetches} successful, {len(failed_symbols)} failed "
+            logger.info(f"[{config.instrument_name}] Option data fetch completed: {successful_fetches} successful, {len(failed_symbols)} failed "
                         f"(API: {fetch_elapsed:.2f}s, DB write: {db_elapsed:.2f}s)")
         else:
-            logger.info(f"Option data fetch completed: {successful_fetches} successful, {len(failed_symbols)} failed "
+            logger.info(f"[{config.instrument_name}] Option data fetch completed: {successful_fetches} successful, {len(failed_symbols)} failed "
                         f"(API: {fetch_elapsed:.2f}s)")
         return failed_symbols
 
-    def _check_and_emit_trade_signal(self, today_str):
-        """Check for trade signals using shared ATP-LTP signal computation.
-
-        Uses the same process_historical_atp_data() as the /api/atp-ltp-data endpoint.
-        Checks last 3 entries for trade_signal = True and emits notification.
-        """
-        if not self.option_symbols or not self.current_atm_strike:
+    def _check_and_emit_trade_signal(self, config, today_str):
+        """Check for trade signals using shared ATP-LTP signal computation."""
+        if not config.option_symbols or not config.current_atm_strike:
             return
 
         try:
-            all_historical_data = get_current_day_historical_data()
+            all_historical_data = get_current_day_historical_data(instrument=config.instrument_name)
             if not all_historical_data:
                 return
 
-            historical_data = process_historical_atp_data(all_historical_data, self.current_atm_strike)
+            historical_data = process_historical_atp_data(all_historical_data, config.current_atm_strike, config.instrument_name, config.strike_step)
             if not historical_data:
                 return
 
@@ -569,28 +604,24 @@ class NiftyDataFetcher:
             emit_notification(
                 'app_notification',
                 f'{sig} Signal',
-                f'NIFTY {atm} {ce_pe} @ {ltp_f:.2f} | Spot: {spot_f:.2f}',
+                f'{config.instrument_name} {atm} {ce_pe} @ {ltp_f:.2f} | Spot: {spot_f:.2f}',
                 category='madhan',
                 level='success' if sig == 'Bullish' else 'error',
                 data={'strike': atm, 'ltp': ltp_f, 'spot': spot_f, 'type': sig}
             )
-            logger.info(f"Trade signal emitted: {sig} NIFTY {atm} {ce_pe} @ {ltp_f}")
+            logger.info(f"Trade signal emitted: {sig} {config.instrument_name} {atm} {ce_pe} @ {ltp_f}")
 
         except Exception as sig_err:
-            logger.debug(f"Signal check skipped: {sig_err}")
+            logger.debug(f"Signal check skipped for {config.instrument_name}: {sig_err}")
 
-    def _check_and_emit_volume_spike(self, today_str):
-        """Check for volume spike using shared volume_signal module.
-
-        Computes CE/PE volume per candle across ALL strikes.
-        If the latest candle is a spike, emits notification.
-        """
+    def _check_and_emit_volume_spike(self, config, today_str):
+        """Check for volume spike using shared volume_signal module."""
         try:
-            all_historical_data = get_current_day_historical_data()
+            all_historical_data = get_current_day_historical_data(instrument=config.instrument_name)
             if not all_historical_data:
                 return
 
-            result = detect_volume_spike(all_historical_data)
+            result = detect_volume_spike(all_historical_data, config.instrument_name)
             if not result:
                 return
 
@@ -615,46 +646,46 @@ class NiftyDataFetcher:
                     'combined': combined,
                 }
             )
-            logger.info(f"Volume spike emitted: CE: {ce_vol} PE: {pe_vol} Combined: {combined}")
+            logger.info(f"Volume spike emitted for {config.instrument_name}: CE: {ce_vol} PE: {pe_vol} Combined: {combined}")
 
         except Exception as spike_err:
-            logger.debug(f"Volume spike check skipped: {spike_err}")
+            logger.debug(f"Volume spike check skipped for {config.instrument_name}: {spike_err}")
 
-    def _calculate_and_store_previous_day_oi(self, today, prev_day):
+    def _calculate_and_store_previous_day_oi(self, config, today, prev_day):
         """
         Calculates and stores the last candle's OI and close for the previous trading day
-        for Nifty and all tracked option symbols.
+        for the instrument's spot and all tracked option symbols.
         """
-        logger.info("Calculating and storing previous day's OI and close data...")
+        logger.info(f"[{config.instrument_name}] Calculating and storing previous day's OI and close data...")
         session = SessionLocal()
         try:
 
-
-            logger.info(f"Identifying previous trading day as: {prev_day.strftime('%Y-%m-%d')}")
+            logger.info(f"[{config.instrument_name}] Identifying previous trading day as: {prev_day.strftime('%Y-%m-%d')}")
 
             start_of_prev_day_ts = int(datetime.combine(prev_day, datetime.min.time()).timestamp())
             end_of_prev_day_ts = int(datetime.combine(prev_day, datetime.max.time()).timestamp())
 
             data_to_store = []
 
-            # 1. Get previous day's data for NIFTY
-            last_nifty_candle = session.query(NiftyData).filter(
-                NiftyData.timestamp >= start_of_prev_day_ts,
-                NiftyData.timestamp <= end_of_prev_day_ts
-            ).order_by(NiftyData.timestamp.desc()).first()
+            # 1. Get previous day's data for spot (NIFTY or BANKNIFTY)
+            spot_class = BankNiftyData if config.instrument_name == 'BANKNIFTY' else NiftyData
+            last_spot_candle = session.query(spot_class).filter(
+                spot_class.timestamp >= start_of_prev_day_ts,
+                spot_class.timestamp <= end_of_prev_day_ts
+            ).order_by(spot_class.timestamp.desc()).first()
 
-            if last_nifty_candle:
+            if last_spot_candle:
                 data_to_store.append({
-                    'symbol': 'NIFTY',
-                    'oi': last_nifty_candle.oi or 0,
-                    'close': last_nifty_candle.close,
-                    'timestamp': last_nifty_candle.timestamp
+                    'symbol': config.instrument_name,
+                    'oi': last_spot_candle.oi or 0,
+                    'close': last_spot_candle.close,
+                    'timestamp': last_spot_candle.timestamp
                 })
             else:
-                logger.warning("Could not find previous day's data for NIFTY")
+                logger.warning(f"[{config.instrument_name}] Could not find previous day's data for spot")
 
             # 2. Get previous day's data for all options in one query
-            if self.option_symbols:
+            if config.option_symbols:
                 subq = (
                     select(
                         OptionData,
@@ -663,7 +694,7 @@ class NiftyDataFetcher:
                             order_by=OptionData.timestamp.desc()
                         ).label('rn')
                     ).filter(
-                        OptionData.symbol.in_(self.option_symbols),
+                        OptionData.symbol.in_(config.option_symbols),
                         OptionData.timestamp >= start_of_prev_day_ts,
                         OptionData.timestamp <= end_of_prev_day_ts
                     ).subquery()
@@ -680,291 +711,292 @@ class NiftyDataFetcher:
             
             if data_to_store:
                 store_previous_day_oi(data_to_store)
-                logger.info(f"Stored previous day OI for {len(data_to_store)} symbols.")
+                logger.info(f"[{config.instrument_name}] Stored previous day OI for {len(data_to_store)} symbols.")
             else:
-                logger.warning("No previous day OI data was found to store.")
+                logger.warning(f"[{config.instrument_name}] No previous day OI data was found to store.")
 
         except Exception as e:
-            logger.exception(f"Error in _calculate_and_store_previous_day_oi: {e}")
+            logger.exception(f"[{config.instrument_name}] Error in _calculate_and_store_previous_day_oi: {e}")
         finally:
             session.close()
 
     def _run(self):
-        """The main loop for the background thread."""
-        # --- Preliminary Fetch to set initial parameters ---
+        """The main loop for the background thread. Runs NIFTY first, then BANKNIFTY sequentially."""
+        # --- Preliminary Fetch to set initial parameters for both instruments ---
         self.status = "Initializing parameters..."
         logger.info(self.status)
-        try:
-            # Fetch last 2 days of data just to get a recent price for preliminary ATM.
-            prelim_end_date = datetime.now()
-            prelim_start_date = prelim_end_date - timedelta(days=2)
-            prelim_start_str = prelim_start_date.strftime('%Y-%m-%d')
-            prelim_end_str = prelim_end_date.strftime('%Y-%m-%d')
-
-            success, result, _ = get_history(
-                symbol="NIFTY", exchange="NSE_INDEX", interval="1m",
-                start_date=prelim_start_str,
-                end_date=prelim_end_str,
-                api_key=self.api_key
-            )
-            if success and result.get('status') == 'success':
-                df_prelim = pd.DataFrame(result['data'])
-                if not df_prelim.empty:
-                    # This will set a preliminary Open ATM and the correct expiry date.
-                    self._get_atm_strike_and_symbols(df_prelim)
-                    logger.info("Preliminary Open ATM and Expiry Date have been set.")
-            else:
-                logger.warning(f"Could not perform preliminary fetch to set initial parameters: {result.get('message')}")
-        except Exception as e:
-            logger.error(f"Exception during preliminary parameter fetch: {e}")
-
-        # 1. Initial 5-day fetch (with retry)
-        self.status = "Performing initial 5-day backfill for NIFTY..."
-        logger.info(self.status)
-        max_retries = 3
-        retry_delays = [5, 10, 20]  # seconds between retries
-        nifty_success = False
-        init_start = time.time()
         
-        for attempt in range(max_retries):
+        for config in [self.nifty, self.banknifty]:
             try:
-                end_date = datetime.now()
-                start_date = end_date - timedelta(days=7)
-                start_date_str = start_date.strftime('%Y-%m-%d')
-                end_date_str = end_date.strftime('%Y-%m-%d')
-                
-                nifty_start = time.time()
+                prelim_end_date = datetime.now()
+                prelim_start_date = prelim_end_date - timedelta(days=2)
+                prelim_start_str = prelim_start_date.strftime('%Y-%m-%d')
+                prelim_end_str = prelim_end_date.strftime('%Y-%m-%d')
+
                 success, result, _ = get_history(
-                    symbol="NIFTY", exchange="NSE_INDEX", interval="1m",
-                    start_date=start_date_str,
-                    end_date=end_date_str,
+                    symbol=config.spot_symbol, exchange=config.exchange, interval="1m",
+                    start_date=prelim_start_str, end_date=prelim_end_str,
                     api_key=self.api_key
                 )
-                
                 if success and result.get('status') == 'success':
-                    df_nifty = pd.DataFrame(result['data'])
-                    if not df_nifty.empty:
-                        df_nifty = self._normalize_history_df(df_nifty)
-                        store_nifty_data(df_nifty)
-                        nifty_elapsed = time.time() - nifty_start
-                        logger.info(f"Initial NIFTY fetch successful. Stored {len(df_nifty)} records in {nifty_elapsed:.2f}s.")
-                        
-                        # This call will now refine the Open ATM with the actual day's open price.
-                        self._get_atm_strike_and_symbols(df_nifty)
-
-                        # Also calculate and store the current ATM from the last available candle
-                        last_close = df_nifty['close'].iloc[-1]
-                        self.current_atm_strike = round(last_close / 50) * 50
-                        save_fetcher_state('current_atm_strike', self.current_atm_strike)
-                        logger.info(f"Calculated initial Current ATM strike: {self.current_atm_strike}")
-                        nifty_success = True
-                        break
-                    else:
-                        logger.warning("Initial NIFTY fetch returned empty data.")
+                    df_prelim = pd.DataFrame(result['data'])
+                    if not df_prelim.empty:
+                        config._get_atm_strike_and_symbols(df_prelim, self.api_key)
+                        logger.info(f"[{config.instrument_name}] Preliminary Open ATM and Expiry Date have been set.")
                 else:
-                    logger.warning(f"Initial NIFTY fetch failed: {result.get('message', 'Unknown error')}")
-                
-                if attempt < max_retries - 1:
-                    delay = retry_delays[attempt]
-                    logger.info(f"Retrying initial NIFTY fetch in {delay}s (attempt {attempt + 2}/{max_retries})...")
-                    time.sleep(delay)
+                    logger.warning(f"[{config.instrument_name}] Could not perform preliminary fetch: {result.get('message')}")
             except Exception as e:
-                logger.error(f"Exception during initial NIFTY fetch attempt {attempt + 1}: {e}")
-                if attempt < max_retries - 1:
-                    delay = retry_delays[attempt]
-                    logger.info(f"Retrying in {delay}s...")
-                    time.sleep(delay)
-        
-        if not nifty_success:
-            self.status = "Error: Initial NIFTY fetch failed after all retries"
-            logger.error(self.status)
-            self.is_running = False
-            return
-        
-        # 2. Initial options backfill (retry failed symbols until all succeed)
-        if self.option_symbols:
-            self.status = "Performing initial backfill for Options..."
-            logger.info(self.status)
-            
-            failed_symbols = self._fetch_and_store_options_data(start_date_str, end_date_str)
-            
-            retry_attempt = 0
-            max_retries = 10
-            while failed_symbols and retry_attempt < max_retries:
-                retry_attempt += 1
-                logger.warning(f"Retrying {len(failed_symbols)} failed symbols (attempt {retry_attempt}/{max_retries}): {failed_symbols[:5]}...")
-                time.sleep(2)
-                failed_symbols = self._fetch_and_store_options_data(start_date_str, end_date_str, symbols=failed_symbols)
-            
-            if failed_symbols:
-                logger.error(f"Options backfill incomplete after {max_retries} retries. Still missing: {len(failed_symbols)} symbols")
-            else:
-                logger.info("Options backfill complete: all symbols have data.")
+                logger.error(f"[{config.instrument_name}] Exception during preliminary fetch: {e}")
 
-            # Validate backfill consistency
-            validation = validate_backfill_consistency(self.option_symbols)
-            if validation["consistent"]:
-                s = validation["summary"]
-                logger.info(f"Backfill validation PASSED: {s['filled']}/{s['total_tracked']} symbols filled, "
-                            f"{s['nifty_records']} NIFTY records, expected_last_ts={s['expected_last_ts']}")
+        # --- Initial 7-day backfill for both instruments sequentially ---
+        init_start = time.time()
+        
+        for config in [self.nifty, self.banknifty]:
+            config.status = f"Performing initial 7-day backfill..."
+            logger.info(f"[{config.instrument_name}] {config.status}")
+            max_retries = 3
+            retry_delays = [5, 10, 20]
+            success = False
+            
+            for attempt in range(max_retries):
+                try:
+                    end_date = datetime.now()
+                    start_date = end_date - timedelta(days=7)
+                    start_date_str = start_date.strftime('%Y-%m-%d')
+                    end_date_str = end_date.strftime('%Y-%m-%d')
+                    
+                    spot_start = time.time()
+                    success, result, _ = get_history(
+                        symbol=config.spot_symbol, exchange=config.exchange, interval="1m",
+                        start_date=start_date_str, end_date=end_date_str,
+                        api_key=self.api_key
+                    )
+                    
+                    if success and result.get('status') == 'success':
+                        df_spot = pd.DataFrame(result['data'])
+                        if not df_spot.empty:
+                            df_spot = self._normalize_history_df(df_spot)
+                            config.store_fn(df_spot)
+                            spot_elapsed = time.time() - spot_start
+                            logger.info(f"[{config.instrument_name}] Initial spot fetch successful. Stored {len(df_spot)} records in {spot_elapsed:.2f}s.")
+                            
+                            config._get_atm_strike_and_symbols(df_spot, self.api_key)
+
+                            last_close = df_spot['close'].iloc[-1]
+                            config.current_atm_strike = round(last_close / config.strike_step) * config.strike_step
+                            config._save_state()
+                            logger.info(f"[{config.instrument_name}] Calculated initial Current ATM strike: {config.current_atm_strike}")
+                            success = True
+                            break
+                        else:
+                            logger.warning(f"[{config.instrument_name}] Initial spot fetch returned empty data.")
+                    else:
+                        logger.warning(f"[{config.instrument_name}] Initial spot fetch failed: {result.get('message', 'Unknown error')}")
+                    
+                    if attempt < max_retries - 1:
+                        delay = retry_delays[attempt]
+                        logger.info(f"[{config.instrument_name}] Retrying in {delay}s (attempt {attempt + 2}/{max_retries})...")
+                        time.sleep(delay)
+                except Exception as e:
+                    logger.error(f"[{config.instrument_name}] Exception during initial fetch attempt {attempt + 1}: {e}")
+                    if attempt < max_retries - 1:
+                        time.sleep(retry_delays[attempt])
+            
+            if not success:
+                logger.error(f"[{config.instrument_name}] Initial fetch failed after all retries. Continuing to next instrument.")
+                continue
+            
+            # Options backfill for this instrument
+            if config.option_symbols:
+                config.status = "Performing initial options backfill..."
+                logger.info(f"[{config.instrument_name}] {config.status}")
+                
+                end_date_str = datetime.now().strftime('%Y-%m-%d')
+                start_date_str = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
+                
+                failed_symbols = self._fetch_and_store_options_data(config, start_date_str, end_date_str)
+                
+                retry_attempt = 0
+                max_retries = 10
+                while failed_symbols and retry_attempt < max_retries:
+                    retry_attempt += 1
+                    logger.warning(f"[{config.instrument_name}] Retrying {len(failed_symbols)} failed symbols (attempt {retry_attempt}/{max_retries}): {failed_symbols[:5]}...")
+                    time.sleep(2)
+                    failed_symbols = self._fetch_and_store_options_data(config, start_date_str, end_date_str, symbols=failed_symbols)
+                
+                if failed_symbols:
+                    logger.error(f"[{config.instrument_name}] Options backfill incomplete after {max_retries} retries. Still missing: {len(failed_symbols)} symbols")
+                else:
+                    logger.info(f"[{config.instrument_name}] Options backfill complete: all symbols have data.")
+
+                # Validate backfill consistency
+                validation = validate_backfill_consistency(config.option_symbols, config.instrument_name)
+                if validation["consistent"]:
+                    s = validation["summary"]
+                    logger.info(f"[{config.instrument_name}] Backfill validation PASSED: {s['filled']}/{s['total_tracked']} symbols filled")
+                else:
+                    logger.warning(f"[{config.instrument_name}] Backfill validation FAILED: {validation['issues']}")
             else:
-                logger.warning(f"Backfill validation FAILED: {validation['issues']}")
-        else:
-            logger.info("Skipping options backfill: no symbols available yet (pre-market, ATM not calculated).")
+                logger.info(f"[{config.instrument_name}] Skipping options backfill: no symbols available yet (pre-market, ATM not calculated).")
 
         init_elapsed = time.time() - init_start
-        logger.info(f"Initial backfill completed in {init_elapsed:.2f}s total (NIFTY: {nifty_elapsed:.2f}s, Options included)")
+        logger.info(f"Initial backfill completed in {init_elapsed:.2f}s total for both instruments")
 
-        # 3. Calculate previous day's OI
+        # --- Calculate previous day's OI for both instruments ---
         today, prev_day = get_trading_days()
-        prev_day_oi = self._calculate_and_store_previous_day_oi(today, prev_day)
+        for config in [self.nifty, self.banknifty]:
+            self._calculate_and_store_previous_day_oi(config, today, prev_day)
 
-        # 2. Continuous 1-minute fetch loop
+        # --- Continuous 1-minute fetch loop (sequential: NIFTY first, then BANKNIFTY) ---
+        first_iteration = True
         while not self.stop_event.is_set():
-            self.status = f"Running. Last update: {self.last_update.strftime('%H:%M:%S') if self.last_update else 'N/A'}"
-            
-            # --- SYNCHRONIZED WAIT LOGIC ---
-            # This logic ensures the fetch happens a few seconds after each minute turnover,
-            # increasing the chance of getting a complete, closed candle.
             now = datetime.now()
             
-            # Wait until 1 second past the next minute.
-            # e.g., if it's 9:30:25, wait for (60 - 25) + 1 = 36 seconds. Next run at 9:31:01.
-            seconds_to_wait = (60 - now.second) + 1
-            logger.debug(f"Synchronizing fetch. Waiting for {seconds_to_wait} seconds to align with candle close.")
-            
-            # The wait method returns True if the event is set, False on timeout.
-            if self.stop_event.wait(seconds_to_wait):
-                break
+            if not first_iteration:
+                # Wait until 100ms past next minute boundary (xx:00.100)
+                next_minute = (now.second + 1) % 60
+                wait_secs = next_minute - now.second
+                if wait_secs <= 0:
+                    wait_secs += 60
+                wait_ms = wait_secs * 1000 - now.microsecond // 1000 + 100
+                if wait_ms <= 0:
+                    wait_ms += 60000
+                logger.debug(f"Synchronizing fetch. Waiting {wait_ms/1000:.1f}s to align with candle close.")
 
-            # Fetch data for the current day to get the latest candle and update the DB
+                if self.stop_event.wait(wait_ms / 1000):
+                    break
+            else:
+                first_iteration = False
+                logger.info("Immediate post-backfill fetch (skipping minute boundary wait).")
+
             try:
                 now = datetime.now()
-                # Check for weekend condition to stop the fetcher
-                if now.weekday() >= 5: # Saturday is 5, Sunday is 6
+                if now.weekday() >= 5:
                     logger.info("Market is closed for the weekend. Stopping fetcher.")
                     self.is_running = False
                     self.status = "Stopped (Weekend)"
                     self.stop_event.set()
                     break
 
-                logger.debug("Performing 1-minute incremental fetch for NIFTY and Options...")
                 today_str = now.strftime('%Y-%m-%d')
                 cycle_start = time.time()
-                
-                # Fetch NIFTY
-                nifty_start = time.time()
-                success_nifty, result_nifty, _ = get_history(
-                    symbol="NIFTY", exchange="NSE_INDEX", interval="1m",
-                    start_date=today_str, end_date=today_str, api_key=self.api_key
-                )
-                if success_nifty and result_nifty.get('status') == 'success':
-                    df_nifty = pd.DataFrame(result_nifty['data'])
-                    if not df_nifty.empty:
-                        df_nifty = self._normalize_history_df(df_nifty)
-                        store_nifty_data(df_nifty)
-                        nifty_elapsed = time.time() - nifty_start
-                        logger.debug(f"Incremental NIFTY fetch successful. Upserted {len(df_nifty)} records in {nifty_elapsed:.2f}s.")
 
-                        # Calculate current ATM from the last candle
-                        last_close = df_nifty['close'].iloc[-1]
-                        self.current_atm_strike = round(last_close / 50) * 50
-                        save_fetcher_state('current_atm_strike', self.current_atm_strike)
+                # --- Run each instrument sequentially ---
+                for config in [self.nifty, self.banknifty]:
+                    if self.stop_event.is_set():
+                        break
 
-                        # If open_atm_strike is 0 (pre-market initial fetch), compute from first candle
-                        if self.open_atm_strike == 0:
-                            open_price = df_nifty['open'].iloc[0]
-                            self.open_atm_strike = round(open_price / 50) * 50
-                            save_fetcher_state('open_atm_strike', self.open_atm_strike)
-                            logger.info(f"Computed Open ATM from first candle: {self.open_atm_strike}")
-                            # Generate option symbols now that ATM is known
-                            self._generate_option_symbols()
-                            # Backfill historical option data for past 7 days (retry until all succeed)
-                            backfill_start = (now - timedelta(days=7)).strftime('%Y-%m-%d')
-                            logger.info(f"Backfilling option data from {backfill_start} to {today_str}")
-                            failed_symbols = self._fetch_and_store_options_data(backfill_start, today_str)
-                            
-                            retry_attempt = 0
-                            max_retries = 10
-                            while failed_symbols and retry_attempt < max_retries:
-                                retry_attempt += 1
-                                logger.warning(f"Backfill retry: {len(failed_symbols)} failed symbols (attempt {retry_attempt}/{max_retries}): {failed_symbols[:5]}...")
-                                time.sleep(2)
-                                failed_symbols = self._fetch_and_store_options_data(backfill_start, today_str, symbols=failed_symbols)
-                            
-                            if failed_symbols:
-                                logger.error(f"Backfill incomplete after {max_retries} retries. Still missing: {len(failed_symbols)} symbols")
+                    config_start = time.time()
+                    
+                    # Fetch spot data
+                    spot_start = time.time()
+                    success_spot, result_spot, _ = get_history(
+                        symbol=config.spot_symbol, exchange=config.exchange, interval="1m",
+                        start_date=today_str, end_date=today_str, api_key=self.api_key
+                    )
+                    if success_spot and result_spot.get('status') == 'success':
+                        df_spot = pd.DataFrame(result_spot['data'])
+                        if not df_spot.empty:
+                            df_spot = self._normalize_history_df(df_spot)
+                            config.store_fn(df_spot)
+                            spot_elapsed = time.time() - spot_start
+                            logger.debug(f"[{config.instrument_name}] Incremental spot fetch successful. Upserted {len(df_spot)} records in {spot_elapsed:.2f}s.")
+
+                            # Calculate current ATM from the last candle
+                            last_close = df_spot['close'].iloc[-1]
+                            config.current_atm_strike = round(last_close / config.strike_step) * config.strike_step
+                            config._save_state()
+
+                            # If open_atm_strike is 0, compute from first candle
+                            if config.open_atm_strike == 0:
+                                open_price = df_spot['open'].iloc[0]
+                                config.open_atm_strike = round(open_price / config.strike_step) * config.strike_step
+                                config._save_state()
+                                logger.info(f"[{config.instrument_name}] Computed Open ATM from first candle: {config.open_atm_strike}")
+                                config._generate_option_symbols()
+                                # Backfill historical option data
+                                backfill_start = (now - timedelta(days=7)).strftime('%Y-%m-%d')
+                                logger.info(f"[{config.instrument_name}] Backfilling option data from {backfill_start} to {today_str}")
+                                failed_symbols = self._fetch_and_store_options_data(config, backfill_start, today_str)
+                                
+                                retry_attempt = 0
+                                max_retries = 10
+                                while failed_symbols and retry_attempt < max_retries:
+                                    retry_attempt += 1
+                                    logger.warning(f"[{config.instrument_name}] Backfill retry: {len(failed_symbols)} failed symbols (attempt {retry_attempt}/{max_retries})")
+                                    time.sleep(2)
+                                    failed_symbols = self._fetch_and_store_options_data(config, backfill_start, today_str, symbols=failed_symbols)
+                                
+                                if failed_symbols:
+                                    logger.error(f"[{config.instrument_name}] Backfill incomplete after {max_retries} retries. Still missing: {len(failed_symbols)} symbols")
+                                else:
+                                    logger.info(f"[{config.instrument_name}] Backfill complete.")
+
+                                validation = validate_backfill_consistency(config.option_symbols, config.instrument_name)
+                                if validation["consistent"]:
+                                    s = validation["summary"]
+                                    logger.info(f"[{config.instrument_name}] Backfill validation PASSED: {s['filled']}/{s['total_tracked']} symbols filled")
+                                else:
+                                    logger.warning(f"[{config.instrument_name}] Backfill validation FAILED: {validation['issues']}")
+
+                            # Fetch Options
+                            if config.option_symbols:
+                                opt_start = time.time()
+                                self._fetch_and_store_options_data(config, today_str, today_str)
+                                opt_elapsed = time.time() - opt_start
                             else:
-                                logger.info("Backfill complete: all historical option data fetched.")
+                                opt_elapsed = 0
 
-                            # Validate backfill consistency
-                            validation = validate_backfill_consistency(self.option_symbols)
-                            if validation["consistent"]:
-                                s = validation["summary"]
-                                logger.info(f"Backfill validation PASSED: {s['filled']}/{s['total_tracked']} symbols filled, "
-                                            f"{s['nifty_records']} NIFTY records, expected_last_ts={s['expected_last_ts']}")
-                            else:
-                                logger.warning(f"Backfill validation FAILED: {validation['issues']}")
+                            config_elapsed = time.time() - config_start
+                            logger.debug(f"[{config.instrument_name}] Fetch cycle completed in {config_elapsed:.2f}s (spot: {spot_elapsed:.2f}s, options: {opt_elapsed:.2f}s)")
+                            config.last_update = datetime.now(pytz.timezone('Asia/Kolkata'))
 
-                        # Check for market close condition to stop the fetcher for the day
-                        # Get NFO end_time from DB timings
-                        nfo_end_hour, nfo_end_min = 15, 40  # fallback
-                        try:
-                            today_date = date_type.today()
-                            timings = get_market_timings_for_date(today_date)
-                            for t in timings:
-                                if t.get('exchange') == 'NFO':
-                                    end_dt = datetime.fromtimestamp(t['end_time'] / 1000, tz=pytz.timezone('Asia/Kolkata'))
-                                    nfo_end_hour = end_dt.hour
-                                    nfo_end_min = end_dt.minute
-                                    break
-                        except Exception as e:
-                            logger.debug(f"Could not fetch NFO timings for close check, using default 15:40: {e}")
+                            # --- TRADE SIGNAL CHECK ---
+                            try:
+                                self._check_and_emit_trade_signal(config, today_str)
+                            except Exception as sig_err:
+                                logger.debug(f"Signal check skipped for {config.instrument_name}: {sig_err}")
 
-                        market_close_time = now.replace(hour=nfo_end_hour, minute=nfo_end_min, second=0, microsecond=0)
+                            # --- VOLUME SPIKE CHECK ---
+                            try:
+                                self._check_and_emit_volume_spike(config, today_str)
+                            except Exception as spike_err:
+                                logger.debug(f"Volume spike check skipped for {config.instrument_name}: {spike_err}")
+                    else:
+                        logger.warning(f"[{config.instrument_name}] Incremental spot fetch failed: {result_spot.get('message', 'Unknown error')}")
 
-                        if now > market_close_time:
-                            # Check last options candle timestamp instead of NIFTY spot
-                            last_opt_ts = get_last_option_candle_timestamp()
-                            if last_opt_ts:
-                                last_opt_dt = datetime.fromtimestamp(last_opt_ts)
-                                logger.info(f"Market is closed. Last options candle time: {last_opt_dt.strftime('%H:%M:%S')}")
-
-                                # Stop when last options candle is at NFO end minute - 1 (e.g. 15:39 for 15:40 close)
-                                if last_opt_dt.hour == nfo_end_hour and last_opt_dt.minute == nfo_end_min - 1:
-                                    logger.info(f"Last options candle for the day ({nfo_end_hour}:{nfo_end_min - 1:02d}) has been fetched. Stopping fetcher.")
-                                    self.is_running = False
-                                    self.status = "Stopped (Market Closed)"
-                                    self.stop_event.set()
-                                    break
-                            else:
-                                logger.info("Market is closed but no options candle data found yet.")
-                else:
-                    logger.warning(f"Incremental NIFTY fetch failed: {result_nifty.get('message', 'Unknown error')}")
-
-                # Fetch Options (skip if no symbols yet — ATM not calculated in pre-market)
-                if self.option_symbols:
-                    opt_start = time.time()
-                    self._fetch_and_store_options_data(today_str, today_str)
-                    opt_elapsed = time.time() - opt_start
-                else:
-                    opt_elapsed = 0
                 cycle_elapsed = time.time() - cycle_start
-                logger.info(f"Fetch cycle completed in {cycle_elapsed:.2f}s (NIFTY: {nifty_elapsed:.2f}s, Options: {opt_elapsed:.2f}s)")
-                self.last_update = datetime.now(pytz.timezone('Asia/Kolkata'))
+                logger.info(f"Full fetch cycle (both instruments) completed in {cycle_elapsed:.2f}s")
 
-                # --- TRADE SIGNAL CHECK ---
-                # Check last 30 candles for trade signal (after 2+ Sideways, 2nd same-direction = signal)
+                # --- MARKET CLOSE CHECK ---
+                nfo_end_hour, nfo_end_min = 15, 40  # fallback
                 try:
-                    self._check_and_emit_trade_signal(today_str)
-                except Exception as sig_err:
-                    logger.debug(f"Signal check skipped: {sig_err}")
+                    today_date = date_type.today()
+                    timings = get_market_timings_for_date(today_date)
+                    for t in timings:
+                        if t.get('exchange') == 'NFO':
+                            end_dt = datetime.fromtimestamp(t['end_time'] / 1000, tz=pytz.timezone('Asia/Kolkata'))
+                            nfo_end_hour = end_dt.hour
+                            nfo_end_min = end_dt.minute
+                            break
+                except Exception as e:
+                    logger.debug(f"Could not fetch NFO timings for close check, using default 15:40: {e}")
 
-                # --- VOLUME SPIKE CHECK ---
-                try:
-                    self._check_and_emit_volume_spike(today_str)
-                except Exception as spike_err:
-                    logger.debug(f"Volume spike check skipped: {spike_err}")
+                market_close_time = now.replace(hour=nfo_end_hour, minute=nfo_end_min, second=0, microsecond=0)
+
+                if now > market_close_time:
+                    last_opt_ts = get_last_option_candle_timestamp()
+                    if last_opt_ts:
+                        last_opt_dt = datetime.fromtimestamp(last_opt_ts)
+                        logger.info(f"Market is closed. Last options candle time: {last_opt_dt.strftime('%H:%M:%S')}")
+                        if last_opt_dt.hour == nfo_end_hour and last_opt_dt.minute == nfo_end_min - 1:
+                            logger.info(f"Last options candle for the day ({nfo_end_hour}:{nfo_end_min - 1:02d}) has been fetched. Stopping fetcher.")
+                            self.is_running = False
+                            self.status = "Stopped (Market Closed)"
+                            self.stop_event.set()
+                            break
+                    else:
+                        logger.info("Market is closed but no options candle data found yet.")
 
             except Exception as e:
                 logger.error(f"Exception during incremental fetch: {e}")

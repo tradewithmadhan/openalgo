@@ -3,6 +3,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { MarketSummary } from './MarketSummary';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Play, RotateCcw } from 'lucide-react';
+import { useInstrument } from '../InstrumentContext';
 
 interface DashData {
     summary: {
@@ -49,6 +50,7 @@ interface TimeAnalysisRow {
 }
 
 export function Dash({ refreshTrigger }: { refreshTrigger: number }) {
+    const { instrument } = useInstrument();
     const [data, setData] = useState<DashData | null>(null);
     const [timeAnalysis, setTimeAnalysis] = useState<TimeAnalysisRow[]>([]);
     
@@ -81,8 +83,8 @@ export function Dash({ refreshTrigger }: { refreshTrigger: number }) {
         try {
             const endTsParam = isReplayMode && replayTimestamp ? `&end_ts=${replayTimestamp}` : '';
             const [dashRes, timeRes] = await Promise.all([
-                fetch(`/madhan/api/nifty/dash-data?mode=${summaryMode}${endTsParam}&_=${Date.now()}`),
-                fetch(`/madhan/api/nifty/dash-time-analysis?mode=${tableMode}&interval=${tableTimeframe}${endTsParam}&_=${Date.now()}`)
+                fetch(`/madhan/api/nifty/dash-data?instrument=${instrument}&mode=${summaryMode}${endTsParam}&_=${Date.now()}`),
+                fetch(`/madhan/api/nifty/dash-time-analysis?instrument=${instrument}&mode=${tableMode}&interval=${tableTimeframe}${endTsParam}&_=${Date.now()}`)
             ]);
             
             const dashJson = await dashRes.json();
@@ -115,7 +117,7 @@ export function Dash({ refreshTrigger }: { refreshTrigger: number }) {
     // Initial fetch and on dependencies change
     useEffect(() => {
         fetchData(true);
-    }, [refreshTrigger, summaryMode, tableMode, tableTimeframe, isReplayMode, replayTimestamp]);
+    }, [refreshTrigger, summaryMode, tableMode, tableTimeframe, isReplayMode, replayTimestamp, instrument]);
 
     const formatTime = (ts: number | null) => {
         if (!ts) return "--:--";

@@ -22,7 +22,7 @@ THRESHOLD = 2.0
 LOOKBACK = 4
 
 
-def detect_volume_spike(all_historical_data):
+def detect_volume_spike(all_historical_data, instrument='NIFTY'):
     """
     Compute CE/PE volume per candle across ALL strikes and detect spikes.
 
@@ -31,7 +31,8 @@ def detect_volume_spike(all_historical_data):
 
     Parameters:
         all_historical_data: list of dicts from get_current_day_historical_data()
-            Each dict has: symbol, timestamp, oi, high (NIFTY only), low (NIFTY only), close, volume
+            Each dict has: symbol, timestamp, oi, high (spot only), low (spot only), close, volume
+        instrument: str, 'NIFTY' or 'BANKNIFTY' (spot symbol to skip)
     """
     if not all_historical_data:
         return []
@@ -53,7 +54,7 @@ def detect_volume_spike(all_historical_data):
 
         for item in data_by_ts[ts]:
             symbol = item['symbol']
-            if symbol == 'NIFTY':
+            if symbol == instrument:
                 spot_high = item.get('high')
                 spot_low = item.get('low')
                 continue

@@ -5,6 +5,7 @@ import { RefreshCw } from 'lucide-react';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { useMadhanTheme } from '../useMadhanTheme';
+import { useInstrument } from '../InstrumentContext';
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -119,6 +120,7 @@ const verticalLinePlugin = {
 
 export function OiActionChart({ refreshTrigger, atmStrike }: OiActionChartProps) {
   const { mode } = useMadhanTheme();
+  const { instrument } = useInstrument();
   const [data, setData] = useState<OiStrikeHistoryResponse | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [showFillColor, setShowFillColor] = useState(false);
@@ -128,7 +130,7 @@ export function OiActionChart({ refreshTrigger, atmStrike }: OiActionChartProps)
   const fetchData = async () => {
     setIsLoading(true);
     try {
-      const response = await fetch(`/madhan/api/nifty/oi-strike-history?_=${Date.now()}`);
+      const response = await fetch(`/madhan/api/nifty/oi-strike-history?instrument=${instrument}&_=${Date.now()}`);
       const json = await response.json();
       if (json.status === 'success') {
         setData(json);
@@ -142,7 +144,7 @@ export function OiActionChart({ refreshTrigger, atmStrike }: OiActionChartProps)
 
   useEffect(() => {
     fetchData();
-  }, [refreshTrigger]);
+  }, [refreshTrigger, instrument]);
 
   const chartData: ChartData<'line'> = useMemo(() => {
     if (!data || !data.timestamps || data.timestamps.length === 0 || !data.strikes) {

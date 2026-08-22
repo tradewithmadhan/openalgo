@@ -6,6 +6,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { useMadhanTheme } from '../useMadhanTheme';
+import { useInstrument } from '../InstrumentContext';
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -54,6 +55,7 @@ interface CePeStrikeChangesChartProps {
 }
 
 export function CePeStrikeChangesChart({ refreshTrigger, atmStrike }: CePeStrikeChangesChartProps) {
+    const { instrument, strikeStep } = useInstrument();
     const { mode } = useMadhanTheme();
     const [data, setData] = useState<CePeStrikeChangesData | null>(null);
     const [spotData, setSpotData] = useState<SpotData | null>(null);
@@ -64,24 +66,17 @@ export function CePeStrikeChangesChart({ refreshTrigger, atmStrike }: CePeStrike
     const [showSpot, setShowSpot] = useState(true);
 
     useEffect(() => {
-        console.log('CePeStrikeChangesChart atmStrike:', atmStrike);
+        console.log('CePeStrikeChangesChart atmStrike:', atmStrike, 'instrument:', instrument);
         if (atmStrike) {
             const newStrikes = [];
-            // Generate +/- 10 strikes around ATM (step 50 for Nifty)
             for (let i = -10; i <= 10; i++) {
-                newStrikes.push(atmStrike + (i * 50));
+                newStrikes.push(atmStrike + (i * strikeStep));
             }
-            // Sort strikes descending (higher strikes on top)
             newStrikes.sort((a, b) => b - a);
             setStrikes(newStrikes);
-            
-            // If no strike is selected, or if the current selected strike is not in the new list (optional, but good for safety), select ATM
-            if (!selectedStrike) {
-                console.log('Setting default selectedStrike:', atmStrike);
-                setSelectedStrike(atmStrike.toString());
-            }
+            setSelectedStrike(atmStrike.toString());
         }
-    }, [atmStrike]);
+    }, [atmStrike, instrument]);
 
     const fetchData = async () => {
         if (!selectedStrike) {
@@ -95,6 +90,7 @@ export function CePeStrikeChangesChart({ refreshTrigger, atmStrike }: CePeStrike
             const params = new URLSearchParams({
                 strike_price: selectedStrike,
             });
+            params.set('instrument', instrument);
             const response = await fetch(`/madhan/api/nifty/ce-pe-strike-changes?${params.toString()}&_=${Date.now()}`);
             const json = await response.json();
             // API returns data directly without status wrapper
@@ -113,7 +109,7 @@ export function CePeStrikeChangesChart({ refreshTrigger, atmStrike }: CePeStrike
 
     const fetchSpotData = async () => {
         try {
-            const response = await fetch(`/madhan/api/nifty/spot-data?_=${Date.now()}`);
+            const response = await fetch(`/madhan/api/nifty/spot-data?instrument=${instrument}&_=${Date.now()}`);
             const json = await response.json();
             if (json.status === 'success') {
                 setSpotData(json.data);
@@ -126,7 +122,7 @@ export function CePeStrikeChangesChart({ refreshTrigger, atmStrike }: CePeStrike
     useEffect(() => {
         fetchData();
         fetchSpotData();
-    }, [refreshTrigger, selectedStrike]);
+    }, [refreshTrigger, selectedStrike, instrument]);
 
     const chartData: ChartData<'bar' | 'line'> = useMemo(() => {
         if (!data || !data.timestamps || data.timestamps.length === 0) {

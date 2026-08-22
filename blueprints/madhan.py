@@ -14,7 +14,7 @@ from services.madhan.atp_signal import (
 )
 from services.madhan.volume_signal import compute_spike_flags
 from services.madhan.hx_lx import compute_hx_lx_counts
-from database.madhan_db import extract_strike, get_nifty_data, get_option_data, get_consistent_current_option_data, get_nifty_data_count, get_previous_day_oi, get_nth_candle_oi_for_all_symbols, get_current_day_historical_data, get_current_day_instrument_data, get_instrument_data_for_date, get_previous_trading_day, get_coi_history, get_valid_trading_day, SessionLocal, NiftyData, get_tracked_symbols
+from database.madhan_db import extract_strike, get_nifty_data, get_banknifty_data, get_option_data, get_consistent_current_option_data, get_nifty_data_count, get_banknifty_data_count, get_previous_day_oi, get_nth_candle_oi_for_all_symbols, get_current_day_historical_data, get_current_day_instrument_data, get_instrument_data_for_date, get_previous_trading_day, get_coi_history, get_valid_trading_day, SessionLocal, NiftyData, BankNiftyData, get_tracked_symbols
 from database.auth_db import get_api_key_for_tradingview
 from blueprints.react_app import serve_react_app
 
@@ -24,6 +24,13 @@ logger = get_logger(__name__)
 
 # Create blueprint
 madhan_bp = Blueprint('madhan_bp', __name__, url_prefix='/madhan')
+
+
+def get_instrument_config(instrument='NIFTY'):
+    """Returns (config, strike_step, spot_symbol) for the given instrument."""
+    if instrument == 'BANKNIFTY':
+        return nifty_fetcher.banknifty, 100, 'BANKNIFTY'
+    return nifty_fetcher.nifty, 50, 'NIFTY'
 
 @madhan_bp.route('/madhan01')
 @check_session_validity
@@ -71,21 +78,27 @@ def get_test_data():
 def get_atp_ltp_data():
     """Returns ATP-LTP strategy data with time, spot LTP, ATM call ATP, ATM call LTP, ATM put ATP, ATM put LTP."""
     try:
-        logger.info("Fetching ATP-LTP data")
+        instrument = request.args.get('instrument', 'NIFTY')
+        config, strike_step, spot_symbol = get_instrument_config(instrument)
+
+        logger.info(f"Fetching ATP-LTP data for {instrument}")
         
-        # Get current NIFTY data
-        nifty_data = get_nifty_data(limit=1)
-        if not nifty_data:
+        # Get current spot data
+        if instrument == 'BANKNIFTY':
+            spot_data = get_banknifty_data(limit=1)
+        else:
+            spot_data = get_nifty_data(limit=1)
+        if not spot_data:
             return jsonify({
                 'status': 'error', 
-                'message': 'No NIFTY data available'
+                'message': f'No {instrument} data available'
             }), 404
             
-        latest_nifty = nifty_data[0]
-        current_spot = latest_nifty.get('close', 0)
+        latest_spot = spot_data[0]
+        current_spot = latest_spot.get('close', 0)
         
         # Get current ATM strike from fetcher
-        current_atm_strike = nifty_fetcher.current_atm_strike
+        current_atm_strike = config.current_atm_strike
         if not current_atm_strike:
             return jsonify({
                 'status': 'error', 
@@ -131,10 +144,10 @@ def get_atp_ltp_data():
         
         # For calls: ITM means strike price < spot price (lower strikes)
         # For puts: ITM means strike price > spot price (higher strikes)
-        itm1_call_strike = current_atm_strike - 50   # 1 strike below ATM for calls
-        itm2_call_strike = current_atm_strike - 100  # 2 strikes below ATM for calls
-        itm1_put_strike = current_atm_strike + 50   # 1 strike above ATM for puts
-        itm2_put_strike = current_atm_strike + 100  # 2 strikes above ATM for puts
+        itm1_call_strike = current_atm_strike - strike_step   # 1 strike below ATM for calls
+        itm2_call_strike = current_atm_strike - 2 * strike_step  # 2 strikes below ATM for calls
+        itm1_put_strike = current_atm_strike + strike_step   # 1 strike above ATM for puts
+        itm2_put_strike = current_atm_strike + 2 * strike_step  # 2 strikes above ATM for puts
         
         for symbol in tracked_symbols:
             strike = extract_strike(symbol)
@@ -148,7 +161,7 @@ def get_atp_ltp_data():
                 itm_put_symbol2 = symbol
         
         # Get current option data for LTP
-        option_data = get_consistent_current_option_data()
+        option_data = get_consistent_current_option_data(instrument=instrument)
         for option in option_data:
             symbol = option.get('symbol', '')
             ltp = option.get('close', 0)
@@ -218,8 +231,8 @@ def get_atp_ltp_data():
         }
 
         # Process historical data using shared signal computation module
-        all_historical_data = get_current_day_historical_data()
-        historical_data = process_historical_atp_data(all_historical_data, current_atm_strike)
+        all_historical_data = get_current_day_historical_data(instrument=instrument)
+        historical_data = process_historical_atp_data(all_historical_data, current_atm_strike, instrument, strike_step)
         
         return jsonify({
             'status': 'success',
@@ -293,37 +306,53 @@ def stop_nifty_fetch():
 @check_session_validity
 def nifty_status():
     """Gets the current status of the fetcher."""
+    instrument = request.args.get('instrument', 'NIFTY')
+    config, strike_step, spot_symbol = get_instrument_config(instrument)
+
     # Calculate CE and PE counts
-    ce_count = sum(1 for s in nifty_fetcher.option_symbols if s.endswith('CE'))
-    pe_count = sum(1 for s in nifty_fetcher.option_symbols if s.endswith('PE'))
+    ce_count = sum(1 for s in config.option_symbols if s.endswith('CE'))
+    pe_count = sum(1 for s in config.option_symbols if s.endswith('PE'))
+
+    nifty_data_count = get_nifty_data_count()
+    banknifty_data_count = get_banknifty_data_count()
+
+    # Use the global fetcher status (has stop reasons like Weekend/Market Closed)
+    # Fall back to config.status if fetcher hasn't started yet
+    status_message = nifty_fetcher.status if nifty_fetcher.status != "Idle" else config.status
 
     return jsonify({
         'status': 'success',
         'is_running': nifty_fetcher.is_running,
-        'message': nifty_fetcher.status,
-        'last_update': nifty_fetcher.last_update.isoformat() if nifty_fetcher.last_update else None,
+        'message': status_message,
+        'last_update': config.last_update.isoformat() if config.last_update else None,
         'server_time': datetime.now().isoformat(),
-        'nifty_record_count': get_nifty_data_count(),
-        'open_atm_strike': nifty_fetcher.open_atm_strike,
-        'current_atm_strike': nifty_fetcher.current_atm_strike,
-        'expiry_date': nifty_fetcher.expiry_date,
+        'nifty_record_count': nifty_data_count,
+        'banknifty_record_count': banknifty_data_count,
+        'open_atm_strike': config.open_atm_strike,
+        'current_atm_strike': config.current_atm_strike,
+        'expiry_date': config.expiry_date,
         'ce_count': ce_count,
         'pe_count': pe_count,
-        'Trading date': nifty_fetcher.trading_date,
+        'trading_date': config.trading_date,
     })
 
 @madhan_bp.route('/api/nifty/data')
 @check_session_validity
 def nifty_data():
-    """Gets the latest stored Nifty data."""
-    data = get_nifty_data()
+    """Gets the latest stored Nifty/BankNifty data."""
+    instrument = request.args.get('instrument', 'NIFTY')
+    if instrument == 'BANKNIFTY':
+        data = get_banknifty_data()
+    else:
+        data = get_nifty_data()
     return jsonify({'status': 'success', 'data': data})
 
 @madhan_bp.route('/api/nifty/option-data')
 @check_session_validity
 def nifty_option_data():
     """Gets the latest stored Nifty options data."""
-    data = get_option_data()
+    instrument = request.args.get('instrument', 'NIFTY')
+    data = get_option_data(instrument=instrument)
     return jsonify({'status': 'success', 'data': data})
 
 @madhan_bp.route('/api/nifty/option-ohlc')
@@ -366,18 +395,21 @@ def nifty_previous_day_oi():
     Gets the previous day's closing OI data and calculates the change in OI
     by comparing with the current day's latest OI.
     """
-    prev_day_data = get_previous_day_oi()
+    instrument = request.args.get('instrument', 'NIFTY')
+    config, strike_step, spot_symbol = get_instrument_config(instrument)
+
+    prev_day_data = get_previous_day_oi(instrument=instrument)
     
     # 1. Get current OI for session change calculation
-    current_option_data = get_consistent_current_option_data() # Fetches latest OI for all symbols at consistent timestamp
-    latest_nifty_data = get_nifty_data(limit=1) # Fetches latest OI for Nifty
+    current_option_data = get_consistent_current_option_data(instrument=instrument) # Fetches latest OI for all symbols at consistent timestamp
+    latest_spot_data = get_banknifty_data(limit=1) if instrument == 'BANKNIFTY' else get_nifty_data(limit=1)
     current_oi_map = {item['symbol']: item.get('oi', 0) for item in current_option_data}
-    if latest_nifty_data:
-        current_oi_map['NIFTY'] = latest_nifty_data[0].get('oi', 0)
+    if latest_spot_data:
+        current_oi_map[spot_symbol] = latest_spot_data[0].get('oi', 0)
 
     # 2. Get OI at 3rd and 6th candle marks
-    oi_at_3min_map = get_nth_candle_oi_for_all_symbols(1) # 3rd candle (e.g., 9:17 AM)
-    oi_at_6min_map = get_nth_candle_oi_for_all_symbols(4) # 6th candle (e.g., 9:20 AM)
+    oi_at_3min_map = get_nth_candle_oi_for_all_symbols(1, instrument=instrument) # 3rd candle (e.g., 9:17 AM)
+    oi_at_6min_map = get_nth_candle_oi_for_all_symbols(4, instrument=instrument) # 6th candle (e.g., 9:20 AM)
     
     combined_data = []
     for prev_item in prev_day_data:
@@ -414,30 +446,28 @@ def nifty_previous_day_oi():
 @check_session_validity
 def nifty_coi_trend():
     """Calculates the Change in OI (COI) trend for the current day."""
-    open_atm = nifty_fetcher.open_atm_strike
+    instrument = request.args.get('instrument', 'NIFTY')
+    config, strike_step, spot_symbol = get_instrument_config(instrument)
+
+    open_atm = config.open_atm_strike
     if not open_atm or open_atm == 0:
         return jsonify({'status': 'success', 'data': {'timestamps': [], 'coi_percent': [], 'oi_trend_percent': []}, 'message': 'ATM strike not calculated yet.'})
 
     # Get strike selection parameters
-    strike_selection_mode = request.args.get('strike_selection_mode', 'option2')  # option1: all strikes, option2: selective
-    upside_strikes = int(request.args.get('upside_strikes', '10'))  # default 10 strikes above ATM
-    downside_strikes = int(request.args.get('downside_strikes', '10'))  # default 10 strikes below ATM
+    strike_selection_mode = request.args.get('strike_selection_mode', 'option2')
+    upside_strikes = int(request.args.get('upside_strikes', '10'))
+    downside_strikes = int(request.args.get('downside_strikes', '10'))
     
     # Get the total number of symbols we expect data for on each candle to ensure data integrity
-    if strike_selection_mode == 'option1':
-        expected_symbol_count = len(nifty_fetcher.option_symbols) + 1 # +1 for NIFTY index
-    else:
-        # For option2, calculate expected symbols based on selective strikes
-        # PE: all strikes below ATM + ATM + 2 above ATM
-        # CE: all strikes above ATM + ATM + 2 below ATM
-        pe_strikes_count = downside_strikes + 1 + 2  # below + ATM + 2 above
-        ce_strikes_count = upside_strikes + 1 + 2   # above + ATM + 2 below
-        expected_symbol_count = pe_strikes_count + ce_strikes_count + 1  # +1 for NIFTY index
+    if strike_selection_mode == 'option2':
+        pe_strikes_count = downside_strikes + 1 + 2
+        ce_strikes_count = upside_strikes + 1 + 2
+        expected_symbol_count = pe_strikes_count + ce_strikes_count + 1  # +1 for spot index
 
-    prev_day_data = get_previous_day_oi()
+    prev_day_data = get_previous_day_oi(instrument=instrument)
     prev_oi_map = {item['symbol']: item.get('oi', 0) for item in prev_day_data}
 
-    historical_data = get_current_day_historical_data()
+    historical_data = get_current_day_historical_data(instrument=instrument)
     if not historical_data:
         return jsonify({'status': 'success', 'data': {'timestamps': [], 'coi_percent': [], 'oi_trend_percent': []}, 'message': 'No historical data for today.'})
 
@@ -445,6 +475,9 @@ def nifty_coi_trend():
     data_by_ts = defaultdict(list)
     for row in historical_data:
         data_by_ts[row['timestamp']].append(row)
+
+    if strike_selection_mode == 'option1':
+        expected_symbol_count = max((len(rows) for rows in data_by_ts.values()), default=0)
 
     sorted_timestamps = sorted(data_by_ts.keys())
 
@@ -468,8 +501,8 @@ def nifty_coi_trend():
             current_oi = item.get('oi', 0)
             prev_oi = prev_oi_map.get(symbol, 0)
             
-            # Skip NIFTY index symbol
-            if symbol == 'NIFTY':
+            # Skip spot index symbol
+            if symbol == spot_symbol:
                 continue
                 
             # Apply strike filtering for option2
@@ -480,12 +513,12 @@ def nifty_coi_trend():
                     
                 # PE writers view: strikes below ATM + ATM + 2 above ATM
                 if symbol.endswith('PE'):
-                    if strike_price > open_atm + (2 * 50):  # Skip PE strikes more than 2 above ATM
+                    if strike_price > open_atm + (2 * strike_step):
                         continue
                         
                 # CE writers view: strikes above ATM + ATM + 2 below ATM  
                 elif symbol.endswith('CE'):
-                    if strike_price < open_atm - (2 * 50):  # Skip CE strikes more than 2 below ATM
+                    if strike_price < open_atm - (2 * strike_step):
                         continue
             
             if prev_oi > 0 and current_oi > 0:
@@ -538,7 +571,10 @@ def nifty_coi_trend():
 @check_session_validity
 def nifty_spot_data():
     """Gets historical spot data for Nifty."""
-    data = get_current_day_instrument_data('NIFTY')
+    instrument = request.args.get('instrument', 'NIFTY')
+    config, strike_step, spot_symbol = get_instrument_config(instrument)
+
+    data = get_current_day_instrument_data(spot_symbol)
     if not data:
         return jsonify({'status': 'success', 'data': {'timestamps': [], 'prices': []}})
     
@@ -567,30 +603,31 @@ def nifty_instrument_data():
 @check_session_validity
 def nifty_ce_pe_changes():
     """Gets individual CE and PE change data for each candle for bar chart visualization."""
-    open_atm = nifty_fetcher.open_atm_strike
+    instrument = request.args.get('instrument', 'NIFTY')
+    config, strike_step, spot_symbol = get_instrument_config(instrument)
+
+    open_atm = config.open_atm_strike
     if not open_atm or open_atm == 0:
         return jsonify({'status': 'success', 'data': {'timestamps': [], 'ce_changes': [], 'pe_changes': []}, 'message': 'ATM strike not calculated yet.'})
 
     # Get strike selection parameters
-    strike_selection_mode = request.args.get('strike_selection_mode', 'option1')  # option1: all strikes, option2: selective
-    upside_strikes = int(request.args.get('upside_strikes', '10'))  # default 10 strikes above ATM
-    downside_strikes = int(request.args.get('downside_strikes', '10'))  # default 10 strikes below ATM
+    strike_selection_mode = request.args.get('strike_selection_mode', 'option1')
+    upside_strikes = int(request.args.get('upside_strikes', '10'))
+    downside_strikes = int(request.args.get('downside_strikes', '10'))
     
     # Get the total number of symbols we expect data for on each candle to ensure data integrity
     if strike_selection_mode == 'option2':
-        expected_symbol_count = len(nifty_fetcher.option_symbols) + 1 # +1 for NIFTY index
+        # option2: filtering is done per-symbol in the loop (unbounded range), so no strict completeness check
+        expected_symbol_count = 0  # disabled — will never skip candles
     else:
-        # For option2, calculate expected symbols based on selective strikes
-        # PE: all strikes below ATM + ATM + 2 above ATM
-        # CE: all strikes above ATM + ATM + 2 below ATM
-        pe_strikes_count = downside_strikes + 1 + 2  # below + ATM + 2 above
-        ce_strikes_count = upside_strikes + 1 + 2   # above + ATM + 2 below
-        expected_symbol_count = pe_strikes_count + ce_strikes_count + 1  # +1 for NIFTY index
+        pe_strikes_count = downside_strikes + 1 + 2
+        ce_strikes_count = upside_strikes + 1 + 2
+        expected_symbol_count = pe_strikes_count + ce_strikes_count + 1  # +1 for spot index
 
-    prev_day_data = get_previous_day_oi()
+    prev_day_data = get_previous_day_oi(instrument=instrument)
     prev_oi_map = {item['symbol']: item.get('oi', 0) for item in prev_day_data}
 
-    historical_data = get_current_day_historical_data()
+    historical_data = get_current_day_historical_data(instrument=instrument)
     if not historical_data:
         return jsonify({'status': 'success', 'data': {'timestamps': [], 'ce_changes': [], 'pe_changes': []}, 'message': 'No historical data for today.'})
 
@@ -623,8 +660,8 @@ def nifty_ce_pe_changes():
             current_oi = item.get('oi', 0)
             current_candle_oi_map[symbol] = current_oi
             
-            # Skip NIFTY index symbol
-            if symbol == 'NIFTY':
+            # Skip spot index symbol
+            if symbol == spot_symbol:
                 continue
                 
             # Apply strike filtering for option2
@@ -635,12 +672,12 @@ def nifty_ce_pe_changes():
                     
                 # PE writers view: strikes below ATM + ATM + 2 above ATM
                 if symbol.endswith('PE'):
-                    if strike_price > open_atm + (2 * 50):  # Skip PE strikes more than 2 above ATM
+                    if strike_price > open_atm + (2 * strike_step):
                         continue
                         
                 # CE writers view: strikes above ATM + ATM + 2 below ATM  
                 elif symbol.endswith('CE'):
-                    if strike_price < open_atm - (2 * 50):  # Skip CE strikes more than 2 below ATM
+                    if strike_price < open_atm - (2 * strike_step):
                         continue
             
             # Get previous OI (from previous candle or previous day for first candle)
@@ -669,6 +706,9 @@ def nifty_ce_pe_changes():
 @madhan_bp.route('/api/nifty/ce-pe-strike-changes')
 @check_session_validity
 def nifty_ce_pe_strike_changes():
+    instrument = request.args.get('instrument', 'NIFTY')
+    config, strike_step, spot_symbol = get_instrument_config(instrument)
+
     strike_price = request.args.get("strike_price", type=int)
 
     if not strike_price or strike_price <= 0:
@@ -680,11 +720,11 @@ def nifty_ce_pe_strike_changes():
         }), 400
 
     # ✅ SAME AS nifty_ce_pe_changes
-    prev_day_data = get_previous_day_oi()
+    prev_day_data = get_previous_day_oi(instrument=instrument)
     prev_oi_map = {item["symbol"]: item.get("oi", 0) for item in prev_day_data}
 
     # ✅ SAME AS nifty_ce_pe_changes (IMPORTANT FIX)
-    historical_data = get_current_day_historical_data()
+    historical_data = get_current_day_historical_data(instrument=instrument)
 
     data_by_ts = defaultdict(list)
     for row in historical_data:
@@ -712,7 +752,7 @@ def nifty_ce_pe_strike_changes():
 
             current_candle_oi_map[symbol] = current_oi
 
-            if symbol == "NIFTY":
+            if symbol == spot_symbol:
                 continue
 
             if extract_strike(symbol) != strike_price:
@@ -748,7 +788,10 @@ def nifty_ce_pe_strike_changes():
 @check_session_validity
 def nifty_ce_pe_volume_changes():
     """Gets individual CE and PE volume data for each candle for bar chart visualization."""
-    open_atm = nifty_fetcher.open_atm_strike
+    instrument = request.args.get('instrument', 'NIFTY')
+    config, strike_step, spot_symbol = get_instrument_config(instrument)
+
+    open_atm = config.open_atm_strike
     if not open_atm or open_atm == 0:
         return jsonify({'status': 'success', 'data': {'timestamps': [], 'ce_changes': [], 'pe_changes': []}, 'message': 'ATM strike not calculated yet.'})
 
@@ -757,13 +800,13 @@ def nifty_ce_pe_volume_changes():
     downside_strikes = int(request.args.get('downside_strikes', '10'))
 
     if strike_selection_mode == 'option2':
-        expected_symbol_count = len(nifty_fetcher.option_symbols) + 1
+        expected_symbol_count = 0  # disabled — filtering is per-symbol in loop
     else:
         pe_strikes_count = downside_strikes + 1 + 2
         ce_strikes_count = upside_strikes + 1 + 2
         expected_symbol_count = pe_strikes_count + ce_strikes_count + 1
 
-    historical_data = get_current_day_historical_data()
+    historical_data = get_current_day_historical_data(instrument=instrument)
     if not historical_data:
         return jsonify({'status': 'success', 'data': {'timestamps': [], 'ce_changes': [], 'pe_changes': []}, 'message': 'No historical data for today.'})
 
@@ -792,7 +835,7 @@ def nifty_ce_pe_volume_changes():
             symbol = item['symbol']
             volume = item.get('volume', 0)
 
-            if symbol == 'NIFTY':
+            if symbol == spot_symbol:
                 nifty_high = item.get('high')
                 nifty_low = item.get('low')
                 continue
@@ -803,10 +846,10 @@ def nifty_ce_pe_volume_changes():
                     continue
 
                 if symbol.endswith('PE'):
-                    if strike_price > open_atm + (2 * 50):
+                    if strike_price > open_atm + (2 * strike_step):
                         continue
                 elif symbol.endswith('CE'):
-                    if strike_price < open_atm - (2 * 50):
+                    if strike_price < open_atm - (2 * strike_step):
                         continue
 
             if volume > 0:
@@ -830,6 +873,9 @@ def nifty_ce_pe_volume_changes():
 @madhan_bp.route('/api/nifty/ce-pe-strike-volume-changes')
 @check_session_validity
 def nifty_ce_pe_strike_volume_changes():
+    instrument = request.args.get('instrument', 'NIFTY')
+    config, strike_step, spot_symbol = get_instrument_config(instrument)
+
     strike_price = request.args.get("strike_price", type=int)
 
     if not strike_price or strike_price <= 0:
@@ -840,7 +886,7 @@ def nifty_ce_pe_strike_volume_changes():
             "error": "strike_price query parameter is required"
         }), 400
 
-    historical_data = get_current_day_historical_data()
+    historical_data = get_current_day_historical_data(instrument=instrument)
     data_by_ts = defaultdict(list)
     for row in historical_data:
         data_by_ts[row["timestamp"]].append(row)
@@ -865,7 +911,7 @@ def nifty_ce_pe_strike_volume_changes():
             symbol = row["symbol"]
             current_volume = row.get("volume", 0)
 
-            if symbol == "NIFTY":
+            if symbol == spot_symbol:
                 nifty_high = row.get("high")
                 nifty_low = row.get("low")
                 continue
@@ -919,32 +965,25 @@ def nifty_chart_data():
 @madhan_bp.route('/nifty_live_data')
 @check_session_validity
 def nifty_live_data_api():
-    """
-    Provides Nifty OHLC data for the lightweight chart.
-    This endpoint uses the background fetcher to get the latest data.
-    """
-    """API endpoint to fetch historical data."""
+    """Provides NIFTY/BANKNIFTY OHLC data for the lightweight chart."""
     username = session.get('user')
-    logger.info(f"starting nifty live fetch for user u: {username}")
+    logger.info(f"starting live fetch for user: {username}")
     if not username:
         return jsonify({'status': 'error', 'message': 'User not logged in'}), 401
 
     api_key = get_api_key_for_tradingview(username)
-    logger.info(f"starting nifty live fetch for user apikey: {api_key}")
+    logger.info(f"starting live fetch for user apikey: {api_key}")
     if not api_key:
         return jsonify({'status': 'error', 'message': 'API key not found for user'}), 401
-    try:        
-        # Get interval from query parameters (default to '1m' if not provided)
+    try:
+        instrument = request.args.get('instrument', 'NIFTY')
         interval = request.args.get('interval', '1m')
-        
-        # Get days_back from query parameters (default to 1 if not provided)
         days_back = int(request.args.get('days_back', 1))
-        
-        # Set the API key on the fetcher instance
+
         nifty_fetcher.api_key = api_key
-        
-        # Use the NiftyDataFetcher to get the data
-        success, result, status_code = nifty_fetcher.get_nifty_live_data(
+
+        success, result, status_code = nifty_fetcher.get_instrument_live_data(
+            instrument=instrument,
             interval=interval,
             days_back=days_back
         )
@@ -962,11 +1001,12 @@ def nifty_live_data_api():
 @madhan_bp.route('/api/nifty/oi_profile_data')
 @check_session_validity
 def oi_profile_data():
+    instrument = request.args.get('instrument', 'NIFTY')
     # Previous day's OI
-    prev_day_data = get_previous_day_oi()  # Returns list of {symbol, oi}
+    prev_day_data = get_previous_day_oi(instrument=instrument)  # Returns list of {symbol, oi}
 
     # Current day's latest OI
-    current_data = get_consistent_current_option_data()  # Returns list of {symbol, oi} at consistent timestamp
+    current_data = get_consistent_current_option_data(instrument=instrument)  # Returns list of {symbol, oi} at consistent timestamp
 
     # 1. Build current OI map
     current_oi_map = {item['symbol']: item.get('oi', 0) for item in current_data}
@@ -990,12 +1030,15 @@ def oi_profile_data():
 def oi_strike_history():
     """Returns per-strike CE/PE OI time series for all tracked option symbols (1-min candles)."""
     try:
-        all_data = get_current_day_historical_data()
+        instrument = request.args.get('instrument', 'NIFTY')
+        config, strike_step, spot_symbol = get_instrument_config(instrument)
+
+        all_data = get_current_day_historical_data(instrument=instrument)
         if not all_data:
             return jsonify({"status": "success", "timestamps": [], "strikes": {}})
 
-        # Filter to option symbols only (exclude NIFTY)
-        option_rows = [r for r in all_data if r.get('symbol') and r['symbol'] != 'NIFTY']
+        # Filter to option symbols only (exclude spot index)
+        option_rows = [r for r in all_data if r.get('symbol') and r['symbol'] != spot_symbol]
 
         if not option_rows:
             return jsonify({"status": "success", "timestamps": [], "strikes": {}})
@@ -1041,10 +1084,11 @@ def oi_strike_history():
 @check_session_validity
 def coi_history():
     """Returns daily COI (Change in OI) history for all tracked option symbols."""
+    instrument = request.args.get('instrument', 'NIFTY')
     days = request.args.get('days', 30, type=int)
     days = min(max(days, 1), 90)  # clamp 1-90
 
-    data = get_coi_history(days)
+    data = get_coi_history(days, instrument=instrument)
 
     # Convert to list format for easier frontend consumption
     result = []
@@ -1061,6 +1105,18 @@ import re
 
 def build_oi_and_coi_data(prev_day_data, current_oi_map, change_oi_map):
     strikes_map = {}
+
+    # Seed from current data so strikes appear even when prev_day_data is empty
+    for symbol, current_oi in current_oi_map.items():
+        strike_price = extract_strike(symbol)
+        if strike_price is None:
+            continue
+        if strike_price not in strikes_map:
+            strikes_map[strike_price] = {"ceOI": 0, "peOI": 0, "ceCOI": 0, "peCOI": 0}
+        if symbol.endswith("CE"):
+            strikes_map[strike_price]["ceOI"] = current_oi
+        elif symbol.endswith("PE"):
+            strikes_map[strike_price]["peOI"] = current_oi
 
     for item in prev_day_data:
         symbol = item['symbol']
@@ -1102,6 +1158,9 @@ def ezay_chart_data():
     try:
         import pytz
         import math
+
+        instrument = request.args.get('instrument', 'NIFTY')
+        config, strike_step, spot_symbol = get_instrument_config(instrument)
         
         strike_price = request.args.get('strike')
         if not strike_price:
@@ -1143,8 +1202,8 @@ def ezay_chart_data():
         if pe_symbol:
             pe_data = get_current_day_instrument_data(pe_symbol)
             
-        # Get NIFTY spot data for intrinsic value calculations
-        spot_data = get_current_day_instrument_data('NIFTY')
+        # Get spot data for intrinsic value calculations
+        spot_data = get_current_day_instrument_data(spot_symbol)
         
         # Get previous day's data if requested
         prev_ce_data = []
@@ -1159,7 +1218,7 @@ def ezay_chart_data():
                     prev_ce_data = get_instrument_data_for_date(ce_symbol, prev_date)
                 if pe_symbol:
                     prev_pe_data = get_instrument_data_for_date(pe_symbol, prev_date)
-                prev_spot_data = get_instrument_data_for_date('NIFTY', prev_date)
+                prev_spot_data = get_instrument_data_for_date(spot_symbol, prev_date)
                 prev_spot_lookup = {item['timestamp']: item['close'] for item in prev_spot_data}
             except Exception as e:
                 logger.warning(f"Could not fetch previous day data: {e}")
@@ -1366,7 +1425,10 @@ def ezay_chart_signals():
     try:
         import pytz
 
-        tracked_symbols = get_tracked_symbols()
+        instrument = request.args.get('instrument', 'NIFTY')
+        config, strike_step, spot_symbol = get_instrument_config(instrument)
+
+        tracked_symbols = [s for s in get_tracked_symbols() if s.startswith(instrument)]
         ist_tz = pytz.timezone('Asia/Kolkata')
 
         # Group symbols by strike
@@ -1382,7 +1444,7 @@ def ezay_chart_signals():
             elif symbol.endswith('PE'):
                 strikes_map[strike]['pe'] = symbol
 
-        spot_data = get_current_day_instrument_data('NIFTY')
+        spot_data = get_current_day_instrument_data(spot_symbol)
         spot_lookup = {item['timestamp']: item['close'] for item in spot_data}
 
         all_signals = []
@@ -1579,10 +1641,10 @@ def ezay_chart_signals():
         # ── Compute hx_lx_vol for the response ──────────────────────────
         hx_lx_vol_map = {}
         try:
-            atm_strike = nifty_fetcher.open_atm_strike or nifty_fetcher.current_atm_strike
-            expiry_date = nifty_fetcher.expiry_date
+            atm_strike = config.open_atm_strike or config.current_atm_strike
+            expiry_date = config.expiry_date
             if atm_strike and expiry_date:
-                hx_lx_strikes = [atm_strike + (i * 50) for i in range(-10, 11)]
+                hx_lx_strikes = [atm_strike + (i * strike_step) for i in range(-10, 11)]
 
                 def _get_symbol(strike, type_):
                     try:
@@ -1590,11 +1652,11 @@ def ezay_chart_signals():
                         day = date_obj.strftime("%d")
                         month = date_obj.strftime("%b").upper()
                         year = date_obj.strftime("%y")
-                        return f"NIFTY{day}{month}{year}{strike}{type_}"
+                        return f"{instrument}{day}{month}{year}{strike}{type_}"
                     except Exception:
                         return None
 
-                historical_data = get_current_day_historical_data()
+                historical_data = get_current_day_historical_data(instrument=instrument)
                 if historical_data:
                     hx_results = compute_hx_lx_counts(
                         all_historical_data=historical_data,
@@ -1765,11 +1827,14 @@ def backtest_range():
 def get_strikes():
     """Gets available strike prices and symbols from tracked symbols."""
     try:
+        instrument = request.args.get('instrument', 'NIFTY')
         tracked_symbols = get_tracked_symbols()
         strikes_data = {}
         symbols_map = {}
         
         for symbol in tracked_symbols:
+            if not symbol.startswith(instrument):
+                continue
             strike = extract_strike(symbol)
             if strike is not None:
                 if strike not in strikes_data:
@@ -1810,6 +1875,9 @@ def get_strikes():
 @check_session_validity
 def nifty_dash_data():
     """Calculates Unified OI and COI data for the Dash tab."""
+    instrument = request.args.get('instrument', 'NIFTY')
+    config, strike_step, spot_symbol = get_instrument_config(instrument)
+
     mode = request.args.get('mode', 'writer_open') # Default to writer_open
     end_ts = request.args.get('end_ts')
     if end_ts:
@@ -1819,22 +1887,22 @@ def nifty_dash_data():
             end_ts = None
     
     # 1. Get option data (latest or at specific time) and previous day OI
-    current_option_data = get_consistent_current_option_data(end_ts=end_ts)
-    prev_day_data = get_previous_day_oi()
+    current_option_data = get_consistent_current_option_data(end_ts=end_ts, instrument=instrument)
+    prev_day_data = get_previous_day_oi(instrument=instrument)
     prev_oi_map = {item['symbol']: item.get('oi', 0) for item in prev_day_data}
     
-    open_atm = nifty_fetcher.open_atm_strike
+    open_atm = config.open_atm_strike
     
     # In replay mode, current_atm should be based on the data at end_ts
     if end_ts:
-        latest_nifty = get_nifty_data(limit=1, end_ts=end_ts)
-        if latest_nifty:
-            spot_price = latest_nifty[0]['close']
-            current_atm = round(spot_price / 50) * 50
+        latest_spot_data = get_banknifty_data(limit=1, end_ts=end_ts) if instrument == 'BANKNIFTY' else get_nifty_data(limit=1, end_ts=end_ts)
+        if latest_spot_data:
+            spot_price = latest_spot_data[0]['close']
+            current_atm = round(spot_price / strike_step) * strike_step
         else:
-            current_atm = nifty_fetcher.current_atm_strike or open_atm
+            current_atm = config.current_atm_strike or open_atm
     else:
-        current_atm = nifty_fetcher.current_atm_strike or open_atm
+        current_atm = config.current_atm_strike or open_atm
     
     def is_included(sym, strike):
         if mode == 'total': return True
@@ -1842,13 +1910,13 @@ def nifty_dash_data():
         if not base_atm: return True
         
         # Symmetric ATM +/- 5 strikes (total 11 strikes) for Writer Views
-        # NIFTY strike interval is 50, so 5 strikes = 250 points
-        if strike > base_atm + 250 or strike < base_atm - 250:
+        # Strike interval varies by instrument, so 5 strikes = 5 * strike_step points
+        if strike > base_atm + 5 * strike_step or strike < base_atm - 5 * strike_step:
             return False
             
         # One-sided filtering to focus on "Writing Zone" (OTM + ATM + 2 ITM)
-        if sym.endswith('PE') and strike > base_atm + 100: return False
-        if sym.endswith('CE') and strike < base_atm - 100: return False
+        if sym.endswith('PE') and strike > base_atm + 2 * strike_step: return False
+        if sym.endswith('CE') and strike < base_atm - 2 * strike_step: return False
         return True
 
     total_call_oi = 0
@@ -1949,6 +2017,9 @@ def nifty_dash_data():
 @check_session_validity
 def nifty_dash_time_analysis():
     """Provides interval analysis for all tracked strikes with custom timeframe."""
+    instrument = request.args.get('instrument', 'NIFTY')
+    config, strike_step, spot_symbol = get_instrument_config(instrument)
+
     mode = request.args.get('mode', 'writer_open')
     end_ts = request.args.get('end_ts')
     interval_mins = int(request.args.get('interval', 3)) # Default to 3 minutes
@@ -1960,12 +2031,12 @@ def nifty_dash_time_analysis():
             end_ts = None
     
     # 1. Get all tracked symbols
-    tracked_symbols = nifty_fetcher.option_symbols
+    tracked_symbols = config.option_symbols
     if not tracked_symbols:
         return jsonify({'status': 'success', 'data': []})
 
-    # 2. Get 1-min data for all symbols (includes NIFTY spot)
-    historical_data = get_current_day_historical_data(end_ts=end_ts)
+    # 2. Get 1-min data for all symbols (includes spot index)
+    historical_data = get_current_day_historical_data(instrument=instrument, end_ts=end_ts)
     if not historical_data:
         return jsonify({'status': 'success', 'data': []})
 
@@ -1973,7 +2044,7 @@ def nifty_dash_time_analysis():
     data_by_ts = defaultdict(list)
     nifty_by_ts = {}
     for row in historical_data:
-        if row['symbol'] == 'NIFTY':
+        if row['symbol'] == spot_symbol:
             nifty_by_ts[row['timestamp']] = row['close']
         else:
             data_by_ts[row['timestamp']].append(row)
@@ -1985,31 +2056,43 @@ def nifty_dash_time_analysis():
         if not sorted_ts:
             return jsonify({'status': 'success', 'data': []})
 
-    open_atm = nifty_fetcher.open_atm_strike
+    open_atm = config.open_atm_strike
     
     # Calculate current ATM based on latest spot in the window
     latest_spot = nifty_by_ts.get(sorted_ts[-1], 0)
     if end_ts and latest_spot == 0:
-        latest_nifty = get_nifty_data(limit=1, end_ts=end_ts)
-        latest_spot = latest_nifty[0]['close'] if latest_nifty else 0
+        latest_spot_data = get_banknifty_data(limit=1, end_ts=end_ts) if instrument == 'BANKNIFTY' else get_nifty_data(limit=1, end_ts=end_ts)
+        latest_spot = latest_spot_data[0]['close'] if latest_spot_data else 0
     
-    current_atm = round(latest_spot / 50) * 50 if latest_spot > 0 else (nifty_fetcher.current_atm_strike or open_atm)
+    current_atm = round(latest_spot / strike_step) * strike_step if latest_spot > 0 else (config.current_atm_strike or open_atm)
     
     def is_included(sym, strike, bucket_atm):
         if mode == 'total': return True
         base_atm = open_atm if mode == 'writer_open' else bucket_atm
         if not base_atm: return True
         # Symmetric ATM +/- 5 strikes (total 11 strikes)
-        if strike > base_atm + 250 or strike < base_atm - 250: return False
+        if strike > base_atm + 5 * strike_step or strike < base_atm - 5 * strike_step: return False
         # One-sided writing zone filtering
-        if sym.endswith('PE') and strike > base_atm + 100: return False
-        if sym.endswith('CE') and strike < base_atm - 100: return False
+        if sym.endswith('PE') and strike > base_atm + 2 * strike_step: return False
+        if sym.endswith('CE') and strike < base_atm - 2 * strike_step: return False
         return True
 
     # 4. Aggregate into custom-minute buckets
     bucket_data = []
     period_secs = interval_mins * 60
     
+    # Debug: log symbol count distribution
+    ts_counts = {ts: len(rows) for ts, rows in data_by_ts.items()}
+    all_counts = list(ts_counts.values())
+    expected_option_count = max(all_counts) if all_counts else 0
+    if all_counts:
+        max_sym = max(all_counts)
+        min_sym = min(all_counts)
+        full_candles = sum(1 for c in all_counts if c >= expected_option_count)
+        logger.info(f"[dash-time-analysis] tracked={len(tracked_symbols)} actual_max={expected_option_count} timestamps={len(all_counts)} min_syms={min_sym} max_syms={max_sym} full_candles={full_candles}")
+    else:
+        logger.warning(f"[dash-time-analysis] No option data found. historical_data rows={len(historical_data)}")
+
     # Define start of market (09:15 IST)
     if sorted_ts:
         market_start_ts = sorted_ts[0]
@@ -2027,8 +2110,8 @@ def nifty_dash_time_analysis():
     for ts in sorted_ts:
         if ts < market_start_ts: continue
         
-        # Skip incomplete candles (not all option symbols present)
-        if ts in data_by_ts and len(data_by_ts[ts]) < len(tracked_symbols):
+        # Skip incomplete candles (require all symbols that actually have data)
+        if ts in data_by_ts and len(data_by_ts[ts]) < expected_option_count:
             continue
         
         spot = nifty_by_ts.get(ts, 0)
@@ -2041,7 +2124,7 @@ def nifty_dash_time_analysis():
         
         if current_bucket and bucket_start != bucket_start_time:
             # Finalize the previous bucket's OI based on its OWN ATM
-            bucket_atm = round(current_bucket['ltp'] / 50) * 50 if current_bucket['ltp'] > 0 else current_atm
+            bucket_atm = round(current_bucket['ltp'] / strike_step) * strike_step if current_bucket['ltp'] > 0 else current_atm
             
             # Recalculate OI for the bucket based on its specific ATM
             bucket_ce_oi = 0
@@ -2083,7 +2166,7 @@ def nifty_dash_time_analysis():
 
     if current_bucket:
         # Finalize the last bucket (after loop)
-        bucket_atm = round(current_bucket['ltp'] / 50) * 50 if current_bucket['ltp'] > 0 else current_atm
+        bucket_atm = round(current_bucket['ltp'] / strike_step) * strike_step if current_bucket['ltp'] > 0 else current_atm
         bucket_ce_oi = 0
         bucket_pe_oi = 0
         last_ts_in_bucket = current_bucket['last_ts']
@@ -2158,15 +2241,18 @@ def nifty_hx_lx_vol():
     and total volumes at each timestamp.
     """
 
+    instrument = request.args.get('instrument', 'NIFTY')
+    config, strike_step, spot_symbol = get_instrument_config(instrument)
+
     # 1. Get ATM and Expiry from fetcher
-    atm_strike = nifty_fetcher.open_atm_strike or nifty_fetcher.current_atm_strike
-    expiry_date = nifty_fetcher.expiry_date
+    atm_strike = config.open_atm_strike or config.current_atm_strike
+    expiry_date = config.expiry_date
 
     if not atm_strike or not expiry_date:
         return jsonify({'status': 'success', 'data': [], 'message': 'ATM or Expiry not available.'})
 
     # 2. Generate 21 strikes around ATM (±10)
-    strikes = [atm_strike + (i * 50) for i in range(-10, 11)]
+    strikes = [atm_strike + (i * strike_step) for i in range(-10, 11)]
 
     # 3. Symbol helper (same pattern as signals-cross)
     def get_symbol_python(strike, type_):
@@ -2175,12 +2261,12 @@ def nifty_hx_lx_vol():
             day = date_obj.strftime("%d")
             month = date_obj.strftime("%b").upper()
             year = date_obj.strftime("%y")
-            return f"NIFTY{day}{month}{year}{strike}{type_}"
+            return f"{instrument}{day}{month}{year}{strike}{type_}"
         except Exception:
             return None
 
     # 4. Fetch historical data (1-minute candles)
-    historical_data = get_current_day_historical_data()
+    historical_data = get_current_day_historical_data(instrument=instrument)
     if not historical_data:
         return jsonify({'status': 'success', 'data': []})
 
@@ -2201,7 +2287,10 @@ def nifty_hx_lx_vol():
 @check_session_validity
 def nifty_support_resistance():
     """Calculates support and resistance strikes based on OI and COI for each timestamp."""
-    open_atm = nifty_fetcher.open_atm_strike
+    instrument = request.args.get('instrument', 'NIFTY')
+    config, strike_step, spot_symbol = get_instrument_config(instrument)
+
+    open_atm = config.open_atm_strike
     if not open_atm or open_atm == 0:
         return jsonify({
             'status': 'success', 
@@ -2218,14 +2307,13 @@ def nifty_support_resistance():
         })
 
     # Always use all strikes (option1)
-    expected_symbol_count = len(nifty_fetcher.option_symbols) + 1  # +1 for NIFTY index
 
     # Get previous day OI data for COI calculation
-    prev_day_data = get_previous_day_oi()
+    prev_day_data = get_previous_day_oi(instrument=instrument)
     prev_oi_map = {item['symbol']: item.get('oi', 0) for item in prev_day_data}
 
     # Get current day historical data
-    historical_data = get_current_day_historical_data()
+    historical_data = get_current_day_historical_data(instrument=instrument)
     if not historical_data:
         return jsonify({
             'status': 'success', 
@@ -2245,6 +2333,10 @@ def nifty_support_resistance():
     data_by_ts = defaultdict(list)
     for row in historical_data:
         data_by_ts[row['timestamp']].append(row)
+
+    max_syms_per_ts = max(len(rows) for rows in data_by_ts.values()) if data_by_ts else 0
+    expected_symbol_count = max_syms_per_ts
+    logger.info(f"[support-resistance] expected={expected_symbol_count} timestamps={len(data_by_ts)}")
 
     sorted_timestamps = sorted(data_by_ts.keys())
 
@@ -2267,8 +2359,8 @@ def nifty_support_resistance():
             symbol = item['symbol']
             current_oi = item.get('oi', 0)
             
-            # Skip NIFTY index symbol
-            if symbol == 'NIFTY':
+            # Skip spot index symbol
+            if symbol == spot_symbol:
                 continue
             
             # Extract strike price

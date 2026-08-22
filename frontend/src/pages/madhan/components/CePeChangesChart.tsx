@@ -5,6 +5,7 @@ import { RefreshCw } from 'lucide-react';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { useMadhanTheme } from '../useMadhanTheme';
+import { useInstrument } from '../InstrumentContext';
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -52,6 +53,7 @@ interface CePeChangesChartProps {
 }
 
 export function CePeChangesChart({ refreshTrigger }: CePeChangesChartProps) {
+    const { instrument } = useInstrument();
     const { mode } = useMadhanTheme();
     const [data, setData] = useState<CePeChangesData | null>(null);
     const [spotData, setSpotData] = useState<SpotData | null>(null);
@@ -68,6 +70,7 @@ export function CePeChangesChart({ refreshTrigger }: CePeChangesChartProps) {
                 upside_strikes: '10',
                 downside_strikes: '10'
             });
+            params.set('instrument', instrument);
             const response = await fetch(`/madhan/api/nifty/ce-pe-changes?${params.toString()}&_=${Date.now()}`);
             const json = await response.json();
             if (json.status === 'success') {
@@ -82,7 +85,7 @@ export function CePeChangesChart({ refreshTrigger }: CePeChangesChartProps) {
 
     const fetchSpotData = async () => {
         try {
-            const response = await fetch(`/madhan/api/nifty/spot-data?_=${Date.now()}`);
+            const response = await fetch(`/madhan/api/nifty/spot-data?instrument=${instrument}&_=${Date.now()}`);
             const json = await response.json();
             if (json.status === 'success') {
                 setSpotData(json.data);
@@ -95,7 +98,7 @@ export function CePeChangesChart({ refreshTrigger }: CePeChangesChartProps) {
     useEffect(() => {
         fetchData();
         fetchSpotData();
-    }, [refreshTrigger, strikeMode]);
+    }, [refreshTrigger, strikeMode, instrument]);
 
     const chartData: ChartData<'bar' | 'line'> = useMemo(() => {
         if (!data || !data.timestamps || data.timestamps.length === 0) {
