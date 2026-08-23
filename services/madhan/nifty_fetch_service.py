@@ -175,8 +175,9 @@ class IndexDataFetcher:
 
         existing = get_tracked_symbols()
         other_instruments = [s for s in existing if not s.startswith(self.instrument_name)]
-        self.option_symbols = sorted(list(set(other_instruments + symbols_to_track)))
-        save_tracked_symbols(self.option_symbols)
+        all_symbols = sorted(list(set(other_instruments + symbols_to_track)))
+        save_tracked_symbols(all_symbols)
+        self.option_symbols = sorted(symbols_to_track)
         logger.info(f"[{self.instrument_name}] Generated {len(symbols_to_track)} option symbols around ATM {self.open_atm_strike}.")
 
     def get_live_data(self, api_key, interval='1m', days_back=1):
