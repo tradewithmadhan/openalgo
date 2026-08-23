@@ -566,47 +566,46 @@ function Madhan01Inner() {
       
       <div className="flex-1 overflow-auto p-2 space-y-4">
       <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-        <div className="space-y-1">
-          <h1 className="text-2xl font-bold tracking-tight">Data Fetcher</h1>
-          <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-            <div className="flex items-center gap-1">
-              <span className={`flex h-2 w-2 rounded-full ${status?.is_running ? "bg-emerald-500 animate-pulse" : "bg-red-500"}`} />
-              <span className={status?.is_running ? "text-emerald-600 font-medium" : "text-red-600 font-medium"}>
-                {status?.message || "Checking status..."}
-              </span>
-            </div>
-            <span className="text-muted-foreground/30">|</span>
-            {/* Instrument Toggle */}
-            <div className="flex items-center bg-muted rounded-md p-0.5">
-              {(['NIFTY', 'BANKNIFTY'] as Instrument[]).map((inst) => (
-                <button
-                  key={inst}
-                  onClick={() => setInstrument(inst)}
-                  className={cn(
-                    "px-2.5 py-1 text-xs font-medium rounded transition-colors",
-                    instrument === inst
-                      ? "bg-primary text-primary-foreground shadow-sm"
-                      : "text-muted-foreground hover:text-foreground"
-                  )}
-                >
-                  {inst}
-                </button>
-              ))}
-            </div>
-            <span className="text-muted-foreground/30">|</span>
-            <div className="flex items-center gap-1">
-               <span className="font-semibold">Records:</span>
-               <span className="text-primary font-mono">
-                 {instrument === 'BANKNIFTY'
-                   ? (status?.banknifty_record_count?.toLocaleString('en-IN') ?? 0)
-                   : (status?.nifty_record_count?.toLocaleString('en-IN') ?? 0)}
-               </span>
-            </div>
-            <span className="text-muted-foreground/30">|</span>
-            <div className="flex items-center gap-1">
-               <span className="font-semibold">Expiry:</span>
-               <span className="text-secondary-foreground font-medium">{status?.expiry_date || "-"}</span>
-            </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <h1 className="text-2xl font-bold tracking-tight shrink-0">Data Fetcher</h1>
+          <span className="text-muted-foreground/30 hidden sm:inline">|</span>
+          <div className="flex items-center gap-1">
+            <span className={`flex h-2 w-2 rounded-full ${status?.is_running ? "bg-emerald-500 animate-pulse" : "bg-red-500"}`} />
+            <span className={status?.is_running ? "text-emerald-600 font-medium" : "text-red-600 font-medium"}>
+              {status?.message || "Checking status..."}
+            </span>
+          </div>
+          <span className="text-muted-foreground/30">|</span>
+          {/* Instrument Toggle */}
+          <div className="flex items-center bg-muted rounded-md p-0.5">
+            {(['NIFTY', 'BANKNIFTY'] as Instrument[]).map((inst) => (
+              <button
+                key={inst}
+                onClick={() => setInstrument(inst)}
+                className={cn(
+                  "px-2.5 py-1 text-xs font-medium rounded transition-colors",
+                  instrument === inst
+                    ? "bg-primary text-primary-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                {inst}
+              </button>
+            ))}
+          </div>
+          <span className="text-muted-foreground/30">|</span>
+          <div className="flex items-center gap-1">
+             <span className="font-semibold">Records:</span>
+             <span className="text-primary font-mono">
+               {instrument === 'BANKNIFTY'
+                 ? (status?.banknifty_record_count?.toLocaleString('en-IN') ?? 0)
+                 : (status?.nifty_record_count?.toLocaleString('en-IN') ?? 0)}
+             </span>
+          </div>
+          <span className="text-muted-foreground/30">|</span>
+          <div className="flex items-center gap-1">
+             <span className="font-semibold">Expiry:</span>
+             <span className="text-secondary-foreground font-medium">{status?.expiry_date || "-"}</span>
           </div>
         </div>
         
