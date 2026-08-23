@@ -357,6 +357,7 @@ function NiftyChartInner() {
       priceLineVisible: false,
       lastValueVisible: false,
       crosshairMarkerVisible: false,
+      visible: emaActive,
     })
     const ema55 = chart.addSeries(LineSeries, {
       color: 'red',
@@ -364,6 +365,7 @@ function NiftyChartInner() {
       priceLineVisible: false,
       lastValueVisible: false,
       crosshairMarkerVisible: false,
+      visible: emaActive,
     })
     let optionVolumeSeries: ISeriesApi<'Histogram'> | null = null
     optionVolumeSeries = chart.addSeries(HistogramSeries, {

@@ -7,6 +7,7 @@ import { Layout } from '@/components/layout/Layout'
 import { PageLoader } from '@/components/ui/page-loader'
 import { usePageTitle } from '@/hooks/usePageTitle'
 import { useBrokerStore } from '@/stores/brokerStore'
+import { InstrumentProvider } from '@/pages/madhan/InstrumentContext'
 
 // Lazy load all pages for code splitting
 // Public pages
@@ -317,7 +318,7 @@ function App() {
                 <Route path="/madhan/nifty-chart" element={<NiftyChart />} />
                 <Route path="/madhan/ATP-LTPStrategy" element={<ATPLTPStrategy />} />
                 <Route path="/madhan/ezay-chart" element={<EzayChart />} />
-                <Route path="/madhan/realtime-table" element={<RealtimeTablePage standalone />} />
+                <Route path="/madhan/realtime-table" element={<InstrumentProvider><RealtimeTablePage standalone /></InstrumentProvider>} />
                 <Route path="/playground" element={<Playground />} />
                 <Route path="/trading" element={<Trading />} />
                 <Route path="/historify" element={<Historify />} />
