@@ -137,6 +137,10 @@ export default function EzaySignals({ className, style, backtestDate, refreshTri
   }, [refreshTrigger, fetchData])
 
   useEffect(() => {
+    fetchData()
+  }, [instrument, fetchData])
+
+  useEffect(() => {
     if (scrollRef.current && data.length > prevDataLenRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight
     }
@@ -198,35 +202,35 @@ export default function EzaySignals({ className, style, backtestDate, refreshTri
         <div className="ml-auto flex items-center gap-1.5 text-[10px]" style={{ color: t.textSecondary }}>
           <button
             onClick={() => setCeFilter(!ceFilter)}
-            className={cn('px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors', ceFilter ? 'bg-green-600 text-white' : 'hover:bg-gray-600')}
+            className={cn('px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors', ceFilter ? 'bg-green-600 text-white' : 'hover:opacity-80')}
             style={ceFilter ? {} : { color: t.textSecondary }}
           >CE</button>
           <button
             onClick={() => setPeFilter(!peFilter)}
-            className={cn('px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors', peFilter ? 'bg-red-600 text-white' : 'hover:bg-gray-600')}
+            className={cn('px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors', peFilter ? 'bg-red-600 text-white' : 'hover:opacity-80')}
             style={peFilter ? {} : { color: t.textSecondary }}
           >PE</button>
           <button
             onClick={() => setCpFilter(!cpFilter)}
-            className={cn('px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors', cpFilter ? 'bg-yellow-500 text-black' : 'hover:bg-gray-600')}
+            className={cn('px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors', cpFilter ? 'bg-yellow-500 text-black' : 'hover:opacity-80')}
             style={cpFilter ? {} : { color: t.textSecondary }}
           >CP</button>
           <button
             onClick={() => setHcFilter(!hcFilter)}
-            className={cn('px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors', hcFilter ? 'bg-cyan-700 text-white' : 'hover:bg-gray-600')}
+            className={cn('px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors', hcFilter ? 'bg-cyan-700 text-white' : 'hover:opacity-80')}
             style={hcFilter ? {} : { color: t.textSecondary }}
             title="Higher Close: CE signal only if CE>PE, PE signal only if PE>CE"
           >HC</button>
           <button
             onClick={() => setThFilter(!thFilter)}
-            className={cn('px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors', thFilter ? 'bg-purple-600 text-white' : 'hover:bg-gray-600')}
+            className={cn('px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors', thFilter ? 'bg-purple-600 text-white' : 'hover:opacity-80')}
             style={thFilter ? {} : { color: t.textSecondary }}
             title="Touch: CE and PE candle OHLC ranges overlap"
           >TH</button>
           {hasAnyFilter && (
             <button
               onClick={() => { setCeFilter(false); setPeFilter(false); setCpFilter(false); setHcFilter(false); setThFilter(false) }}
-              className="px-1 py-0.5 rounded text-[10px] hover:bg-gray-600"
+              className="px-1 py-0.5 rounded text-[10px] hover:opacity-80"
               style={{ color: t.textMuted }}
             >Clear</button>
           )}
