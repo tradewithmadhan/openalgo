@@ -488,6 +488,7 @@ function NiftyChartInner() {
         try { candleRef.current.detachPrimitive(volumeProfileRef.current as any) } catch {}
       }
       volumeProfileRef.current = null
+      try { drawing.drawingManagerRef.current?.clearAll() } catch {}
       rawSignalDataRef.current = []
       chart.remove()
       chartRef.current = null
