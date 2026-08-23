@@ -94,7 +94,7 @@ class BankNiftyData(Base):
     oi = Column(Integer)
 
 class OptionData(Base):
-    """SQLAlchemy model for storing Nifty options 1-minute data."""
+    """SQLAlchemy model for storing Nifty/BankNifty options 1-minute data."""
     __tablename__ = 'option_data'
     id = Column(Integer, primary_key=True)
     timestamp = Column(Integer, nullable=False, comment="Unix timestamp in seconds")
@@ -121,7 +121,7 @@ class TrackedSymbol(Base):
     symbol = Column(String, primary_key=True, unique=True)
 
 class FetcherState(Base):
-    """Stores key-value state for the Nifty fetcher to persist across restarts."""
+    """Stores key-value state for the data fetcher to persist across restarts."""
     __tablename__ = 'madhan_fetcher_state'
     key = Column(String, primary_key=True, unique=True)
     value = Column(String)
@@ -208,7 +208,7 @@ def store_banknifty_data(df: pd.DataFrame):
         session.close()
 
 def store_option_data(df: pd.DataFrame):
-    """Efficiently upserts (inserts or updates) Nifty options data into the database."""
+    """Efficiently upserts (inserts or updates) Nifty/BankNifty options data into the database."""
     if df.empty:
         return
 

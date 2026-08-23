@@ -310,7 +310,7 @@ export function CePeStrikeChangesChart({ refreshTrigger, atmStrike }: CePeStrike
 
             datasets.push({
                 type: 'line' as const,
-                label: 'Nifty Spot',
+                label: `${instrument} Spot`,
                 data: alignedSpotPrices,
                 borderColor: 'rgba(156, 163, 175, 1)', // Fallback
                 backgroundColor: 'transparent',
@@ -407,7 +407,7 @@ export function CePeStrikeChangesChart({ refreshTrigger, atmStrike }: CePeStrike
                 },
                 title: {
                     display: true,
-                    text: 'Nifty Spot',
+                    text: `${instrument} Spot`,
                     color: textColor
                 }
             }

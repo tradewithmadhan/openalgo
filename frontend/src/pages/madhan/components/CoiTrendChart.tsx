@@ -97,7 +97,7 @@ export function CoiTrendChart({ refreshTrigger }: CoiTrendChartProps) {
         }
     };
 
-    // WebSocket Connection for live NIFTY spot LTP
+    // WebSocket Connection for live spot LTP
     useEffect(() => {
         if (!isLive) {
             if (wsRef.current) {

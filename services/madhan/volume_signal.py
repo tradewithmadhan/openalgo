@@ -6,8 +6,8 @@ Single source of truth for:
 - compute_spike_flags() — spike detection on pre-computed values
 
 Spike detection has THREE triggers (OR logic):
-  1. Upside peak:  NIFTY high > max of last 3 highs + volume at 3-candle high + volume > rolling avg
-  2. Downside valley: NIFTY low < min of last 3 lows + volume at 3-candle high + volume > rolling avg
+  1. Upside peak:  spot high > max of last 3 highs + volume at 3-candle high + volume > rolling avg
+  2. Downside valley: spot low < min of last 3 lows + volume at 3-candle high + volume > rolling avg
   3. Volume surge (existing): combined > rolling_avg * THRESHOLD
 """
 
@@ -91,8 +91,8 @@ def compute_spike_flags(combined_values, nifty_highs=None, nifty_lows=None):
 
     Parameters:
         combined_values: list of combined CE+PE volume per candle
-        nifty_highs: list of NIFTY high per candle (same length as combined_values)
-        nifty_lows: list of NIFTY low per candle (same length as combined_values)
+        nifty_highs: list of spot high per candle (same length as combined_values)
+        nifty_lows: list of spot low per candle (same length as combined_values)
 
     Returns list of booleans (same length as combined_values).
     """

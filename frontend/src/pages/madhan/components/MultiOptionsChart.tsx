@@ -459,7 +459,7 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
             color: spotColor,
             lineWidth: 1,
             priceScaleId: 'left',
-            title: 'Nifty Spot',
+            title: `${instrument} Spot`,
         });
         spotSeriesRef.current = spotSeries;
 

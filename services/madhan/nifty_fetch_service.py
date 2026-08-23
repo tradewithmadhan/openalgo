@@ -315,7 +315,7 @@ class NiftyDataFetcher:
     def start(self, api_key: str):
         """Starts the data fetching thread."""
         if self.is_running:
-            logger.warning("Nifty fetcher is already running.")
+            logger.warning("Data fetcher is already running.")
             return False
         
         # Wait for any lingering old thread to finish before clearing DB
@@ -332,20 +332,20 @@ class NiftyDataFetcher:
         self.thread = threading.Thread(target=self._run, daemon=True)
         self.thread.start()
         self.is_running = True
-        logger.info("Nifty data fetcher started.")
+        logger.info("Data fetcher started.")
         return True
 
     def stop(self):
         """Stops the data fetching thread."""
         if not self.is_running:
-            logger.warning("Nifty fetcher is not running.")
+            logger.warning("Data fetcher is not running.")
             return
         
         self.stop_event.set()
         self.thread.join(timeout=5) # Wait for the thread to finish
         self.is_running = False
         self.status = "Stopped"
-        logger.info("Nifty data fetcher stopped.")
+        logger.info("Data fetcher stopped.")
 
     def _auto_start_scheduler(self):
         """Background thread that auto-starts the fetcher at NFO start time on trading days."""
@@ -475,7 +475,7 @@ class NiftyDataFetcher:
             self.start(api_key)
         
     def get_nifty_live_data(self, interval: str = '1m', days_back: int = 1):
-        """Get NIFTY OHLC data for the lightweight chart. Delegates to nifty config."""
+        """Get NIFTY OHLC data for the lightweight chart."""
         return self.nifty.get_live_data(self.api_key, interval, days_back)
 
     def get_instrument_live_data(self, instrument: str, interval: str = '1m', days_back: int = 1):

@@ -45,7 +45,7 @@ def atp_ltp_strategy_page():
 @madhan_bp.route('/madhan02')
 @check_session_validity
 def madhan02_page():
-    """Render the MadhaN02 page with only Nifty 1-Min Data Fetcher"""
+    """Render the MadhaN02 page with Nifty/BankNifty 1-Min Data Fetcher"""
     # Get the API key from the fetcher if available
     api_key = getattr(nifty_fetcher, 'api_key', '')
     return render_template('madhan/index.html', api_key=api_key)
@@ -280,7 +280,7 @@ def get_historical_data():
 @madhan_bp.route('/api/nifty/start', methods=['POST'])
 @check_session_validity
 def start_nifty_fetch():
-    """Starts the background Nifty data fetching service."""
+    """Starts the background Nifty/BankNifty data fetching service."""
     username = session.get('user')
     api_key = get_api_key_for_tradingview(username)
     if not api_key:
@@ -293,14 +293,14 @@ def start_nifty_fetch():
         return jsonify({'status': 'info', 'message': f'{nifty_fetcher.status}. Data already available.'})
 
     nifty_fetcher.start(api_key)
-    return jsonify({'status': 'success', 'message': 'Nifty data fetching process started.'})
+    return jsonify({'status': 'success', 'message': 'Nifty/BankNifty data fetching process started.'})
 
 @madhan_bp.route('/api/nifty/stop', methods=['POST'])
 @check_session_validity
 def stop_nifty_fetch():
-    """Stops the background Nifty data fetching service."""
+    """Stops the background Nifty/BankNifty data fetching service."""
     nifty_fetcher.stop()
-    return jsonify({'status': 'success', 'message': 'Nifty data fetching process stopped.'})
+    return jsonify({'status': 'success', 'message': 'Nifty/BankNifty data fetching process stopped.'})
 
 @madhan_bp.route('/api/nifty/status')
 @check_session_validity
@@ -350,7 +350,7 @@ def nifty_data():
 @madhan_bp.route('/api/nifty/option-data')
 @check_session_validity
 def nifty_option_data():
-    """Gets the latest stored Nifty options data."""
+    """Gets the latest stored Nifty/BankNifty options data."""
     instrument = request.args.get('instrument', 'NIFTY')
     data = get_option_data(instrument=instrument)
     return jsonify({'status': 'success', 'data': data})
@@ -570,7 +570,7 @@ def nifty_coi_trend():
 @madhan_bp.route('/api/nifty/spot-data')
 @check_session_validity
 def nifty_spot_data():
-    """Gets historical spot data for Nifty."""
+    """Gets historical spot data for Nifty/BankNifty."""
     instrument = request.args.get('instrument', 'NIFTY')
     config, strike_step, spot_symbol = get_instrument_config(instrument)
 
@@ -949,7 +949,7 @@ def nifty_ce_pe_strike_volume_changes():
 @madhan_bp.route('/nifty_chart_data')
 @check_session_validity
 def nifty_chart_data():
-    """Provides Nifty price data for the lightweight chart."""
+    """Provides Nifty/BankNifty price data for the lightweight chart."""
     try:
         # Use the existing service function to get Nifty data
         # This function is assumed to return a list of dictionaries

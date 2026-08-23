@@ -127,7 +127,7 @@ export function SupportResistanceChart({ refreshTrigger }: SupportResistanceChar
                         if (type === 'auth' && message.status === 'success') {
                             console.log('[WS] Auth success, subscribing...');
                             showToast.success('Live connection established');
-                            // Subscribe to NIFTY
+                            // Subscribe to spot index
                             socket.send(JSON.stringify({ 
                                 action: 'subscribe', 
                                 symbols: [{ symbol: instrument, exchange: 'NSE_INDEX' }],

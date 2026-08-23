@@ -1494,7 +1494,7 @@ function EzayChartInner() {
 
     loadStrikes()
 
-    // Start NiftyFetcher on page open
+    // Start data fetcher on page open
     fetch(`/madhan/api/nifty/start?instrument=${instrument}`, { method: 'POST' }).catch(() => {})
 
     return () => {

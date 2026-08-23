@@ -449,7 +449,7 @@ function NiftyChartInner() {
     })
     resizeObserver.observe(chartContainerRef.current)
 
-    // Start NiftyFetcher on page open
+    // Start data fetcher on page open
     fetch(`/madhan/api/nifty/start?instrument=${instrument}`, { method: 'POST' }).catch(() => {})
 
     return () => {
