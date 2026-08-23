@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router'
 import { io, type Socket } from 'socket.io-client'
 import { toast } from 'sonner'
 import { type AlertCategories, useAlertStore } from '@/stores/alertStore'
+import { useMadhanSignalStore } from '@/stores/madhanSignalStore'
 import { useAuthStore } from '@/stores/authStore'
 import { useSessionStore } from '@/stores/sessionStore'
 
@@ -334,6 +335,28 @@ export function useSocket() {
     socket.on('app_notification', (data: { title: string; message: string; category?: string; level?: string }) => {
       const level = (data.level || 'info') as 'success' | 'error' | 'warning' | 'info'
       const category = (data.category || 'madhan') as keyof AlertCategories
+
+      // Check per-instrument signal toggles for madhan category
+      if (category === 'madhan') {
+        const { atp_ltp_signal, volume_spike, atp_ltp_nifty, atp_ltp_banknifty, volume_spike_nifty, volume_spike_banknifty } = useMadhanSignalStore.getState()
+        const title = data.title || ''
+        const isNifty = title.startsWith('NIFTY')
+        const isBanknifty = title.startsWith('BANKNIFTY')
+        const isVolumeSpike = title.includes('Volume Spike')
+        const isAtpLtp = title.includes('Signal') && !isVolumeSpike
+
+        if (isAtpLtp) {
+          if (!atp_ltp_signal) return
+          if (isNifty && !atp_ltp_nifty) return
+          if (isBanknifty && !atp_ltp_banknifty) return
+        }
+        if (isVolumeSpike) {
+          if (!volume_spike) return
+          if (isNifty && !volume_spike_nifty) return
+          if (isBanknifty && !volume_spike_banknifty) return
+        }
+      }
+
       playAlertSound(category)
       showCategoryToast(level, `${data.title}: ${data.message}`, category)
     })

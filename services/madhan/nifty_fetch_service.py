@@ -636,7 +636,7 @@ class NiftyDataFetcher:
 
             emit_notification(
                 'app_notification',
-                'Volume Spike',
+                f'{config.instrument_name} Volume Spike',
                 f'CE: {ce_vol:,.0f} | PE: {pe_vol:,.0f} | Combined: {combined:,.0f}',
                 category='madhan',
                 level='warning',
