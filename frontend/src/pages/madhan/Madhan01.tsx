@@ -1289,54 +1289,44 @@ function Madhan01Inner() {
                 <>
                   <div className="flex items-center justify-between py-1 pl-3 border-l-2">
                     <span className="text-sm">ATP-LTP Signal</span>
-                    <Switch
-                      checked={atp_ltp_signal}
-                      onCheckedChange={(checked) => setToggle('atp_ltp_signal', checked)}
-                    />
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] text-muted-foreground">NY</span>
+                      <Switch
+                        checked={atp_ltp_nifty}
+                        onCheckedChange={(checked) => setToggle('atp_ltp_nifty', checked)}
+                      />
+                      <span className="text-[10px] text-muted-foreground">BN</span>
+                      <Switch
+                        checked={atp_ltp_banknifty}
+                        onCheckedChange={(checked) => setToggle('atp_ltp_banknifty', checked)}
+                      />
+                      <div className="w-px h-4 bg-border" />
+                      <Switch
+                        checked={atp_ltp_signal}
+                        onCheckedChange={(checked) => setToggle('atp_ltp_signal', checked)}
+                      />
+                    </div>
                   </div>
-                  {atp_ltp_signal && (
-                    <>
-                      <div className="flex items-center justify-between py-1 pl-6 border-l-2">
-                        <span className="text-xs text-muted-foreground">NIFTY</span>
-                        <Switch
-                          checked={atp_ltp_nifty}
-                          onCheckedChange={(checked) => setToggle('atp_ltp_nifty', checked)}
-                        />
-                      </div>
-                      <div className="flex items-center justify-between py-1 pl-6 border-l-2">
-                        <span className="text-xs text-muted-foreground">BANKNIFTY</span>
-                        <Switch
-                          checked={atp_ltp_banknifty}
-                          onCheckedChange={(checked) => setToggle('atp_ltp_banknifty', checked)}
-                        />
-                      </div>
-                    </>
-                  )}
                   <div className="flex items-center justify-between py-1 pl-3 border-l-2">
                     <span className="text-sm">Volume Spike</span>
-                    <Switch
-                      checked={volume_spike}
-                      onCheckedChange={(checked) => setToggle('volume_spike', checked)}
-                    />
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] text-muted-foreground">NY</span>
+                      <Switch
+                        checked={volume_spike_nifty}
+                        onCheckedChange={(checked) => setToggle('volume_spike_nifty', checked)}
+                      />
+                      <span className="text-[10px] text-muted-foreground">BN</span>
+                      <Switch
+                        checked={volume_spike_banknifty}
+                        onCheckedChange={(checked) => setToggle('volume_spike_banknifty', checked)}
+                      />
+                      <div className="w-px h-4 bg-border" />
+                      <Switch
+                        checked={volume_spike}
+                        onCheckedChange={(checked) => setToggle('volume_spike', checked)}
+                      />
+                    </div>
                   </div>
-                  {volume_spike && (
-                    <>
-                      <div className="flex items-center justify-between py-1 pl-6 border-l-2">
-                        <span className="text-xs text-muted-foreground">NIFTY</span>
-                        <Switch
-                          checked={volume_spike_nifty}
-                          onCheckedChange={(checked) => setToggle('volume_spike_nifty', checked)}
-                        />
-                      </div>
-                      <div className="flex items-center justify-between py-1 pl-6 border-l-2">
-                        <span className="text-xs text-muted-foreground">BANKNIFTY</span>
-                        <Switch
-                          checked={volume_spike_banknifty}
-                          onCheckedChange={(checked) => setToggle('volume_spike_banknifty', checked)}
-                        />
-                      </div>
-                    </>
-                  )}
                 </>
               )}
             </CardContent>
