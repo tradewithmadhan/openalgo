@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, type ReactNode } from 'react'
+import { createContext, useContext, useState, useEffect, type ReactNode } from 'react'
 
 export type Instrument = 'NIFTY' | 'BANKNIFTY'
 
@@ -10,6 +10,16 @@ interface InstrumentContextType {
   spotSymbol: Instrument
 }
 
+const STORAGE_KEY = 'madhan-instrument'
+
+function getStoredInstrument(): Instrument {
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY)
+    if (stored === 'NIFTY' || stored === 'BANKNIFTY') return stored
+  } catch {}
+  return 'NIFTY'
+}
+
 const InstrumentContext = createContext<InstrumentContextType>({
   instrument: 'NIFTY',
   setInstrument: () => {},
@@ -19,9 +29,14 @@ const InstrumentContext = createContext<InstrumentContextType>({
 })
 
 export function InstrumentProvider({ children }: { children: ReactNode }) {
-  const [instrument, setInstrument] = useState<Instrument>('NIFTY')
+  const [instrument, setInstrument] = useState<Instrument>(getStoredInstrument)
   const strikeStep = instrument === 'BANKNIFTY' ? 100 : 50
   const lotSize = instrument === 'BANKNIFTY' ? 30 : 65
+
+  useEffect(() => {
+    try { localStorage.setItem(STORAGE_KEY, instrument) } catch {}
+  }, [instrument])
+
   return (
     <InstrumentContext.Provider value={{ instrument, setInstrument, strikeStep, lotSize, spotSymbol: instrument }}>
       {children}
