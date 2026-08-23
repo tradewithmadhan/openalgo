@@ -144,6 +144,7 @@ export default function NiftyChart() {
 
 function NiftyChartInner() {
   const { instrument, setInstrument } = useInstrument();
+  const prevInstrumentRef = useRef(instrument)
   const chartContainerRef = useRef<HTMLDivElement | null>(null)
   const chartRef = useRef<IChartApi | null>(null)
   const candleRef = useRef<ISeriesApi<'Candlestick'> | null>(null)
@@ -488,7 +489,6 @@ function NiftyChartInner() {
         try { candleRef.current.detachPrimitive(volumeProfileRef.current as any) } catch {}
       }
       volumeProfileRef.current = null
-      try { drawing.drawingManagerRef.current?.clearAll() } catch {}
       rawSignalDataRef.current = []
       chart.remove()
       chartRef.current = null
@@ -508,6 +508,17 @@ function NiftyChartInner() {
       },
     })
   }, [madhanMode])
+
+  useEffect(() => {
+    if (chartReady && prevInstrumentRef.current !== instrument) {
+      prevInstrumentRef.current = instrument
+      const dm = drawing.drawingManagerRef.current
+      if (dm) {
+        try { dm.clearAll() } catch {}
+        drawing.setTick((n) => n + 1)
+      }
+    }
+  }, [instrument, chartReady])
 
   const calculateEMA = (data: Candle[], period: number) => {
     if (data.length < period) return []
