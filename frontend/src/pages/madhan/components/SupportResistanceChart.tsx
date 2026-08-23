@@ -493,7 +493,7 @@ export function SupportResistanceChart({ refreshTrigger }: SupportResistanceChar
                 </div>
             </CardHeader>
             <CardContent className="p-0">
-                <div ref={chartContainerRef} className="w-full h-[calc(100vh-300px)]" />
+                <div ref={chartContainerRef} className="w-full h-[calc(100vh-280px)]" />
             </CardContent>
         </Card>
     );

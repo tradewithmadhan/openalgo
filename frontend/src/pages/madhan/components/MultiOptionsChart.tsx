@@ -1347,7 +1347,7 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
     }, [wsData, strikes, timeframe, showMeet]);
 
     return (
-        <div className="flex h-[calc(100vh-280px)] w-full gap-2">
+        <div className="flex h-[calc(100vh-180px)] w-full gap-2">
             <Card className="w-24 flex-shrink-0 flex flex-col">
                 <CardHeader className="p-1">
                     <CardTitle className="text-xs">Strikes</CardTitle>
