@@ -6,6 +6,7 @@ interface InstrumentContextType {
   instrument: Instrument
   setInstrument: (inst: Instrument) => void
   strikeStep: number
+  lotSize: number
   spotSymbol: Instrument
 }
 
@@ -13,14 +14,16 @@ const InstrumentContext = createContext<InstrumentContextType>({
   instrument: 'NIFTY',
   setInstrument: () => {},
   strikeStep: 50,
+  lotSize: 65,
   spotSymbol: 'NIFTY',
 })
 
 export function InstrumentProvider({ children }: { children: ReactNode }) {
   const [instrument, setInstrument] = useState<Instrument>('NIFTY')
   const strikeStep = instrument === 'BANKNIFTY' ? 100 : 50
+  const lotSize = instrument === 'BANKNIFTY' ? 30 : 65
   return (
-    <InstrumentContext.Provider value={{ instrument, setInstrument, strikeStep, spotSymbol: instrument }}>
+    <InstrumentContext.Provider value={{ instrument, setInstrument, strikeStep, lotSize, spotSymbol: instrument }}>
       {children}
     </InstrumentContext.Provider>
   )

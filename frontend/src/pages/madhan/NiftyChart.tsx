@@ -2939,7 +2939,7 @@ function NiftyChartInner() {
               style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 12, lineHeight: '18px' }}
             >
               <div className="flex items-center gap-3" style={{ color: t.text }}>
-                <span className="font-semibold" style={{ color: t.text }}>NIFTY 50</span>
+                <span className="font-semibold" style={{ color: t.text }}>{instrument === 'BANKNIFTY' ? 'BANKNIFTY' : 'NIFTY 50'}</span>
                 <span style={{ color: t.textMuted }}>·</span>
                 <span style={{ color: t.textMuted }}>{interval.toUpperCase()}</span>
               </div>

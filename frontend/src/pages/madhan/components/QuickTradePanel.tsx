@@ -2,9 +2,8 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { Minus, Square, X, GripVertical } from 'lucide-react'
 import { useMadhanTheme } from '../useMadhanTheme'
 import { chartTheme } from '../chartTheme'
+import { useInstrument } from '../InstrumentContext'
 import type { PlaceOrderRequest } from '@/types/trading'
-
-const LOT_SIZE = 65
 const PRICE_TYPES = ['MARKET', 'LIMIT', 'SL', 'SL-M'] as const
 const PRODUCTS = ['MIS', 'NRML'] as const
 
@@ -45,6 +44,7 @@ export default function QuickTradePanel({
 }: QuickTradePanelProps) {
   const { mode } = useMadhanTheme()
   const t = chartTheme[mode]
+  const { lotSize } = useInstrument()
 
   const [side, setSide] = useState<'CE' | 'PE'>('CE')
   const [action, setAction] = useState<'BUY' | 'SELL'>('BUY')
@@ -61,7 +61,7 @@ export default function QuickTradePanel({
 
   const ltp = side === 'CE' ? ceLtp : peLtp
   const symbol = side === 'CE' ? ceSymbol : peSymbol
-  const qty = lots * LOT_SIZE
+  const qty = lots * lotSize
   const amount = qty * ltp
 
   useEffect(() => {
