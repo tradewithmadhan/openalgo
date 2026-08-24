@@ -985,20 +985,20 @@ class NiftyDataFetcher:
 
                 # --- Phase 3: Fetch BANKNIFTY options ---
                 if spot_results.get("BANKNIFTY") and self.banknifty.option_symbols:
-                    self.status = "Fetching BANKNIFTY options..."
+                    self.status = f"Fetching {self.banknifty.instrument_name} options..."
                     opt_start = time.time()
                     self._fetch_and_store_options_data(self.banknifty, today_str, today_str)
-                    logger.info(f"[BANKNIFTY] Options fetched in {time.time() - opt_start:.2f}s")
+                    logger.info(f"[{self.banknifty.instrument_name}] Options fetched in {time.time() - opt_start:.2f}s")
                     self.banknifty.last_update = datetime.now(pytz.timezone('Asia/Kolkata'))
 
                     try:
                         self._check_and_emit_trade_signal(self.banknifty, today_str)
                     except Exception as e:
-                        logger.debug(f"Signal check skipped for BANKNIFTY: {e}")
+                        logger.debug(f"Signal check skipped for {self.banknifty.instrument_name}: {e}")
                     try:
                         self._check_and_emit_volume_spike(self.banknifty, today_str)
                     except Exception as e:
-                        logger.debug(f"Volume spike check skipped for BANKNIFTY: {e}")
+                        logger.debug(f"Volume spike check skipped for {self.banknifty.instrument_name}: {e}")
 
                 cycle_elapsed = time.time() - cycle_start
                 last_ts = self.banknifty.last_update or self.nifty.last_update
