@@ -43,8 +43,8 @@ def detect_volume_spike(all_historical_data, instrument='NIFTY'):
 
     sorted_timestamps = sorted(data_by_ts.keys())
     result = []
-    nifty_highs = []
-    nifty_lows = []
+    spot_highs = []
+    spot_lows = []
 
     for ts in sorted_timestamps:
         total_ce_volume = 0
@@ -74,36 +74,36 @@ def detect_volume_spike(all_historical_data, instrument='NIFTY'):
             'combined': combined,
             'is_spike': False,
         })
-        nifty_highs.append(spot_high)
-        nifty_lows.append(spot_low)
+        spot_highs.append(spot_high)
+        spot_lows.append(spot_low)
 
     combined_values = [r['combined'] for r in result]
-    spike_flags = _compute_spike_flags(combined_values, nifty_highs, nifty_lows)
+    spike_flags = _compute_spike_flags(combined_values, spot_highs, spot_lows)
     for i, is_spike in enumerate(spike_flags):
         result[i]['is_spike'] = is_spike
 
     return result
 
 
-def compute_spike_flags(combined_values, nifty_highs=None, nifty_lows=None):
+def compute_spike_flags(combined_values, spot_highs=None, spot_lows=None):
     """
     Detect spikes from pre-computed combined volume values.
 
     Parameters:
         combined_values: list of combined CE+PE volume per candle
-        nifty_highs: list of spot high per candle (same length as combined_values)
-        nifty_lows: list of spot low per candle (same length as combined_values)
+        spot_highs: list of spot high per candle (same length as combined_values)
+        spot_lows: list of spot low per candle (same length as combined_values)
 
     Returns list of booleans (same length as combined_values).
     """
-    return _compute_spike_flags(combined_values, nifty_highs, nifty_lows)
+    return _compute_spike_flags(combined_values, spot_highs, spot_lows)
 
 
-def _compute_spike_flags(combined_values, nifty_highs=None, nifty_lows=None):
+def _compute_spike_flags(combined_values, spot_highs=None, spot_lows=None):
     n = len(combined_values)
     vol_spike = [False] * n
 
-    has_nifty_data = nifty_highs is not None and nifty_lows is not None
+    has_spot_data = spot_highs is not None and spot_lows is not None
     last_signal_vol = None  # Track previous signal volume for deduplication
 
     for i in range(WARMUP, n):
@@ -116,23 +116,23 @@ def _compute_spike_flags(combined_values, nifty_highs=None, nifty_lows=None):
         existing_spike = avg > 0 and combined_values[i] > avg * THRESHOLD
 
         new_pattern = False
-        if has_nifty_data and i >= LOOKBACK:
-            highs_window = nifty_highs[i - LOOKBACK:i]
-            lows_window = nifty_lows[i - LOOKBACK:i]
+        if has_spot_data and i >= LOOKBACK:
+            highs_window = spot_highs[i - LOOKBACK:i]
+            lows_window = spot_lows[i - LOOKBACK:i]
             vols_window = combined_values[i - LOOKBACK:i]
 
-            highs_valid = all(h is not None for h in highs_window) and nifty_highs[i] is not None
-            lows_valid = all(l is not None for l in lows_window) and nifty_lows[i] is not None
+            highs_valid = all(h is not None for h in highs_window) and spot_highs[i] is not None
+            lows_valid = all(l is not None for l in lows_window) and spot_lows[i] is not None
             vols_valid = all(v > 0 for v in vols_window) and combined_values[i] > 0
 
             if highs_valid and vols_valid:
-                price_peak = nifty_highs[i] > max(highs_window)
+                price_peak = spot_highs[i] > max(highs_window)
                 vol_peak = combined_values[i] > max(vols_window)
                 if price_peak and vol_peak and combined_values[i] > avg * 1.8:
                     new_pattern = True
 
             if not new_pattern and lows_valid and vols_valid:
-                price_valley = nifty_lows[i] < min(lows_window)
+                price_valley = spot_lows[i] < min(lows_window)
                 vol_peak = combined_values[i] > max(vols_window)
                 if price_valley and vol_peak and combined_values[i] > avg * 1.8:
                     new_pattern = True

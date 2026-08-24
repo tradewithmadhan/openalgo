@@ -821,8 +821,8 @@ def nifty_ce_pe_volume_changes():
     timestamps_res = []
     ce_changes_res = []
     pe_changes_res = []
-    nifty_highs_res = []
-    nifty_lows_res = []
+    spot_highs_res = []
+    spot_lows_res = []
 
     for ts in sorted_timestamps:
         if len(data_by_ts[ts]) < expected_symbol_count:
@@ -831,16 +831,16 @@ def nifty_ce_pe_volume_changes():
 
         total_ce_volume = 0
         total_pe_volume = 0
-        nifty_high = None
-        nifty_low = None
+        spot_high = None
+        spot_low = None
 
         for item in data_by_ts[ts]:
             symbol = item['symbol']
             volume = item.get('volume', 0)
 
             if symbol == spot_symbol:
-                nifty_high = item.get('high')
-                nifty_low = item.get('low')
+                spot_high = item.get('high')
+                spot_low = item.get('low')
                 continue
 
             if strike_selection_mode == 'option2':
@@ -864,11 +864,11 @@ def nifty_ce_pe_volume_changes():
         timestamps_res.append(ts * 1000)
         ce_changes_res.append(total_ce_volume)
         pe_changes_res.append(total_pe_volume)
-        nifty_highs_res.append(nifty_high)
-        nifty_lows_res.append(nifty_low)
+        spot_highs_res.append(spot_high)
+        spot_lows_res.append(spot_low)
 
     combined = [abs(ce_changes_res[i]) + abs(pe_changes_res[i]) for i in range(len(ce_changes_res))]
-    vol_spike = compute_spike_flags(combined, nifty_highs=nifty_highs_res, nifty_lows=nifty_lows_res)
+    vol_spike = compute_spike_flags(combined, spot_highs=spot_highs_res, spot_lows=spot_lows_res)
 
     return jsonify({'status': 'success', 'data': {'timestamps': timestamps_res, 'ce_changes': ce_changes_res, 'pe_changes': pe_changes_res, 'vol_spike': vol_spike}})
 
@@ -897,8 +897,8 @@ def nifty_ce_pe_strike_volume_changes():
     timestamps_res = []
     ce_changes_res = []
     pe_changes_res = []
-    nifty_highs_res = []
-    nifty_lows_res = []
+    spot_highs_res = []
+    spot_lows_res = []
 
     for ts in sorted(data_by_ts.keys()):
         rows = data_by_ts[ts]
@@ -907,16 +907,16 @@ def nifty_ce_pe_strike_volume_changes():
         total_pe_volume = 0
         found_ce = False
         found_pe = False
-        nifty_high = None
-        nifty_low = None
+        spot_high = None
+        spot_low = None
 
         for row in rows:
             symbol = row["symbol"]
             current_volume = row.get("volume", 0)
 
             if symbol == spot_symbol:
-                nifty_high = row.get("high")
-                nifty_low = row.get("low")
+                spot_high = row.get("high")
+                spot_low = row.get("low")
                 continue
 
             if extract_strike(symbol) != strike_price:
@@ -935,11 +935,11 @@ def nifty_ce_pe_strike_volume_changes():
         timestamps_res.append(ts * 1000)
         ce_changes_res.append(total_ce_volume)
         pe_changes_res.append(total_pe_volume)
-        nifty_highs_res.append(nifty_high)
-        nifty_lows_res.append(nifty_low)
+        spot_highs_res.append(spot_high)
+        spot_lows_res.append(spot_low)
 
     combined = [abs(ce_changes_res[i]) + abs(pe_changes_res[i]) for i in range(len(ce_changes_res))]
-    vol_spike = compute_spike_flags(combined, nifty_highs=nifty_highs_res, nifty_lows=nifty_lows_res)
+    vol_spike = compute_spike_flags(combined, spot_highs=spot_highs_res, spot_lows=spot_lows_res)
 
     return jsonify({
         "timestamps": timestamps_res,
@@ -2045,14 +2045,14 @@ def nifty_dash_time_analysis():
 
     # Group by timestamp
     data_by_ts = defaultdict(list)
-    nifty_by_ts = {}
+    spot_by_ts = {}
     for row in historical_data:
         if row['symbol'] == spot_symbol:
-            nifty_by_ts[row['timestamp']] = row['close']
+            spot_by_ts[row['timestamp']] = row['close']
         else:
             data_by_ts[row['timestamp']].append(row)
 
-    sorted_ts = sorted(nifty_by_ts.keys())
+    sorted_ts = sorted(spot_by_ts.keys())
     if not sorted_ts:
         # Fallback if NIFTY spot not found in historical, use option timestamps
         sorted_ts = sorted(data_by_ts.keys())
@@ -2062,7 +2062,7 @@ def nifty_dash_time_analysis():
     open_atm = config.open_atm_strike
     
     # Calculate current ATM based on latest spot in the window
-    latest_spot = nifty_by_ts.get(sorted_ts[-1], 0)
+    latest_spot = spot_by_ts.get(sorted_ts[-1], 0)
     if end_ts and latest_spot == 0:
         latest_spot_data = get_banknifty_data(limit=1, end_ts=end_ts) if instrument == 'BANKNIFTY' else get_nifty_data(limit=1, end_ts=end_ts)
         latest_spot = latest_spot_data[0]['close'] if latest_spot_data else 0
@@ -2117,7 +2117,7 @@ def nifty_dash_time_analysis():
         if ts in data_by_ts and len(data_by_ts[ts]) < expected_option_count:
             continue
         
-        spot = nifty_by_ts.get(ts, 0)
+        spot = spot_by_ts.get(ts, 0)
         if spot > 0:
             day_high_spot = max(day_high_spot, spot)
             day_low_spot = min(day_low_spot, spot)

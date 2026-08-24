@@ -164,14 +164,14 @@ def process_historical_atp_data(all_historical_data, current_atm_strike, instrum
 
     # Group by timestamp and accumulate volume-weighted data by symbol
     data_by_ts = defaultdict(list)
-    nifty_by_ts = {}
+    spot_by_ts = {}
     symbol_volume_data = {}
 
     all_historical_data.sort(key=lambda x: x['timestamp'])
 
     for row in all_historical_data:
         if row['symbol'] == instrument:
-            nifty_by_ts[row['timestamp']] = row['close']
+            spot_by_ts[row['timestamp']] = row['close']
         else:
             data_by_ts[row['timestamp']].append(row)
 
@@ -213,7 +213,7 @@ def process_historical_atp_data(all_historical_data, current_atm_strike, instrum
             }
 
     # Sort timestamps and filter market hours
-    sorted_ts = sorted(nifty_by_ts.keys())
+    sorted_ts = sorted(spot_by_ts.keys())
     today_trading = get_valid_trading_day(exchange="NSE")
     market_open = datetime.combine(today_trading, time(9, 15))
     market_close = datetime.combine(today_trading, time(15, 30))
@@ -230,7 +230,7 @@ def process_historical_atp_data(all_historical_data, current_atm_strike, instrum
         if ts < market_open_ts or ts > market_close_ts:
             continue
 
-        historical_spot_ltp = nifty_by_ts.get(ts, 0)
+        historical_spot_ltp = spot_by_ts.get(ts, 0)
         if historical_spot_ltp == 0:
             continue
 

@@ -534,28 +534,28 @@ Each component needs:
 
 ### P2 — Minor Bugs (Should Fix)
 
-#### Issue 5: Market close check not instrument-scoped
+#### Issue 5: Market close check not instrument-scoped — ✅ DONE
 
 - **File:** `services/madhan/nifty_fetch_service.py`, line 989
 - **Code:** `get_last_option_candle_timestamp()` queries max timestamp across ALL option symbols (NIFTY + BANKNIFTY combined). Could cause premature/delayed fetcher shutdown.
 - **Fix:** Use `get_last_option_candle_timestamp_for_instrument(instrument)` per instrument, or check both instruments are done before stopping.
 - **Impact of fix:** Fetcher stops at correct time when both instruments' data is complete. Minor edge case — primarily affects market close behavior.
 
-#### Issue 6: Spot row styling hardcodes `symbol === 'NIFTY'`
+#### Issue 6: Spot row styling hardcodes `symbol === 'NIFTY'` — ✅ DONE
 
 - **File:** `frontend/src/pages/madhan/Madhan01.tsx`, line 1132
 - **Code:** `const isNifty = symbol === 'NIFTY'` — used for blue tint highlight on spot row. BANKNIFTY spot row gets wrong styling (falls through to PE red).
 - **Fix:** Change to `const isSpotIndex = symbol === instrument` (or `symbol === 'NIFTY' || symbol === 'BANKNIFTY'`).
 - **Impact of fix:** BANKNIFTY spot row gets correct blue highlight. Purely cosmetic.
 
-#### Issue 7: `dtick: 50` hardcoded in ATPLTPStrategy Plotly chart
+#### Issue 7: `dtick: 50` hardcoded in ATPLTPStrategy Plotly chart — ✅ DONE
 
 - **File:** `frontend/src/pages/madhan/ATPLTPStrategy.tsx`, line 432
 - **Code:** `dtick: 50` — Y-axis tick interval. Too dense for BANKNIFTY (~50,000 spot).
 - **Fix:** Change to `dtick: instrument === 'BANKNIFTY' ? 200 : 50` (or derive dynamically).
 - **Impact of fix:** BANKNIFTY chart Y-axis shows readable tick marks. NIFTY unchanged.
 
-#### Issue 8: `spotPriceRef = useRef(25500)` in RealtimeTable
+#### Issue 8: `spotPriceRef = useRef(25500)` in RealtimeTable — ✅ DONE
 
 - **File:** `frontend/src/pages/madhan/RealtimeTable.tsx`, line 46
 - **Code:** Default 25500 is NIFTY-appropriate. Briefly shows wrong ATM before live data arrives.
@@ -587,12 +587,12 @@ Each component needs:
 
 ### Recommended Fix Order
 
-1. **Issue 2** (ATP-LTP symbol filtering) — Highest risk, could produce wrong signals
-2. **Issue 1** (`/nifty_chart_data`) — Blocks NiftyChart from showing BANKNIFTY data
-3. **Issue 3** (Backtest endpoints) — Blocks backtest from working with BANKNIFTY
-4. **Issue 4** (DB migration) — Prevents OI data for existing BANKNIFTY databases
-5. **Issue 6** (Spot row styling) — Quick cosmetic fix
-6. **Issue 7** (dtick) — Quick cosmetic fix
-7. **Issue 5** (Market close) — Edge case, lower priority
-8. **Issue 8** (spotPriceRef) — Trivial fix
-9. **Issues 9-11** (Naming) — No functional impact, can batch together
+1. ~~**Issue 2** (ATP-LTP symbol filtering) — Highest risk, could produce wrong signals~~
+2. ~~**Issue 1** (`/nifty_chart_data`) — Blocks NiftyChart from showing BANKNIFTY data~~
+3. ~~**Issue 3** (Backtest endpoints) — Blocks backtest from working with BANKNIFTY~~
+4. ~~**Issue 4** (DB migration) — Prevents OI data for existing BANKNIFTY databases~~
+5. ~~**Issue 6** (Spot row styling) — Quick cosmetic fix~~ ✅ DONE
+6. ~~**Issue 7** (dtick) — Quick cosmetic fix~~ ✅ DONE
+7. ~~**Issue 5** (Market close) — Edge case, lower priority~~ ✅ DONE
+8. ~~**Issue 8** (spotPriceRef) — Trivial fix~~ ✅ DONE
+9. **Issues 9-11** (Naming) — No functional impact, can batch together — IN PROGRESS
