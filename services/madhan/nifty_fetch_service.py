@@ -972,8 +972,12 @@ class NiftyDataFetcher:
                         logger.warning(f"[{config.instrument_name}] Incremental spot fetch failed: {result_spot.get('message', 'Unknown error')}")
 
                 cycle_elapsed = time.time() - cycle_start
-                cycle_time = datetime.now(pytz.timezone('Asia/Kolkata')).strftime('%H:%M:%S')
+                cycle_time_dt = datetime.now(pytz.timezone('Asia/Kolkata'))
+                cycle_time = cycle_time_dt.strftime('%H:%M:%S')
                 self.status = f"Running - Last update: {cycle_time}"
+                # Sync both instruments' last_update to full cycle completion time
+                self.nifty.last_update = cycle_time_dt
+                self.banknifty.last_update = cycle_time_dt
                 logger.info(f"Full fetch cycle (both instruments) completed in {cycle_elapsed:.2f}s")
 
                 # --- MARKET CLOSE CHECK ---
