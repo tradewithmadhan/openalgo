@@ -1146,19 +1146,146 @@ def _parquet_path(date_str: str) -> str:
     return os.path.join(_BACKTEST_DATA_DIR, f'{date_str}-index-nfo-data.parquet')
 
 
+def _db_parquet_path(date_str: str) -> str:
+    """Returns the DB-exported parquet file path (fallback when original is missing)."""
+    return os.path.join(_BACKTEST_DATA_DIR, f'{date_str}-db-export.parquet')
+
+
+_MONTH_MAP = {
+    'JAN': 1, 'FEB': 2, 'MAR': 3, 'APR': 4, 'MAY': 5, 'JUN': 6,
+    'JUL': 7, 'AUG': 8, 'SEP': 9, 'OCT': 10, 'NOV': 11, 'DEC': 12,
+}
+
+
+def _parse_expiry_from_symbol(symbol: str):
+    """Parse expiry date from NFO symbol like NIFTY29AUG2524000CE → date(2025, 8, 29)."""
+    import re as _re
+    m = _re.search(r'(\d{2})([A-Z]{3})(\d{2})', symbol)
+    if not m:
+        return None
+    day, mon_str, yr = int(m.group(1)), m.group(2), int(m.group(3))
+    mon = _MONTH_MAP.get(mon_str)
+    if not mon:
+        return None
+    year = 2000 + yr
+    try:
+        return date(year, mon, day)
+    except ValueError:
+        return None
+
+
+def export_db_to_parquet(date_str: str):
+    """Export today's DB data (NIFTY + BANKNIFTY) to parquet format for backtest fallback.
+
+    Reads from NiftyData/BankNiftyData (spot) and OptionData (options),
+    transforms to match the existing parquet schema, and saves to
+    db/options_data/{date_str}-db-export.parquet.
+    """
+    IST = _pytz.timezone('Asia/Kolkata')
+    session = SessionLocal()
+    try:
+        selected_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+        start_of_day = IST.localize(datetime(selected_date.year, selected_date.month, selected_date.day, 9, 15, 0))
+        end_of_day = IST.localize(datetime(selected_date.year, selected_date.month, selected_date.day, 15, 30, 0))
+        start_ts = int(start_of_day.timestamp())
+        end_ts = int(end_of_day.timestamp())
+
+        rows = []
+
+        # --- SPOT data (both NIFTY and BANKNIFTY) ---
+        for instrument, SpotModel, spot_name, spot_symbol in [
+            ('NIFTY', NiftyData, 'NIFTY 50', 'NIFTY'),
+            ('BANKNIFTY', BankNiftyData, 'NIFTY BANK', 'BANKNIFTY'),
+        ]:
+            spot_records = session.query(SpotModel).filter(
+                SpotModel.timestamp >= start_ts,
+                SpotModel.timestamp <= end_ts,
+            ).order_by(SpotModel.timestamp).all()
+
+            for r in spot_records:
+                dt = datetime.fromtimestamp(r.timestamp, tz=IST)
+                rows.append({
+                    'date': dt,
+                    'open': r.open,
+                    'high': r.high,
+                    'low': r.low,
+                    'close': r.close,
+                    'volume': r.volume or 0,
+                    'oi': float('nan'),
+                    'symbol': spot_symbol,
+                    'name': spot_name,
+                    'expiry': None,
+                    'strike': 0.0,
+                    'instrument_type': 'SPOT',
+                })
+
+        # --- Option data (both NIFTY and BANKNIFTY) ---
+        opt_records = session.query(OptionData).filter(
+            OptionData.timestamp >= start_ts,
+            OptionData.timestamp <= end_ts,
+        ).order_by(OptionData.timestamp).all()
+
+        for r in opt_records:
+            dt = datetime.fromtimestamp(r.timestamp, tz=IST)
+            inst = 'BANKNIFTY' if r.symbol.startswith('BANKNIFTY') else 'NIFTY'
+            is_ce = r.symbol.endswith('CE')
+            is_pe = r.symbol.endswith('PE')
+            inst_type = 'CE' if is_ce else ('PE' if is_pe else 'XX')
+            strike_val = extract_strike(r.symbol) or 0
+            expiry_val = _parse_expiry_from_symbol(r.symbol)
+
+            rows.append({
+                'date': dt,
+                'open': r.open,
+                'high': r.high,
+                'low': r.low,
+                'close': r.close,
+                'volume': r.volume or 0,
+                'oi': float(r.oi) if r.oi else float('nan'),
+                'symbol': r.symbol,
+                'name': inst,
+                'expiry': expiry_val,
+                'strike': float(strike_val),
+                'instrument_type': inst_type,
+            })
+
+        if not rows:
+            logger.warning(f"export_db_to_parquet: No data found on {date_str}")
+            return
+
+        df = pd.DataFrame(rows)
+
+        # Ensure directory exists
+        os.makedirs(_BACKTEST_DATA_DIR, exist_ok=True)
+        out_path = _db_parquet_path(date_str)
+        df.to_parquet(out_path, index=False)
+        spot_count = len(df[df['instrument_type'] == 'SPOT'])
+        opt_count = len(df[df['instrument_type'].isin(['CE', 'PE'])])
+        logger.info(f"Exported {len(df)} rows (spot={spot_count}, options={opt_count}) to {out_path}")
+    except Exception as e:
+        logger.error(f"export_db_to_parquet failed for {date_str}: {e}")
+        raise
+    finally:
+        session.close()
+
+
 def get_backtest_available_dates() -> list[str]:
     """Scans the parquet data directory and returns sorted list of available dates.
-    Extracts date from filenames like '2025-11-04-index-nfo-data.parquet'."""
+    Extracts date from filenames like '2025-11-04-index-nfo-data.parquet'
+    or '2025-11-04-db-export.parquet'."""
     if not os.path.isdir(_BACKTEST_DATA_DIR):
         return []
-    dates = []
+    dates = set()
     for f in os.listdir(_BACKTEST_DATA_DIR):
+        d = None
         if f.endswith('-index-nfo-data.parquet'):
             d = f.replace('-index-nfo-data.parquet', '')
-            # Validate date format
+        elif f.endswith('-db-export.parquet'):
+            d = f.replace('-db-export.parquet', '')
+        if d:
             try:
                 datetime.strptime(d, '%Y-%m-%d')
-                dates.append(d)
+                dates.add(d)
             except ValueError:
                 continue
     return sorted(dates)
@@ -1180,6 +1307,8 @@ def get_backtest_day_data(date_str: str, instrument: str = 'NIFTY') -> dict | No
     option_name = 'BANKNIFTY' if instrument == 'BANKNIFTY' else 'NIFTY'
 
     path = _parquet_path(date_str)
+    if not os.path.exists(path):
+        path = _db_parquet_path(date_str)
     if not os.path.exists(path):
         return None
 

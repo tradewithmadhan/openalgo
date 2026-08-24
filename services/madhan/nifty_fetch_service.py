@@ -21,7 +21,7 @@ from database.madhan_db import (
     get_valid_trading_day, clear_madhan_db, validate_backfill_consistency,
     get_current_day_historical_data, get_last_option_candle_timestamp,
     get_last_option_candle_timestamp_for_instrument,
-    get_lot_size
+    get_lot_size, export_db_to_parquet
 )
 from database.market_calendar_db import is_market_holiday, get_market_timings_for_date
 from database.auth_db import get_first_available_api_key_with_user
@@ -1028,6 +1028,11 @@ class NiftyDataFetcher:
                         else:
                             both_done = False
                     if both_done:
+                        today_str = datetime.now().strftime('%Y-%m-%d')
+                        try:
+                            export_db_to_parquet(today_str)
+                        except Exception as e:
+                            logger.error(f"Failed to export to parquet: {e}")
                         logger.info(f"Market closed. Both NIFTY and BANKNIFTY last candles fetched. Stopping fetcher.")
                         self.is_running = False
                         self.status = "Stopped (Market Closed)"
