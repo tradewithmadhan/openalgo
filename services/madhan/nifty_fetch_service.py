@@ -924,10 +924,20 @@ class NiftyDataFetcher:
 
             try:
                 now = datetime.now()
-                if now.weekday() >= 5:
-                    logger.info("Market is closed for the weekend. Stopping fetcher.")
+                today_date = now.date()
+                is_off = now.weekday() >= 5 or is_market_holiday(today_date, exchange="NSE")
+                if is_off:
+                    reason = "Weekend" if now.weekday() >= 5 else "Holiday"
+                    logger.info(f"Market is closed ({reason}). Stopping fetcher.")
+                    last_trading_day = get_valid_trading_day()
+                    last_td_str = last_trading_day.strftime('%Y-%m-%d')
+                    try:
+                        export_db_to_parquet(last_td_str)
+                        logger.info(f"Exported last trading day ({last_td_str}) to parquet.")
+                    except Exception as e:
+                        logger.error(f"Failed to export last trading day to parquet: {e}")
                     self.is_running = False
-                    self.status = "Stopped (Weekend)"
+                    self.status = f"Stopped ({reason})"
                     self.stop_event.set()
                     break
 
