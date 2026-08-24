@@ -478,3 +478,121 @@ Each component needs:
 | `frontend/src/pages/madhan/ATPLTPStrategy.tsx` | Add instrument selector | ~20 |
 | `frontend/src/pages/madhan/RealtimeTable.tsx` | Add instrument selector | ~20 |
 | **Total** | | **~940 lines** |
+
+---
+
+## Phase 10: Post-Implementation Audit — Pending Issues
+
+**Audit Date:** 2026-08-23
+**Status:** Identified during BANKNIFTY integration testing
+
+### P1 — Functional Bugs (Must Fix)
+
+#### Issue 1: `/nifty_chart_data` endpoint ignores BANKNIFTY
+
+- **File:** `blueprints/madhan.py`, line 957
+- **Code:** `data = get_nifty_data()` — always returns NIFTY data regardless of instrument.
+- **Fix:** Add `instrument = request.args.get('instrument', 'NIFTY')` and branch to `get_banknifty_data()` when `instrument == 'BANKNIFTY'`.
+- **Impact of fix:** NiftyChart and other pages using this endpoint will correctly show BANKNIFTY OHLC data when BANKNIFTY is selected. No impact on NIFTY (default unchanged).
+
+#### Issue 2: `/api/atp-ltp-data` symbol lookup mixes NIFTY + BANKNIFTY symbols
+
+- **File:** `blueprints/madhan.py`, lines 114-161
+- **Code:** `tracked_symbols = get_tracked_symbols()` returns ALL symbols (NIFTY + BANKNIFTY). ATM/ITM lookup loops iterate all symbols without filtering by instrument prefix. If both instruments share a strike number (e.g., NIFTY 24000 vs BANKNIFTY 24000), wrong symbols could be resolved.
+- **Fix:** Filter `tracked_symbols` by instrument before iterating:
+  ```python
+  instrument = request.args.get('instrument', 'NIFTY')
+  tracked_symbols = [s for s in get_tracked_symbols() if s.startswith(instrument)]
+  ```
+- **Impact of fix:** ATP-LTP signals resolve correct ATM/ITM symbols per instrument. No functional change for NIFTY-only usage.
+
+#### Issue 3: Backtest endpoints hardcoded to NIFTY
+
+- **File:** `blueprints/madhan.py`, lines 1713-1822 (5 endpoints)
+- **Endpoints:** `/api/nifty/backtest_dates`, `/api/nifty/backtest_strikes`, `/api/nifty/backtest_chart_data`, `/api/nifty/backtest_signals`, `/api/nifty/backtest_range`
+- **Code:** All 5 endpoints accept no `instrument` parameter. Underlying DB functions in `database/madhan_db.py` hardcode `'NIFTY'`, `'NIFTY 50'`, and strike step `50`.
+- **Fix:** Add `instrument` query param to all 5 endpoints. Update DB functions (`get_backtest_day_data`, `get_backtest_strikes`, `get_backtest_signals`, `get_backtest_chart_data`, `get_backtest_range`) to accept `instrument` param and use it for:
+  - Spot symbol filter: `df['name'] == instrument` (was `'NIFTY 50'`)
+  - Option symbol filter: `df['name'] == instrument` (was `'NIFTY'`)
+  - Strike generation step: dynamic per instrument (was hardcoded `50`)
+- **Impact of fix:** Backtest features work for BANKNIFTY. NIFTY backtest unchanged (default param). Backward compatible if `instrument` defaults to `'NIFTY'`.
+
+#### Issue 4: `init_db()` migration missing `banknifty_data` table check
+
+- **File:** `database/madhan_db.py`, lines 130-150
+- **Code:** `init_db()` only checks and adds `oi` column to `nifty_data` table. `banknifty_data` is not checked. `Base.metadata.create_all()` does not alter existing tables — only creates missing ones.
+- **Fix:** Add parallel migration check for `banknifty_data`:
+  ```python
+  if inspector.has_table('banknifty_data'):
+      bn_columns = [c['name'] for c in inspector.get_columns('banknifty_data')]
+      if 'oi' not in bn_columns:
+          with engine.connect() as connection:
+              with connection.begin():
+                  connection.execute(text('ALTER TABLE banknifty_data ADD COLUMN oi INTEGER'))
+  ```
+- **Impact of fix:** Existing databases get `oi` column added to `banknifty_data` automatically. No impact on fresh installs (create_all handles it).
+
+### P2 — Minor Bugs (Should Fix)
+
+#### Issue 5: Market close check not instrument-scoped
+
+- **File:** `services/madhan/nifty_fetch_service.py`, line 989
+- **Code:** `get_last_option_candle_timestamp()` queries max timestamp across ALL option symbols (NIFTY + BANKNIFTY combined). Could cause premature/delayed fetcher shutdown.
+- **Fix:** Use `get_last_option_candle_timestamp_for_instrument(instrument)` per instrument, or check both instruments are done before stopping.
+- **Impact of fix:** Fetcher stops at correct time when both instruments' data is complete. Minor edge case — primarily affects market close behavior.
+
+#### Issue 6: Spot row styling hardcodes `symbol === 'NIFTY'`
+
+- **File:** `frontend/src/pages/madhan/Madhan01.tsx`, line 1132
+- **Code:** `const isNifty = symbol === 'NIFTY'` — used for blue tint highlight on spot row. BANKNIFTY spot row gets wrong styling (falls through to PE red).
+- **Fix:** Change to `const isSpotIndex = symbol === instrument` (or `symbol === 'NIFTY' || symbol === 'BANKNIFTY'`).
+- **Impact of fix:** BANKNIFTY spot row gets correct blue highlight. Purely cosmetic.
+
+#### Issue 7: `dtick: 50` hardcoded in ATPLTPStrategy Plotly chart
+
+- **File:** `frontend/src/pages/madhan/ATPLTPStrategy.tsx`, line 432
+- **Code:** `dtick: 50` — Y-axis tick interval. Too dense for BANKNIFTY (~50,000 spot).
+- **Fix:** Change to `dtick: instrument === 'BANKNIFTY' ? 200 : 50` (or derive dynamically).
+- **Impact of fix:** BANKNIFTY chart Y-axis shows readable tick marks. NIFTY unchanged.
+
+#### Issue 8: `spotPriceRef = useRef(25500)` in RealtimeTable
+
+- **File:** `frontend/src/pages/madhan/RealtimeTable.tsx`, line 46
+- **Code:** Default 25500 is NIFTY-appropriate. Briefly shows wrong ATM before live data arrives.
+- **Fix:** Change to `useRef(0)` — ref is reset to 0 on instrument change anyway.
+- **Impact of fix:** No brief wrong ATM display on initial load. Minor cosmetic.
+
+### P3 — Naming/Maintenance (Nice to Fix)
+
+#### Issue 9: `volume_signal.py` variables named "nifty"
+
+- **File:** `services/madhan/volume_signal.py`, lines 46-135
+- **Variables:** `nifty_highs`, `nifty_lows`, `has_nifty_data` — all generic instrument-agnostic code.
+- **Fix:** Rename to `spot_highs`, `spot_lows`, `has_spot_data`.
+- **Impact:** No functional change. Maintenance/readability improvement.
+
+#### Issue 10: `atp_signal.py` variable named "nifty"
+
+- **File:** `services/madhan/atp_signal.py`, lines 167-233
+- **Variable:** `nifty_by_ts` — stores spot close for any instrument.
+- **Fix:** Rename to `spot_by_ts`.
+- **Impact:** No functional change. Maintenance/readability improvement.
+
+#### Issue 11: `blueprints/madhan.py` local variables use "nifty" prefix
+
+- **File:** `blueprints/madhan.py`, lines 821-936, 2045-2117
+- **Variables:** `nifty_highs_res`, `nifty_lows_res`, `nifty_by_ts` — generic instrument-agnostic code.
+- **Fix:** Rename to `spot_highs_res`, `spot_lows_res`, `spot_by_ts`.
+- **Impact:** No functional change. Maintenance/readability improvement.
+
+### Recommended Fix Order
+
+1. **Issue 2** (ATP-LTP symbol filtering) — Highest risk, could produce wrong signals
+2. **Issue 1** (`/nifty_chart_data`) — Blocks NiftyChart from showing BANKNIFTY data
+3. **Issue 3** (Backtest endpoints) — Blocks backtest from working with BANKNIFTY
+4. **Issue 4** (DB migration) — Prevents OI data for existing BANKNIFTY databases
+5. **Issue 6** (Spot row styling) — Quick cosmetic fix
+6. **Issue 7** (dtick) — Quick cosmetic fix
+7. **Issue 5** (Market close) — Edge case, lower priority
+8. **Issue 8** (spotPriceRef) — Trivial fix
+9. **Issues 9-11** (Naming) — No functional impact, can batch together

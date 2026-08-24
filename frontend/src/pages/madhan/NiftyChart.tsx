@@ -8,6 +8,7 @@ import {
   CrosshairMode,
   createChart,
   createSeriesMarkers,
+  createTextWatermark,
   HistogramSeries,
   LineSeries,
   LineStyle,
@@ -173,6 +174,7 @@ function NiftyChartInner() {
   const sqrtActiveRef = useRef(false)
   const coiHistoryPrimitiveRef = useRef<any>(null)
   const volumeProfileRef = useRef<VolumeProfilePrimitive | null>(null)
+  const instrumentWatermarkRef = useRef<any>(null)
 
   const [interval, setIntervalValue] = useState('5m')
   const [oiActive, setOiActive] = useState(true)
@@ -408,6 +410,25 @@ function NiftyChartInner() {
     const volumeProfile = new VolumeProfilePrimitive(candle, chart.timeScale())
     try { candle.attachPrimitive(volumeProfile as any) } catch {}
     volumeProfileRef.current = volumeProfile
+
+    // Instrument watermark — top center of chart
+    if (instrumentWatermarkRef.current) {
+      try { instrumentWatermarkRef.current.detach() } catch {}
+      instrumentWatermarkRef.current = null
+    }
+    const isDarkMode = madhanMode === 'dark'
+    instrumentWatermarkRef.current = createTextWatermark(chart.panes()[0], {
+      horzAlign: 'center',
+      vertAlign: 'top',
+      lines: [{
+        text: instrument,
+        color: isDarkMode ? 'rgba(166,173,187,0.3)' : 'rgba(0,0,0,0.15)',
+        fontSize: 48,
+        fontFamily: 'Arial, sans-serif',
+        fontStyle: 'bold',
+      }],
+    })
+
     createCoiTrendPane()
     setChartReady(true)
 
@@ -489,6 +510,10 @@ function NiftyChartInner() {
         try { candleRef.current.detachPrimitive(volumeProfileRef.current as any) } catch {}
       }
       volumeProfileRef.current = null
+      if (instrumentWatermarkRef.current) {
+        try { instrumentWatermarkRef.current.detach() } catch {}
+        instrumentWatermarkRef.current = null
+      }
       rawSignalDataRef.current = []
       chart.remove()
       chartRef.current = null
@@ -507,6 +532,24 @@ function NiftyChartInner() {
         borderColor: isDark ? 'rgba(166,173,187,0.2)' : 'rgba(0,0,0,0.2)',
       },
     })
+    // Update watermark color on theme change
+    if (instrumentWatermarkRef.current) {
+      try { instrumentWatermarkRef.current.detach() } catch {}
+      instrumentWatermarkRef.current = null
+    }
+    if (chartRef.current) {
+      instrumentWatermarkRef.current = createTextWatermark(chartRef.current.panes()[0], {
+        horzAlign: 'center',
+        vertAlign: 'top',
+        lines: [{
+          text: instrument,
+          color: isDark ? 'rgba(166,173,187,0.3)' : 'rgba(0,0,0,0.15)',
+          fontSize: 48,
+          fontFamily: 'Arial, sans-serif',
+          fontStyle: 'bold',
+        }],
+      })
+    }
   }, [madhanMode])
 
   useEffect(() => {
@@ -2781,7 +2824,6 @@ function NiftyChartInner() {
           </div>
           <div className="h-4 w-px bg-border" />
           <div className="flex items-center gap-1">
-            <Label className="text-[11px]">Interval</Label>
             <Select value={interval} onValueChange={setIntervalValue}>
               <SelectTrigger className="h-7 w-20 text-[11px]"><SelectValue /></SelectTrigger>
               <SelectContent>
