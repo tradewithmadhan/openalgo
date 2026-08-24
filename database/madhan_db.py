@@ -1184,6 +1184,11 @@ def export_db_to_parquet(date_str: str):
     IST = _pytz.timezone('Asia/Kolkata')
     session = SessionLocal()
     try:
+        # Skip if db-export already exists for this date
+        existing_path = _db_parquet_path(date_str)
+        if os.path.exists(existing_path):
+            logger.debug(f"export_db_to_parquet: {existing_path} already exists, skipping.")
+            return
         selected_date = datetime.strptime(date_str, '%Y-%m-%d').date()
         start_of_day = IST.localize(datetime(selected_date.year, selected_date.month, selected_date.day, 9, 15, 0))
         end_of_day = IST.localize(datetime(selected_date.year, selected_date.month, selected_date.day, 15, 30, 0))
