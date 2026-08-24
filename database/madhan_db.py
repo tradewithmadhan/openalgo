@@ -1310,6 +1310,13 @@ def get_backtest_day_data(date_str: str, instrument: str = 'NIFTY') -> dict | No
     if not os.path.exists(path):
         path = _db_parquet_path(date_str)
     if not os.path.exists(path):
+        # Lazy export: generate db-export from DB if neither parquet exists (covers weekends)
+        try:
+            export_db_to_parquet(date_str)
+            path = _db_parquet_path(date_str)
+        except Exception:
+            pass
+    if not os.path.exists(path):
         return None
 
     df = pd.read_parquet(path)
