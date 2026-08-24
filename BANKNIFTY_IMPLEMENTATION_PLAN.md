@@ -506,7 +506,7 @@ Each component needs:
   ```
 - **Impact of fix:** ATP-LTP signals resolve correct ATM/ITM symbols per instrument. No functional change for NIFTY-only usage.
 
-#### Issue 3: Backtest endpoints hardcoded to NIFTY
+#### Issue 3: Backtest endpoints hardcoded to NIFTY — ✅ DONE
 
 - **File:** `blueprints/madhan.py`, lines 1713-1822 (5 endpoints)
 - **Endpoints:** `/api/nifty/backtest_dates`, `/api/nifty/backtest_strikes`, `/api/nifty/backtest_chart_data`, `/api/nifty/backtest_signals`, `/api/nifty/backtest_range`

@@ -21,7 +21,7 @@ from database.madhan_db import (
     get_valid_trading_day, clear_madhan_db, validate_backfill_consistency,
     get_current_day_historical_data, get_last_option_candle_timestamp,
     get_last_option_candle_timestamp_for_instrument,
-    get_lot_size, get_banknifty_lot_size
+    get_lot_size
 )
 from database.market_calendar_db import is_market_holiday, get_market_timings_for_date
 from database.auth_db import get_first_available_api_key_with_user
@@ -273,7 +273,7 @@ class NiftyDataFetcher:
             exchange="NSE_INDEX",
             strike_step=50,
             store_fn=store_nifty_data,
-            lot_size_fn=get_lot_size,
+            lot_size_fn=lambda ts: get_lot_size('NIFTY', ts),
         )
         self.banknifty = IndexDataFetcher(
             instrument_name="BANKNIFTY",
@@ -281,7 +281,7 @@ class NiftyDataFetcher:
             exchange="NSE_INDEX",
             strike_step=100,
             store_fn=store_banknifty_data,
-            lot_size_fn=get_banknifty_lot_size,
+            lot_size_fn=lambda ts: get_lot_size('BANKNIFTY', ts),
         )
 
         # Start auto-start scheduler (daemon thread sleeps until 9:15 AM IST)

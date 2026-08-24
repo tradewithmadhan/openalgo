@@ -1122,36 +1122,23 @@ STRATEGY_REGISTRY = {
 STRATEGIES = list(STRATEGY_REGISTRY.keys())
 
 
-def get_lot_size(unix_ts: int) -> int:
-    """Returns historical lot size based on date. Matches live system values."""
+def get_lot_size(instrument: str, unix_ts: int) -> int:
+    """Returns historical lot size for NIFTY or BANKNIFTY based on date."""
     IST = _pytz.timezone('Asia/Kolkata')
     dt = datetime.fromtimestamp(unix_ts, tz=IST).date()
-    if dt >= date(2026, 1, 1):
-        return 65
-    if dt >= date(2024, 11, 1):
-        return 75
-    if dt >= date(2024, 4, 1):
+    if instrument == 'BANKNIFTY':
+        if dt >= date(2025, 1, 1):   return 30
+        if dt >= date(2024, 11, 1):  return 15
+        if dt >= date(2024, 4, 1):   return 15
         return 25
-    if dt >= date(2015, 10, 1):
-        return 75
-    if dt >= date(2014, 10, 1):
-        return 25
-    if dt >= date(2007, 2, 1):
+    else:  # NIFTY
+        if dt >= date(2026, 1, 1):   return 65
+        if dt >= date(2024, 11, 1):  return 75
+        if dt >= date(2024, 4, 1):   return 25
+        if dt >= date(2015, 10, 1):  return 75
+        if dt >= date(2014, 10, 1):  return 25
+        if dt >= date(2007, 2, 1):   return 50
         return 50
-    return 50
-
-
-def get_banknifty_lot_size(unix_ts: int) -> int:
-    """Returns historical BankNifty lot size based on date."""
-    IST = _pytz.timezone('Asia/Kolkata')
-    dt = datetime.fromtimestamp(unix_ts, tz=IST).date()
-    if dt >= date(2025, 1, 1):
-        return 30
-    if dt >= date(2024, 11, 1):
-        return 15
-    if dt >= date(2024, 4, 1):
-        return 15
-    return 25
 
 
 def _parquet_path(date_str: str) -> str:
@@ -1177,21 +1164,21 @@ def get_backtest_available_dates() -> list[str]:
     return sorted(dates)
 
 
-def get_backtest_day_data(date_str: str) -> dict | None:
+def get_backtest_day_data(date_str: str, instrument: str = 'NIFTY') -> dict | None:
     """Reads a parquet file for the given date and returns pre-processed data.
 
     Returns None if file not found.  Result dict contains:
-        - spot_data: list[dict] — NIFTY 50 SPOT 1-min candles (timestamp, open, high, low, close, volume)
-        - options_df: DataFrame — all NIFTY CE/PE options for the day
-        - open_atm: int — round(NIFTY_50_SPOT_first_candle_open / 50) * 50
+        - spot_data: list[dict] — SPOT 1-min candles (timestamp, open, high, low, close, volume)
+        - options_df: DataFrame — all CE/PE options for the day
+        - open_atm: int — round(first_candle_open / strike_step) * strike_step
         - expiry: datetime.date — nearest expiry (>= date, skip same-day expiry)
         - expiry_str: str — expiry formatted for symbol like '25N04' (Nov 4 weekly)
         - spot_lookup: dict[int, float] — {timestamp: close} for intrinsic/extrinsic calc
-
-    Matches live system logic:
-        - Open ATM: nifty_fetch_service.py:236 (first candle OPEN, not close)
-        - Expiry selection: nifty_fetch_service.py:256 (skip same-day expiry)
     """
+    strike_step = 100 if instrument == 'BANKNIFTY' else 50
+    spot_name = 'NIFTY BANK' if instrument == 'BANKNIFTY' else 'NIFTY 50'
+    option_name = 'BANKNIFTY' if instrument == 'BANKNIFTY' else 'NIFTY'
+
     path = _parquet_path(date_str)
     if not os.path.exists(path):
         return None
@@ -1203,27 +1190,24 @@ def get_backtest_day_data(date_str: str) -> dict | None:
     if not required_cols.issubset(df.columns):
         return None
 
-    # --- NIFTY 50 SPOT data (instrument_type='SPOT', name='NIFTY 50') ---
-    spot = df[(df['name'] == 'NIFTY 50') & (df['instrument_type'] == 'SPOT')].copy()
+    # --- SPOT data ---
+    spot = df[(df['name'] == spot_name) & (df['instrument_type'] == 'SPOT')].copy()
     spot = spot.sort_values('date')
     if spot.empty:
         return None
 
-    # Convert datetime to unix timestamp (seconds) for consistency with live system
     ist_tz = _pytz.timezone('Asia/Kolkata')
     spot['timestamp'] = spot['date'].apply(lambda d: int(d.timestamp()))
 
     spot_data = spot[['timestamp', 'open', 'high', 'low', 'close', 'volume']].to_dict('records')
 
-    # --- Open ATM: first candle OPEN rounded to nearest 50 ---
-    # Matches nifty_fetch_service.py:236 — open_price = today_df['open'].iloc[0]
+    # --- Open ATM: first candle OPEN rounded to nearest strike_step ---
     open_price = float(spot.iloc[0]['open'])
-    open_atm = round(open_price / 50) * 50
+    open_atm = round(open_price / strike_step) * strike_step
 
     # --- Nearest expiry: first expiry >= date, skip same-day expiry ---
-    # Matches nifty_fetch_service.py:256 — if current date == expiry, use next
-    nifty_opts = df[(df['name'] == 'NIFTY') & (df['instrument_type'].isin(['CE', 'PE']))].copy()
-    all_expiries = sorted(nifty_opts['expiry'].dropna().unique())
+    opts = df[(df['name'] == option_name) & (df['instrument_type'].isin(['CE', 'PE']))].copy()
+    all_expiries = sorted(opts['expiry'].dropna().unique())
     selected_date = datetime.strptime(date_str, '%Y-%m-%d').date()
     nearest_expiry = None
     for exp in all_expiries:
@@ -1241,7 +1225,7 @@ def get_backtest_day_data(date_str: str) -> dict | None:
         return None
 
     # Filter options to nearest expiry only
-    nifty_opts = nifty_opts[nifty_opts['expiry'] == nearest_expiry].copy()
+    opts = opts[opts['expiry'] == nearest_expiry].copy()
 
     # Build spot_lookup: {unix_timestamp: close} for intrinsic/extrinsic calculations
     spot_lookup = {int(row['timestamp']): float(row['close']) for _, row in spot.iterrows()}
@@ -1252,7 +1236,7 @@ def get_backtest_day_data(date_str: str) -> dict | None:
 
     return {
         'spot_data': spot_data,
-        'options_df': nifty_opts,
+        'options_df': opts,
         'open_atm': int(open_atm),
         'expiry': nearest_expiry,
         'expiry_str': expiry_str,
@@ -1260,18 +1244,14 @@ def get_backtest_day_data(date_str: str) -> dict | None:
     }
 
 
-def get_backtest_strikes(date_str: str) -> dict | None:
+def get_backtest_strikes(date_str: str, instrument: str = 'NIFTY') -> dict | None:
     """Returns strike list for backtest — 10 above and 10 below Open ATM.
-
-    Matches live system pattern (nifty_fetch_service.py:268):
-        strikes = [open_atm + (i * 50)] for i in range(-10, 11)
-        = 21 strikes total, 42 symbols (CE + PE each)
 
     Returns None if parquet file not found.
     Response format matches /api/strikes:
         { status, data: [strikes], strikes_data: {...}, symbols_map: {...} }
     """
-    day = get_backtest_day_data(date_str)
+    day = get_backtest_day_data(date_str, instrument=instrument)
     if day is None:
         return None
 
@@ -1280,8 +1260,8 @@ def get_backtest_strikes(date_str: str) -> dict | None:
     options_df = day['options_df']
     expiry_str = expiry.strftime('%d%b%y').upper()
 
-    # Generate 21 strikes: open_atm ± 10 × 50
-    strikes = [open_atm + (i * 50) for i in range(-10, 11)]
+    strike_step = 100 if instrument == 'BANKNIFTY' else 50
+    strikes = [open_atm + (i * strike_step) for i in range(-10, 11)]
 
     # Build strikes_data and symbols_map matching live /api/strikes format
     strikes_data = {}
@@ -1388,6 +1368,7 @@ def _run_backtest_trades(
     ce_symbol: str,
     pe_symbol: str,
     strike_price: int,
+    instrument: str = 'NIFTY',
 ) -> tuple[list[dict], dict | None]:
     """Run backtest trade simulation for a single strategy.
 
@@ -1410,7 +1391,7 @@ def _run_backtest_trades(
 
     def _emit_trade(t, entry_t, entry_p, exit_t, exit_p, reason):
         pnl_pct = ((exit_p - entry_p) / entry_p) * 100 if entry_p > 0 else 0
-        lot = get_lot_size(t)
+        lot = get_lot_size(instrument, t)
         pnl_amount = (exit_p - entry_p) * lot
         max_runup = ((max_high - entry_p) / entry_p) * 100 if entry_p > 0 else 0
         symbol = ce_symbol if side == 'CE' else pe_symbol
@@ -1574,7 +1555,7 @@ def _run_backtest_trades(
     return trades, summary
 
 
-def get_backtest_chart_data(date_str: str, strike_price: int) -> dict | None:
+def get_backtest_chart_data(date_str: str, strike_price: int, instrument: str = 'NIFTY') -> dict | None:
     """Returns chart data for a specific strike from parquet — same format as /api/ezayChart_data.
 
     Response format:
@@ -1586,7 +1567,7 @@ def get_backtest_chart_data(date_str: str, strike_price: int) -> dict | None:
           }
         }
     """
-    day = get_backtest_day_data(date_str)
+    day = get_backtest_day_data(date_str, instrument=instrument)
     if day is None:
         return None
 
@@ -1604,7 +1585,6 @@ def get_backtest_chart_data(date_str: str, strike_price: int) -> dict | None:
     if not ce_symbol and not pe_symbol:
         return None
 
-    # Convert parquet rows to list-of-dicts sorted by timestamp
     def df_to_rows(df_slice):
         if df_slice.empty:
             return []
@@ -1695,6 +1675,7 @@ def get_backtest_chart_data(date_str: str, strike_price: int) -> dict | None:
         trades, summ = _run_backtest_trades(
             strat, formatted_ce, formatted_pe, combined_data,
             date_str, expiry_str_fmt, ce_symbol or '', pe_symbol or '', strike_price,
+            instrument=instrument,
         )
         all_trades[strat] = trades
         if summ:
@@ -1715,13 +1696,9 @@ def get_backtest_chart_data(date_str: str, strike_price: int) -> dict | None:
     }
 
 
-def get_backtest_signals(date_str: str) -> dict | None:
-    """Returns all-strike signals for a backtest date — same format as /api/ezayChart_signals.
-
-    Only processes 10 strikes above and 10 below Open ATM (21 strikes).
-    Response format: { status, last_time, data: [{ time, strike, ce_signal, pe_signal, cp_signal, cp_ce_signal, ce_close, pe_close }] }
-    """
-    day = get_backtest_day_data(date_str)
+def get_backtest_signals(date_str: str, instrument: str = 'NIFTY') -> dict | None:
+    """Returns all-strike signals for a backtest date — same format as /api/ezayChart_signals."""
+    day = get_backtest_day_data(date_str, instrument=instrument)
     if day is None:
         return None
 
@@ -1731,7 +1708,8 @@ def get_backtest_signals(date_str: str) -> dict | None:
     expiry_str = day['expiry_str']
     ist_tz = _pytz.timezone('Asia/Kolkata')
 
-    strikes = [open_atm + (i * 50) for i in range(-10, 11)]
+    strike_step = 100 if instrument == 'BANKNIFTY' else 50
+    strikes = [open_atm + (i * strike_step) for i in range(-10, 11)]
     all_signals = []
     last_data_time = 0
     first_candle_per_strike = {}
@@ -2013,7 +1991,7 @@ def get_backtest_signals(date_str: str) -> dict | None:
     return {'status': 'success', 'last_time': last_data_time, 'data': merged_data, 'signals': signals}
 
 
-def get_backtest_range(from_date: str, to_date: str) -> dict | None:
+def get_backtest_range(from_date: str, to_date: str, instrument: str = 'NIFTY') -> dict | None:
     """Run multi-day backtest across a date range.
 
     For each trading day:
@@ -2037,7 +2015,7 @@ def get_backtest_range(from_date: str, to_date: str) -> dict | None:
 
     for date_str in dates_in_range:
         try:
-            signals_result = get_backtest_signals(date_str)
+            signals_result = get_backtest_signals(date_str, instrument=instrument)
         except Exception:
             signals_result = None
         if signals_result is None:
@@ -2064,7 +2042,7 @@ def get_backtest_range(from_date: str, to_date: str) -> dict | None:
                 continue
 
             try:
-                chart = get_backtest_chart_data(date_str, strike)
+                chart = get_backtest_chart_data(date_str, strike, instrument=instrument)
             except Exception:
                 chart = None
             if chart is None:

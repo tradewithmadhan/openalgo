@@ -1733,6 +1733,7 @@ def backtest_strikes():
     Response format matches /api/strikes."""
     try:
         from database.madhan_db import get_backtest_strikes
+        instrument = request.args.get('instrument', 'NIFTY')
         date_str = request.args.get('date')
         if not date_str:
             return jsonify({'status': 'error', 'message': 'date parameter required (YYYY-MM-DD)'}), 400
@@ -1741,7 +1742,7 @@ def backtest_strikes():
         except ValueError:
             return jsonify({'status': 'error', 'message': 'Invalid date format. Use YYYY-MM-DD'}), 400
 
-        result = get_backtest_strikes(date_str)
+        result = get_backtest_strikes(date_str, instrument=instrument)
         if result is None:
             return jsonify({'status': 'error', 'message': f'No data available for {date_str}'}), 404
         return jsonify(result)
@@ -1756,6 +1757,7 @@ def backtest_chart_data():
     Query params: date=YYYY-MM-DD, strike=XXXX"""
     try:
         from database.madhan_db import get_backtest_chart_data
+        instrument = request.args.get('instrument', 'NIFTY')
         date_str = request.args.get('date')
         strike_str = request.args.get('strike')
         if not date_str or not strike_str:
@@ -1766,7 +1768,7 @@ def backtest_chart_data():
         except (ValueError, TypeError):
             return jsonify({'status': 'error', 'message': 'Invalid date or strike format'}), 400
 
-        result = get_backtest_chart_data(date_str, strike_price)
+        result = get_backtest_chart_data(date_str, strike_price, instrument=instrument)
         if result is None:
             return jsonify({'status': 'error', 'message': f'No data available for strike {strike_price} on {date_str}'}), 404
         return jsonify({'status': 'success', 'data': result})
@@ -1781,6 +1783,7 @@ def backtest_signals():
     Query param: date=YYYY-MM-DD"""
     try:
         from database.madhan_db import get_backtest_signals
+        instrument = request.args.get('instrument', 'NIFTY')
         date_str = request.args.get('date')
         if not date_str:
             return jsonify({'status': 'error', 'message': 'date parameter required (YYYY-MM-DD)'}), 400
@@ -1789,7 +1792,7 @@ def backtest_signals():
         except ValueError:
             return jsonify({'status': 'error', 'message': 'Invalid date format. Use YYYY-MM-DD'}), 400
 
-        result = get_backtest_signals(date_str)
+        result = get_backtest_signals(date_str, instrument=instrument)
         if result is None:
             return jsonify({'status': 'error', 'message': f'No data available for {date_str}'}), 404
         return jsonify(result)
@@ -1805,6 +1808,7 @@ def backtest_range():
     Runs all strategies in STRATEGY_REGISTRY with dynamic strikes from signals."""
     try:
         from database.madhan_db import get_backtest_range
+        instrument = request.args.get('instrument', 'NIFTY')
         from_date = request.args.get('from')
         to_date = request.args.get('to')
         if not from_date or not to_date:
@@ -1817,7 +1821,7 @@ def backtest_range():
         if from_date > to_date:
             return jsonify({'status': 'error', 'message': 'from date must be before to date'}), 400
 
-        result = get_backtest_range(from_date, to_date)
+        result = get_backtest_range(from_date, to_date, instrument=instrument)
         if result is None:
             return jsonify({'status': 'error', 'message': f'No data available for range {from_date} to {to_date}'}), 404
         return jsonify(result)
