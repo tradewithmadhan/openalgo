@@ -2,7 +2,7 @@ import { useEffect, useState, useRef, useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { createChart, ColorType, type IChartApi, type ISeriesApi, type ISeriesMarkersPluginApi, type Time, type SeriesMarker, LineSeries, CandlestickSeries, HistogramSeries, LineStyle, createSeriesMarkers } from 'lightweight-charts';
+import { createChart, ColorType, CrosshairMode, type IChartApi, type ISeriesApi, type ISeriesMarkersPluginApi, type Time, type SeriesMarker, LineSeries, CandlestickSeries, HistogramSeries, LineStyle, createSeriesMarkers } from 'lightweight-charts';
 import { useMadhanTheme } from '@/pages/madhan/useMadhanTheme';
 import { useMarketData } from '@/hooks/useMarketData';
 import { Switch } from '@/components/ui/switch';
@@ -400,6 +400,9 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
             grid: {
                 vertLines: { color: gridColor },
                 horzLines: { color: gridColor },
+            },
+            crosshair: {
+                mode: CrosshairMode.Normal,
             },
             width: chartContainerRef.current.clientWidth,
             height: chartContainerRef.current.clientHeight,
