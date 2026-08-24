@@ -972,7 +972,11 @@ class NiftyDataFetcher:
                         logger.warning(f"[{config.instrument_name}] Incremental spot fetch failed: {result_spot.get('message', 'Unknown error')}")
 
                 cycle_elapsed = time.time() - cycle_start
-                self.status = "Running"
+                last_ts = self.banknifty.last_update or self.nifty.last_update
+                if last_ts:
+                    self.status = f"Running - Last update: {last_ts.strftime('%H:%M:%S')}"
+                else:
+                    self.status = "Running"
                 logger.info(f"Full fetch cycle (both instruments) completed in {cycle_elapsed:.2f}s")
 
                 # --- MARKET CLOSE CHECK ---
