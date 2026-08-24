@@ -111,7 +111,7 @@ def get_atp_ltp_data():
         atm_put_symbol = None
         
         # Find the exact ATM call and put symbols
-        tracked_symbols = get_tracked_symbols()
+        tracked_symbols = [s for s in get_tracked_symbols() if s.startswith(instrument)]
         for symbol in tracked_symbols:
             strike = extract_strike(symbol)
             if strike == current_atm_strike:
@@ -954,10 +954,11 @@ def nifty_ce_pe_strike_volume_changes():
 def nifty_chart_data():
     """Provides Nifty/BankNifty price data for the lightweight chart."""
     try:
-        # Use the existing service function to get Nifty data
-        # This function is assumed to return a list of dictionaries
-        # with 'timestamp' and 'close' keys, ordered by time.
-        data = get_nifty_data()
+        instrument = request.args.get('instrument', 'NIFTY')
+        if instrument == 'BANKNIFTY':
+            data = get_banknifty_data()
+        else:
+            data = get_nifty_data()
         return jsonify(data), 200
     except Exception as e:
         logger.error(f"Error fetching nifty chart data: {e}", exc_info=True)
@@ -1177,7 +1178,7 @@ def ezay_chart_data():
         include_previous = request.args.get('include_previous_day', 'false').lower() == 'true'
         
         # Get tracked symbols to find CE and PE for the given strike
-        tracked_symbols = get_tracked_symbols()
+        tracked_symbols = [s for s in get_tracked_symbols() if s.startswith(instrument)]
         
         ce_symbol = None
         pe_symbol = None

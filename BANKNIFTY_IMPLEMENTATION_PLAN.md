@@ -488,14 +488,14 @@ Each component needs:
 
 ### P1 — Functional Bugs (Must Fix)
 
-#### Issue 1: `/nifty_chart_data` endpoint ignores BANKNIFTY
+#### Issue 1: `/nifty_chart_data` endpoint ignores BANKNIFTY — ✅ DONE
 
 - **File:** `blueprints/madhan.py`, line 957
 - **Code:** `data = get_nifty_data()` — always returns NIFTY data regardless of instrument.
 - **Fix:** Add `instrument = request.args.get('instrument', 'NIFTY')` and branch to `get_banknifty_data()` when `instrument == 'BANKNIFTY'`.
 - **Impact of fix:** NiftyChart and other pages using this endpoint will correctly show BANKNIFTY OHLC data when BANKNIFTY is selected. No impact on NIFTY (default unchanged).
 
-#### Issue 2: `/api/atp-ltp-data` symbol lookup mixes NIFTY + BANKNIFTY symbols
+#### Issue 2: `/api/atp-ltp-data` symbol lookup mixes NIFTY + BANKNIFTY symbols — ✅ DONE
 
 - **File:** `blueprints/madhan.py`, lines 114-161
 - **Code:** `tracked_symbols = get_tracked_symbols()` returns ALL symbols (NIFTY + BANKNIFTY). ATM/ITM lookup loops iterate all symbols without filtering by instrument prefix. If both instruments share a strike number (e.g., NIFTY 24000 vs BANKNIFTY 24000), wrong symbols could be resolved.
@@ -517,7 +517,7 @@ Each component needs:
   - Strike generation step: dynamic per instrument (was hardcoded `50`)
 - **Impact of fix:** Backtest features work for BANKNIFTY. NIFTY backtest unchanged (default param). Backward compatible if `instrument` defaults to `'NIFTY'`.
 
-#### Issue 4: `init_db()` migration missing `banknifty_data` table check
+#### Issue 4: `init_db()` migration missing `banknifty_data` table check — ✅ DONE
 
 - **File:** `database/madhan_db.py`, lines 130-150
 - **Code:** `init_db()` only checks and adds `oi` column to `nifty_data` table. `banknifty_data` is not checked. `Base.metadata.create_all()` does not alter existing tables — only creates missing ones.

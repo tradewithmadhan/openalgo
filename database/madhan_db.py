@@ -146,6 +146,15 @@ def init_db():
                     with connection.begin():
                         connection.execute(text('ALTER TABLE nifty_data ADD COLUMN oi INTEGER'))
                     logger.info("Column 'oi' added to 'nifty_data' table.")
+        
+        if inspector.has_table('banknifty_data'):
+            bn_columns = [c['name'] for c in inspector.get_columns('banknifty_data')]
+            if 'oi' not in bn_columns:
+                logger.warning("Column 'oi' not found in 'banknifty_data' table. Adding it now.")
+                with engine.connect() as connection:
+                    with connection.begin():
+                        connection.execute(text('ALTER TABLE banknifty_data ADD COLUMN oi INTEGER'))
+                    logger.info("Column 'oi' added to 'banknifty_data' table.")
     except Exception as e:
         logger.error(f"Error creating/updating Madhan DB tables: {e}")
 
