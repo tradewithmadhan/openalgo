@@ -1717,10 +1717,8 @@ def get_backtest_signals(date_str: str, instrument: str = 'NIFTY') -> dict | Non
     # Step 3: Pre-compute IST timestamps vectorized (once for entire options_df)
     options_df = options_df.copy()
     options_df['_ts_utc'] = options_df['date'].astype('int64') // 10**9
-    _IST_OFFSET = 19800  # IST is UTC+5:30 = 19800 seconds
-    options_df['_ts_ist'] = options_df['_ts_utc'] + _IST_OFFSET
 
-    # Step 1: Pre-group by strike (one scan instead of 42) — after adding _ts_ist
+    # Step 1: Pre-group by strike (one scan instead of 42)
     ce_grouped = options_df[options_df['instrument_type'] == 'CE'].groupby('strike')
     pe_grouped = options_df[options_df['instrument_type'] == 'PE'].groupby('strike')
 
@@ -1732,10 +1730,10 @@ def get_backtest_signals(date_str: str, instrument: str = 'NIFTY') -> dict | Non
         if ce_rows is None or pe_rows is None or ce_rows.empty or pe_rows.empty:
             continue
 
-        # Step 3: Use pre-computed IST timestamps, no per-row datetime conversion
+        # Step 3: Use pre-computed UTC timestamps, no per-row datetime conversion
         def to_rows_fast(df_slice):
             df_sorted = df_slice.sort_values('date')
-            cols = df_sorted[['_ts_utc', '_ts_ist', 'open', 'high', 'low', 'close', 'volume']].copy()
+            cols = df_sorted[['_ts_utc', 'open', 'high', 'low', 'close', 'volume']].copy()
             cols = cols.rename(columns={'_ts_utc': 'timestamp'})
             return cols.to_dict('records')
 
@@ -1757,8 +1755,7 @@ def get_backtest_signals(date_str: str, instrument: str = 'NIFTY') -> dict | Non
             for i, item in enumerate(data):
                 if item['open'] is None or item['close'] is None:
                     continue
-                # Step 3: Use pre-computed IST timestamp (no datetime conversion)
-                ist_ts = item['_ts_ist']
+                # Step 3: Use pre-computed UTC timestamp (no datetime conversion)
                 spot_close = spot_lookup.get(item['timestamp'], 0)
 
                 if option_type == 'CE':
@@ -1784,7 +1781,7 @@ def get_backtest_signals(date_str: str, instrument: str = 'NIFTY') -> dict | Non
                             extrinsic_signal = True
 
                 result.append({
-                    'time': ist_ts,
+                    'time': item['timestamp'],
                     'open': item['open'],
                     'close': item['close'],
                     'low': item['low'],

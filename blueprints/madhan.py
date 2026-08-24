@@ -961,7 +961,7 @@ def spot_chart_data():
             data = get_nifty_data()
         return jsonify(data), 200
     except Exception as e:
-        logger.error(f"Error fetching nifty chart data: {e}", exc_info=True)
+        logger.error(f"Error fetching spot chart data: {e}", exc_info=True)
         return jsonify({'status': 'error', 'message': 'Internal server error fetching chart data'}), 500
 
 
@@ -2059,7 +2059,7 @@ def nifty_dash_time_analysis():
 
     sorted_ts = sorted(spot_by_ts.keys())
     if not sorted_ts:
-        # Fallback if NIFTY spot not found in historical, use option timestamps
+        # Fallback if spot not found in historical, use option timestamps
         sorted_ts = sorted(data_by_ts.keys())
         if not sorted_ts:
             return jsonify({'status': 'success', 'data': []})
