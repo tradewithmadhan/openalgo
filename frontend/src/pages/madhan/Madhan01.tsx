@@ -1138,11 +1138,11 @@ function Madhan01Inner() {
                             const dt = new Date(row.timestamp * 1000)
                             const rawSymbol = (row as any).symbol
                             const symbol = typeof rawSymbol === 'string' ? rawSymbol : ''
-                            const isNifty = symbol === 'NIFTY'
+                            const isSpotRow = symbol === instrument
                             const isCall = typeof symbol === 'string' && symbol.endsWith('CE')
                             
                             let rowClass = "border-b last:border-0 hover:bg-muted/50 transition-colors"
-                            if (isNifty) rowClass += ' bg-blue-500/5'
+                            if (isSpotRow) rowClass += ' bg-blue-500/5'
                             else if (isCall) rowClass += ' bg-emerald-500/5'
                             else rowClass += ' bg-red-500/5'
 

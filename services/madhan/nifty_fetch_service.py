@@ -1015,18 +1015,26 @@ class NiftyDataFetcher:
                 market_close_time = now.replace(hour=nfo_end_hour, minute=nfo_end_min, second=0, microsecond=0)
 
                 if now > market_close_time:
-                    last_opt_ts = get_last_option_candle_timestamp()
-                    if last_opt_ts:
-                        last_opt_dt = datetime.fromtimestamp(last_opt_ts)
-                        logger.info(f"Market is closed. Last options candle time: {last_opt_dt.strftime('%H:%M:%S')}")
-                        if last_opt_dt.hour == nfo_end_hour and last_opt_dt.minute == nfo_end_min - 1:
-                            logger.info(f"Last options candle for the day ({nfo_end_hour}:{nfo_end_min - 1:02d}) has been fetched. Stopping fetcher.")
-                            self.is_running = False
-                            self.status = "Stopped (Market Closed)"
-                            self.stop_event.set()
-                            break
+                    nifty_ts = get_last_option_candle_timestamp_for_instrument('NIFTY')
+                    banknifty_ts = get_last_option_candle_timestamp_for_instrument('BANKNIFTY')
+                    both_done = True
+                    for inst_ts, inst_name in [(nifty_ts, 'NIFTY'), (banknifty_ts, 'BANKNIFTY')]:
+                        if inst_ts:
+                            inst_dt = datetime.fromtimestamp(inst_ts)
+                            if inst_dt.hour == nfo_end_hour and inst_dt.minute == nfo_end_min - 1:
+                                logger.debug(f"[{inst_name}] Last candle ({nfo_end_hour}:{nfo_end_min - 1:02d}) fetched.")
+                            else:
+                                both_done = False
+                        else:
+                            both_done = False
+                    if both_done:
+                        logger.info(f"Market closed. Both NIFTY and BANKNIFTY last candles fetched. Stopping fetcher.")
+                        self.is_running = False
+                        self.status = "Stopped (Market Closed)"
+                        self.stop_event.set()
+                        break
                     else:
-                        logger.info("Market is closed but no options candle data found yet.")
+                        logger.debug(f"Market closed but waiting for all candles. NIFTY: {nifty_ts}, BANKNIFTY: {banknifty_ts}")
 
             except Exception as e:
                 logger.error(f"Exception during incremental fetch: {e}")

@@ -429,7 +429,7 @@ function ATPLTPStrategyInner() {
         automargin: true,
         tickformat: ',d',
         hoverformat: ',d',
-        dtick: 50,
+        dtick: instrument === 'BANKNIFTY' ? 200 : 50,
       },
       hovermode: 'x unified',
       legend: { orientation: 'h', y: 1.02, x: 0.5, xanchor: 'center' },
