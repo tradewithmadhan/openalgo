@@ -316,9 +316,12 @@ def nifty_status():
     nifty_data_count = get_nifty_data_count()
     banknifty_data_count = get_banknifty_data_count()
 
-    # Use the global fetcher status (has stop reasons like Weekend/Market Closed)
-    # Fall back to config.status if fetcher hasn't started yet
-    status_message = nifty_fetcher.status if nifty_fetcher.status != "Idle" else config.status
+    # Use per-instrument config.status for running states (more specific)
+    # Fall back to global fetcher status for stop reasons (Weekend/Market Closed)
+    if nifty_fetcher.status.startswith("Stopped"):
+        status_message = nifty_fetcher.status
+    else:
+        status_message = config.status if config.status and config.status != "Idle" else nifty_fetcher.status
 
     return jsonify({
         'status': 'success',

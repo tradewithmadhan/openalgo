@@ -753,6 +753,7 @@ class NiftyDataFetcher:
         init_start = time.time()
         
         for config in [self.nifty, self.banknifty]:
+            self.status = f"Backfilling {config.instrument_name}..."
             config.status = f"Performing initial 7-day backfill..."
             logger.info(f"[{config.instrument_name}] {config.status}")
             max_retries = 3
@@ -840,25 +841,28 @@ class NiftyDataFetcher:
             else:
                 logger.info(f"[{config.instrument_name}] Skipping options backfill: no symbols available yet (pre-market, ATM not calculated).")
 
+            config.status = "Idle"
+
         init_elapsed = time.time() - init_start
         logger.info(f"Initial backfill completed in {init_elapsed:.2f}s total for both instruments")
 
         # --- Calculate previous day's OI for both instruments ---
+        self.status = "Calculating previous day OI..."
         today, prev_day = get_trading_days()
         for config in [self.nifty, self.banknifty]:
             self._calculate_and_store_previous_day_oi(config, today, prev_day)
 
         # --- Continuous 1-minute fetch loop (sequential: NIFTY first, then BANKNIFTY) ---
+        self.status = "Running - Fetching live data"
         first_iteration = True
         while not self.stop_event.is_set():
             now = datetime.now()
             
             if not first_iteration:
                 # Wait until 100ms past next minute boundary (xx:00.100)
-                next_minute = (now.second + 1) % 60
-                wait_secs = next_minute - now.second
+                wait_secs = 60 - now.second
                 if wait_secs <= 0:
-                    wait_secs += 60
+                    wait_secs = 60
                 wait_ms = wait_secs * 1000 - now.microsecond // 1000 + 100
                 if wait_ms <= 0:
                     wait_ms += 60000
@@ -887,6 +891,7 @@ class NiftyDataFetcher:
                     if self.stop_event.is_set():
                         break
 
+                    self.status = f"Fetching {config.instrument_name}..."
                     config_start = time.time()
                     
                     # Fetch spot data
@@ -967,6 +972,8 @@ class NiftyDataFetcher:
                         logger.warning(f"[{config.instrument_name}] Incremental spot fetch failed: {result_spot.get('message', 'Unknown error')}")
 
                 cycle_elapsed = time.time() - cycle_start
+                cycle_time = datetime.now(pytz.timezone('Asia/Kolkata')).strftime('%H:%M:%S')
+                self.status = f"Running - Last update: {cycle_time}"
                 logger.info(f"Full fetch cycle (both instruments) completed in {cycle_elapsed:.2f}s")
 
                 # --- MARKET CLOSE CHECK ---

@@ -604,6 +604,15 @@ function Madhan01Inner() {
           </div>
           <span className="text-muted-foreground/30">|</span>
           <div className="flex items-center gap-1">
+             <span className="font-semibold">Updated:</span>
+             <span className="text-secondary-foreground font-mono text-[11px]">
+               {status?.last_update
+                 ? new Date(status.last_update).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })
+                 : "-"}
+             </span>
+          </div>
+          <span className="text-muted-foreground/30">|</span>
+          <div className="flex items-center gap-1">
              <span className="font-semibold">Expiry:</span>
              <span className="text-secondary-foreground font-medium">{status?.expiry_date || "-"}</span>
           </div>
