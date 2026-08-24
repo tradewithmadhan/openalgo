@@ -949,9 +949,9 @@ def nifty_ce_pe_strike_volume_changes():
     })
 
 
-@madhan_bp.route('/nifty_chart_data')
+@madhan_bp.route('/spot_chart_data')
 @check_session_validity
-def nifty_chart_data():
+def spot_chart_data():
     """Provides Nifty/BankNifty price data for the lightweight chart."""
     try:
         instrument = request.args.get('instrument', 'NIFTY')

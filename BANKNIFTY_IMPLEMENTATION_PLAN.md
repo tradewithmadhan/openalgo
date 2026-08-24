@@ -222,7 +222,7 @@ def make_option_symbol(instrument, expiry_str, strike, type_):
 - [ ] `GET /api/nifty/option-data` → filter by instrument's tracked symbols
 - [ ] `GET /api/nifty/option-ohlc` → already works (symbol-based)
 - [ ] `GET /api/nifty/previous-day-oi` → use correct config/spot
-- [ ] `GET /nifty_chart_data` → use correct data function
+- [ ] `GET /spot_chart_data` → use correct data function
 - [ ] `GET /nifty_live_data` → use correct config
 - [ ] `GET /api/nifty/coi_history` → works via extract_strike (fixed in Phase 1)
 - [ ] `GET /api/strikes` → works via get_tracked_symbols
@@ -488,7 +488,7 @@ Each component needs:
 
 ### P1 — Functional Bugs (Must Fix)
 
-#### Issue 1: `/nifty_chart_data` endpoint ignores BANKNIFTY — ✅ DONE
+#### Issue 1: `/spot_chart_data` endpoint ignores BANKNIFTY — ✅ DONE
 
 - **File:** `blueprints/madhan.py`, line 957
 - **Code:** `data = get_nifty_data()` — always returns NIFTY data regardless of instrument.

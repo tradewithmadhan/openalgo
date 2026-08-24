@@ -439,7 +439,7 @@ def create_app():
         csrf.exempt(app.view_functions['madhan_bp.nifty_option_data'])
         csrf.exempt(app.view_functions['madhan_bp.nifty_previous_day_oi'])
         csrf.exempt(app.view_functions['madhan_bp.nifty_coi_trend'])
-        csrf.exempt(app.view_functions['madhan_bp.nifty_chart_data'])
+        csrf.exempt(app.view_functions['madhan_bp.spot_chart_data'])
         
         # Exempt webhook endpoints from CSRF protection
         csrf.exempt(app.view_functions["chartink_bp.webhook"])
