@@ -474,10 +474,6 @@ class NiftyDataFetcher:
             logger.info("Auto-start scheduler: starting fetcher.")
             self.start(api_key)
         
-    def get_nifty_live_data(self, interval: str = '1m', days_back: int = 1):
-        """Get NIFTY OHLC data for the lightweight chart."""
-        return self.nifty.get_live_data(self.api_key, interval, days_back)
-
     def get_instrument_live_data(self, instrument: str, interval: str = '1m', days_back: int = 1):
         """Get OHLC data for any instrument for the lightweight chart."""
         config = self.nifty if instrument == 'NIFTY' else self.banknifty

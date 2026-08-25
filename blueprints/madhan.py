@@ -1,20 +1,17 @@
-import re
 from flask import Blueprint, jsonify, request, session
 from utils.session import check_session_validity
 from utils.logging import get_logger
 from datetime import datetime, timedelta, time
 from collections import defaultdict
-from bisect import bisect_right
 from services.history_service import get_history
 from services.madhan.nifty_fetch_service import nifty_fetcher
 from services.madhan.atp_signal import (
     compute_atp_from_candles, compute_atp_signal,
-    compute_final_signal, compute_sma_from_series, compute_sma_signal,
-    detect_trade_signals, process_historical_atp_data,
+    process_historical_atp_data,
 )
 from services.madhan.volume_signal import compute_spike_flags
 from services.madhan.hx_lx import compute_hx_lx_counts
-from database.madhan_db import extract_strike, get_nifty_data, get_banknifty_data, get_option_data, get_consistent_current_option_data, get_nifty_data_count, get_banknifty_data_count, get_previous_day_oi, get_nth_candle_oi_for_all_symbols, get_current_day_historical_data, get_current_day_instrument_data, get_instrument_data_for_date, get_previous_trading_day, get_coi_history, get_valid_trading_day, SessionLocal, NiftyData, BankNiftyData, get_tracked_symbols
+from database.madhan_db import extract_strike, get_nifty_data, get_banknifty_data, get_option_data, get_consistent_current_option_data, get_nifty_data_count, get_banknifty_data_count, get_previous_day_oi, get_nth_candle_oi_for_all_symbols, get_current_day_historical_data, get_current_day_instrument_data, get_instrument_data_for_date, get_previous_trading_day, get_coi_history, get_valid_trading_day, get_tracked_symbols
 from database.auth_db import get_api_key_for_tradingview
 from blueprints.react_app import serve_react_app
 
@@ -41,37 +38,6 @@ def madhan01_page():
 @check_session_validity
 def atp_ltp_strategy_page():
     return serve_react_app()
-
-@madhan_bp.route('/madhan02')
-@check_session_validity
-def madhan02_page():
-    """Render the MadhaN02 page with Nifty/BankNifty 1-Min Data Fetcher"""
-    # Get the API key from the fetcher if available
-    api_key = getattr(nifty_fetcher, 'api_key', '')
-    return render_template('madhan/index.html', api_key=api_key)
-
-@madhan_bp.route('/madhan03')
-@check_session_validity
-def madhan03_page():
-    """Render the new MadhaN03 page"""
-    return render_template('madhan/sk_ezaychart.html')
-
-@madhan_bp.route('/api/test-data')
-@check_session_validity
-def get_test_data():
-    """Returns some sample JSON data for testing."""
-    logger.info("Fetching test data for MadhaN's page.")
-    data = {
-        "status": "success",
-        "message": "Hello from the MadhaN blueprint API!",
-        "timestamp": datetime.utcnow().isoformat(),
-        "data": [
-            {"id": 1, "item": "Test Item 1"},
-            {"id": 2, "item": "Test Item 2"},
-            {"id": 3, "item": "Test Item 3"}
-        ]
-    }
-    return jsonify(data)
 
 @madhan_bp.route('/api/atp-ltp-data')
 @check_session_validity
