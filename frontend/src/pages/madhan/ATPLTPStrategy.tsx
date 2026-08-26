@@ -470,7 +470,7 @@ function ATPLTPStrategyInner() {
              <Button variant="ghost" size="sm" className="h-7 text-xs hidden sm:flex" asChild>
                 <Link to="/madhan/madhan01">
                 <BarChart3 className="h-3.5 w-3.5 mr-1.5" />
-                NiftyFetcher
+                SpotFetcher
                 </Link>
             </Button>
 
@@ -484,7 +484,7 @@ function ATPLTPStrategyInner() {
              <Button variant="ghost" size="sm" className="h-7 text-xs hidden sm:flex" asChild>
                 <Link to="/madhan/nifty-chart">
                 <BarChart3 className="h-3.5 w-3.5 mr-1.5" />
-                NiftyChart
+                SpotChart
                 </Link>
             </Button>
 

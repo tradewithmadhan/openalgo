@@ -140,7 +140,7 @@ function Madhan01Inner() {
       })
 
       if (!response.ok) {
-        setError('Failed to fetch Nifty status')
+        setError(`Failed to fetch ${instrument} status`)
         return null
       }
 
@@ -156,11 +156,11 @@ function Madhan01Inner() {
         latestStatusRef.current = statusData
         return statusData
       } else {
-        setError(data.message || 'Failed to fetch Nifty status')
+        setError(data.message || `Failed to fetch ${instrument} status`)
         return null
       }
     } catch (_e) {
-      setError('Failed to fetch Nifty status')
+      setError(`Failed to fetch ${instrument} status`)
       return null
     }
   }, [instrument])
@@ -437,7 +437,7 @@ function Madhan01Inner() {
              <Button variant="ghost" size="sm" className="h-7 text-xs hidden sm:flex" asChild>
                 <Link to="/madhan/madhan01">
                 <BarChart3 className="h-3.5 w-3.5 mr-1.5" />
-                NiftyFetcher
+                SpotFetcher
                 </Link>
             </Button>
 
@@ -451,7 +451,7 @@ function Madhan01Inner() {
              <Button variant="ghost" size="sm" className="h-7 text-xs hidden sm:flex" asChild>
                 <Link to="/madhan/nifty-chart">
                 <BarChart3 className="h-3.5 w-3.5 mr-1.5" />
-                NiftyChart
+                SpotChart
                 </Link>
             </Button>
 
@@ -605,7 +605,7 @@ function Madhan01Inner() {
           <span className="text-muted-foreground/30">|</span>
           <div className="flex items-center gap-1">
              <span className="font-semibold">Updated:</span>
-             <span className="text-secondary-foreground font-mono text-[11px]">
+             <span className="text-secondary-foreground font-mono text-xs">
                {status?.last_update
                  ? new Date(status.last_update).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })
                  : "-"}
@@ -614,7 +614,7 @@ function Madhan01Inner() {
           <span className="text-muted-foreground/30">|</span>
           <div className="flex items-center gap-1">
              <span className="font-semibold">Expiry:</span>
-             <span className="text-secondary-foreground font-medium">{status?.expiry_date || "-"}</span>
+             <span className="text-secondary-foreground font-mono text-xs">{status?.expiry_date || "-"}</span>
           </div>
         </div>
         

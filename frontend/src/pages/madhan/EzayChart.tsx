@@ -2255,13 +2255,13 @@ function EzayChartInner() {
           </div>
           <div className="h-4 w-px bg-border hidden sm:block" />
           <Button variant="ghost" size="sm" className="h-7 text-xs hidden sm:flex" asChild>
-            <Link to="/madhan/madhan01"><BarChart3 className="h-3.5 w-3.5 mr-1.5" />NiftyFetcher</Link>
+            <Link to="/madhan/madhan01"><BarChart3 className="h-3.5 w-3.5 mr-1.5" />SpotFetcher</Link>
           </Button>
           <Button variant="ghost" size="sm" className="h-7 text-xs hidden sm:flex" asChild>
             <Link to="/madhan/ATP-LTPStrategy"><BarChart3 className="h-3.5 w-3.5 mr-1.5" />ATPLTP</Link>
           </Button>
           <Button variant="ghost" size="sm" className="h-7 text-xs hidden sm:flex" asChild>
-            <Link to="/madhan/nifty-chart"><BarChart3 className="h-3.5 w-3.5 mr-1.5" />NiftyChart</Link>
+            <Link to="/madhan/nifty-chart"><BarChart3 className="h-3.5 w-3.5 mr-1.5" />SpotChart</Link>
           </Button>
           <Button variant="ghost" size="sm" className="h-7 text-xs hidden sm:flex" asChild>
             <Link to="/madhan/ezay-chart"><BarChart3 className="h-3.5 w-3.5 mr-1.5" />EzayChart</Link>
