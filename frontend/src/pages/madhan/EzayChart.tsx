@@ -251,6 +251,8 @@ function EzayChartInner() {
 
   const ceOrderRef = useRef<OrderLinePrimitive | null>(null)
   const peOrderRef = useRef<OrderLinePrimitive | null>(null)
+  const ceLineRef = useRef<ISeriesApi<any> | null>(null)
+  const peLineRef = useRef<ISeriesApi<any> | null>(null)
   const ceVpRef = useRef<VolumeProfilePrimitive | null>(null)
   const peVpRef = useRef<VolumeProfilePrimitive | null>(null)
   const handleClosePositionRef = useRef<(symbol: string, exchange: string, product: string) => void>(() => {})
@@ -463,7 +465,7 @@ function EzayChartInner() {
     const chart = chartRef.current
     if (!chart) return
     const refs = [
-      ceSeriesRef, peSeriesRef, combinedSeriesRef, llpSeriesRef,
+      ceSeriesRef, peSeriesRef, ceLineRef, peLineRef, combinedSeriesRef, llpSeriesRef,
       ceIntrinsicRef, peIntrinsicRef, ceExtrinsicRef, peExtrinsicRef,
       combinedExtrinsicRef, volumeRef, totalVolumeRef,
     ]
@@ -554,6 +556,16 @@ function EzayChartInner() {
     ceVpRef.current?.setVisible(showVPRef.current && showCE)
     peVpRef.current?.setVisible(showVPRef.current && showPE)
 
+    // CE/PE close-price line series — always visible for position/order primitives, line shows only when CE/PE toggle OFF
+    ceLineRef.current = chart.addSeries(LineSeries, {
+      color: 'rgba(41,98,255,0.5)', lineWidth: showCE ? 0 : 1,
+      priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+    } as any)
+    peLineRef.current = chart.addSeries(LineSeries, {
+      color: 'rgba(224,64,251,0.5)', lineWidth: showPE ? 0 : 1,
+      priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+    } as any)
+
     combinedSeriesRef.current = chart.addSeries(LineSeries, {
       color: '#2196f3', lineWidth: 3, title: 'Combined Premium',
       priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
@@ -619,35 +631,35 @@ function EzayChartInner() {
     ceTradeMarkersRef.current = createSeriesMarkers(ceSeriesRef.current, [])
     peTradeMarkersRef.current = createSeriesMarkers(peSeriesRef.current, [])
 
-    const cePos = new PositionLinePrimitive(ceSeriesRef.current, chart.timeScale(), (_sym) => {
+    const cePos = new PositionLinePrimitive(ceLineRef.current, chart.timeScale(), (_sym) => {
       const pos = cePositionDataRef.current
       if (pos) handleClosePositionRef.current(pos.symbol, pos.exchange, pos.product)
     })
     cePositionRef.current = cePos
-    ceSeriesRef.current.attachPrimitive(cePos as any)
+    ceLineRef.current.attachPrimitive(cePos as any)
 
-    const pePos = new PositionLinePrimitive(peSeriesRef.current, chart.timeScale(), (_sym) => {
+    const pePos = new PositionLinePrimitive(peLineRef.current, chart.timeScale(), (_sym) => {
       const pos = pePositionDataRef.current
       if (pos) handleClosePositionRef.current(pos.symbol, pos.exchange, pos.product)
     })
     pePositionRef.current = pePos
-    peSeriesRef.current.attachPrimitive(pePos as any)
+    peLineRef.current.attachPrimitive(pePos as any)
 
-    const ceOrd = new OrderLinePrimitive(ceSeriesRef.current, (orderId) => {
+    const ceOrd = new OrderLinePrimitive(ceLineRef.current, (orderId) => {
       handleCancelOrderRef.current(orderId)
     }, (orderId, newPrice) => {
       handleModifyOrderRef.current(orderId, newPrice)
     })
     ceOrderRef.current = ceOrd
-    ceSeriesRef.current.attachPrimitive(ceOrd as any)
+    ceLineRef.current.attachPrimitive(ceOrd as any)
 
-    const peOrd = new OrderLinePrimitive(peSeriesRef.current, (orderId) => {
+    const peOrd = new OrderLinePrimitive(peLineRef.current, (orderId) => {
       handleCancelOrderRef.current(orderId)
     }, (orderId, newPrice) => {
       handleModifyOrderRef.current(orderId, newPrice)
     })
     peOrderRef.current = peOrd
-    peSeriesRef.current.attachPrimitive(peOrd as any)
+    peLineRef.current.attachPrimitive(peOrd as any)
 
     // Strike watermark — top center of chart
     if (strikeWatermarkRef.current) {
@@ -796,6 +808,9 @@ function EzayChartInner() {
         peSeriesRef.current.setData(peData.map((item) => ({ time: item.time, value: item.close })))
       }
     }
+
+    if (ceLineRef.current) ceLineRef.current.setData(ceData.map((item) => ({ time: item.time, value: item.close })))
+    if (peLineRef.current) peLineRef.current.setData(peData.map((item) => ({ time: item.time, value: item.close })))
 
     if (combinedSeriesRef.current) {
       combinedSeriesRef.current.setData(combinedData.map((item) => ({ time: item.time, value: item.combined_premium })))
@@ -1032,6 +1047,8 @@ function EzayChartInner() {
     apiCandleVolRef.current.clear()
     if (ceSeriesRef.current) ceSeriesRef.current.setData([])
     if (peSeriesRef.current) peSeriesRef.current.setData([])
+    if (ceLineRef.current) ceLineRef.current.setData([])
+    if (peLineRef.current) peLineRef.current.setData([])
     if (combinedSeriesRef.current) combinedSeriesRef.current.setData([])
     if (llpSeriesRef.current) llpSeriesRef.current.setData([])
     if (ceIntrinsicRef.current) ceIntrinsicRef.current.setData([])
@@ -1598,6 +1615,8 @@ function EzayChartInner() {
   useEffect(() => {
     if (ceSeriesRef.current) ceSeriesRef.current.applyOptions({ visible: showCE })
     if (peSeriesRef.current) peSeriesRef.current.applyOptions({ visible: showPE })
+    if (ceLineRef.current) ceLineRef.current.applyOptions({ lineWidth: showCE ? 0 : 1 } as any)
+    if (peLineRef.current) peLineRef.current.applyOptions({ lineWidth: showPE ? 0 : 1 } as any)
     if (ceIntrinsicRef.current) ceIntrinsicRef.current.applyOptions({ visible: showIntrinsic && showCE })
     if (peIntrinsicRef.current) peIntrinsicRef.current.applyOptions({ visible: showIntrinsic && showPE })
     if (ceExtrinsicRef.current) ceExtrinsicRef.current.applyOptions({ visible: showExtrinsic && showCE })
@@ -2150,6 +2169,9 @@ function EzayChartInner() {
 
     if (ceSeriesRef.current && ceLtp) updateCandle('ce', ceSeriesRef.current, ceLtp)
     if (peSeriesRef.current && peLtp) updateCandle('pe', peSeriesRef.current, peLtp)
+
+    if (ceLineRef.current && ceLtp) ceLineRef.current.update({ time: time as Time, value: ceLtp })
+    if (peLineRef.current && peLtp) peLineRef.current.update({ time: time as Time, value: peLtp })
 
     const updateLine = (key: string, series: ISeriesApi<any>, value: number) => {
       if (!series || !value) return
