@@ -6,8 +6,10 @@ import re
 import pandas as pd
 from datetime import datetime, time, date, timedelta
 from sqlalchemy import create_engine, Column, Integer, Float, String, Index, text, func, select, literal_column, and_, case
+from sqlalchemy.pool import NullPool
 from sqlalchemy.inspection import inspect
 from sqlalchemy.orm import sessionmaker, declarative_base
+from cachetools import TTLCache
 from sqlalchemy.dialects.sqlite import insert
 from sqlalchemy.exc import SQLAlchemyError
 from utils.logging import get_logger
@@ -67,9 +69,34 @@ if DATABASE_URL == 'sqlite:///openalgo.db' and os.path.exists(os.path.join('db',
 # Create a new DB file in the same directory as the main DB
 MADHAN_DB_PATH = os.path.join(os.path.dirname(DATABASE_URL.replace('sqlite:///', '')), 'madhan.db')
 logger.info(f"Madhan DB initialized at: {MADHAN_DB_PATH} (DATABASE_URL: {DATABASE_URL})")
-engine = create_engine(f'sqlite:///{MADHAN_DB_PATH}')
+engine = create_engine(
+    f'sqlite:///{MADHAN_DB_PATH}',
+    poolclass=NullPool,
+    connect_args={"check_same_thread": False},
+)
 Base = declarative_base()
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+# TTL cache for get_current_day_historical_data — manual invalidation on writes
+_current_day_cache = TTLCache(maxsize=8, ttl=60)
+
+def _invalidate_current_day_cache():
+    """Clear the get_current_day_historical_data and get_current_day_instrument_data caches after data writes."""
+    _current_day_cache.clear()
+
+# TTL cache for get_previous_day_oi — keyed on (instrument, current_trading_day), auto-expires at midnight
+_prev_day_oi_cache = TTLCache(maxsize=4, ttl=86400)
+
+def _invalidate_prev_day_oi_cache():
+    """Clear the get_previous_day_oi cache after data writes."""
+    _prev_day_oi_cache.clear()
+
+# TTL cache for get_tracked_symbols — static within a fetcher session
+_tracked_symbols_cache = TTLCache(maxsize=1, ttl=3600)
+
+def _invalidate_tracked_symbols_cache():
+    """Clear the get_tracked_symbols cache after writes."""
+    _tracked_symbols_cache.clear()
 
 class NiftyData(Base):
     """SQLAlchemy model for storing Nifty 1-minute data."""
@@ -180,6 +207,7 @@ def store_nifty_data(df: pd.DataFrame):
         
         session.execute(on_conflict_stmt)
         session.commit()
+        _invalidate_current_day_cache()
         logger.info(f"Upserted {len(records)} Nifty data records at {datetime.now().strftime('%H:%M:%S')}.")
     except SQLAlchemyError as e:
         session.rollback()
@@ -209,6 +237,7 @@ def store_banknifty_data(df: pd.DataFrame):
         
         session.execute(on_conflict_stmt)
         session.commit()
+        _invalidate_current_day_cache()
         logger.info(f"Upserted {len(records)} BankNifty data records at {datetime.now().strftime('%H:%M:%S')}.")
     except SQLAlchemyError as e:
         session.rollback()
@@ -248,6 +277,7 @@ def store_option_data(df: pd.DataFrame):
             total_upserted += len(chunk)
 
         raw_conn.commit()
+        _invalidate_current_day_cache()
         logger.info(f"Upserted {total_upserted} Option data records at {datetime.now().strftime('%H:%M:%S')}.")
     except Exception as e:
         raw_conn.rollback()
@@ -278,6 +308,7 @@ def store_previous_day_oi(data: list):
         
         session.execute(on_conflict_stmt)
         session.commit()
+        _invalidate_prev_day_oi_cache()
         logger.info(f"Upserted {len(data)} previous day OI records at {datetime.now().strftime('%H:%M:%S')}.")
     except SQLAlchemyError as e:
         session.rollback()
@@ -287,11 +318,17 @@ def store_previous_day_oi(data: list):
 
 def get_tracked_symbols() -> list[str]:
     """Retrieves all tracked symbols from the database."""
+    cached = _tracked_symbols_cache.get('symbols')
+    if cached is not None:
+        logger.debug(f"get_tracked_symbols: cache hit ({len(cached)} symbols)")
+        return cached
+
     session = SessionLocal()
     try:
         results = session.query(TrackedSymbol.symbol).order_by(TrackedSymbol.symbol).all()
         symbols = [r[0] for r in results]
-        logger.debug(f"Loaded {len(symbols)} tracked symbols from the database.")
+        _tracked_symbols_cache['symbols'] = symbols
+        logger.debug(f"get_tracked_symbols: cache miss → DB query ({len(symbols)} symbols)")
         return symbols
     except Exception as e:
         logger.error(f"Error fetching tracked symbols: {e}")
@@ -315,6 +352,7 @@ def save_tracked_symbols(symbols: list[str]):
         session.bulk_insert_mappings(TrackedSymbol, records)
         
         session.commit()
+        _invalidate_tracked_symbols_cache()
         logger.debug(f"Saved {len(symbols)} tracked symbols to the database.")
     except SQLAlchemyError as e:
         session.rollback()
@@ -335,6 +373,9 @@ def clear_madhan_db():
         session.query(FetcherState).delete()
         
         session.commit()
+        _invalidate_current_day_cache()
+        _invalidate_prev_day_oi_cache()
+        _invalidate_tracked_symbols_cache()
         logger.info("Madhan DB data cleared successfully (table schemas preserved).")
     except SQLAlchemyError as e:
         session.rollback()
@@ -558,10 +599,16 @@ def get_previous_day_oi(instrument: str = 'NIFTY'):
     Retrieves previous day OI records from the database.
     Filters for data belonging to the valid trading day immediately preceding the current trading day.
     """
+    current_trading_day = get_valid_trading_day(exchange="NSE")
+    cache_key = (instrument, current_trading_day)
+    cached = _prev_day_oi_cache.get(cache_key)
+    if cached is not None:
+        logger.debug(f"[{instrument}] get_previous_day_oi: cache hit ({len(cached)} rows)")
+        return cached
+
     session = SessionLocal()
     try:
         # Determine the previous trading day
-        current_trading_day = get_valid_trading_day(exchange="NSE")
         prev_trading_day = get_valid_trading_day(current_trading_day - timedelta(days=1), exchange="NSE")
         
         # Create timestamp range for that day
@@ -582,20 +629,24 @@ def get_previous_day_oi(instrument: str = 'NIFTY'):
 
         if results:
             logger.info(f"Found {len(results)} records for the correct date.")
-            return [
+            result = [
                 {'symbol': r.symbol, 'oi': r.oi, 'close': r.close, 'timestamp': r.timestamp}
                 for r in results
             ]
+            _prev_day_oi_cache[cache_key] = result
+            return result
         
         # Fallback: If no data for the exact date, return whatever is in the table (likely stale data)
         # This prevents the UI from breaking if the fetcher missed a day or calculated the wrong date.
         logger.warning(f"No data found for {prev_trading_day}. Falling back to latest available data in table.")
         results = session.query(PreviousDayOI).filter(PreviousDayOI.symbol.startswith(instrument)).order_by(PreviousDayOI.symbol).all()
         
-        return [
+        result = [
             {'symbol': r.symbol, 'oi': r.oi, 'close': r.close, 'timestamp': r.timestamp}
             for r in results
         ]
+        _prev_day_oi_cache[cache_key] = result
+        return result
     except Exception as e:
         logger.error(f"Error fetching previous day OI data: {e}")
         return []
@@ -781,6 +832,12 @@ def get_nth_candle_oi_for_all_symbols(n: int, instrument: str = 'NIFTY'):
 
 def get_current_day_historical_data(end_ts: int = None, instrument: str = 'NIFTY'):
     """Fetches all 1-minute candle data for the current day for Nifty/BankNifty and Options, optionally up to end_ts."""
+    cache_key = (instrument, end_ts)
+    cached = _current_day_cache.get(cache_key)
+    if cached is not None:
+        logger.debug(f"[{instrument}] get_current_day_historical_data: cache hit ({len(cached)} rows)")
+        return cached
+
     session = SessionLocal()
     try:
         today = get_valid_trading_day(exchange="NSE")
@@ -815,7 +872,8 @@ def get_current_day_historical_data(end_ts: int = None, instrument: str = 'NIFTY
         ).filter(*option_filter).all()
 
         combined_data = [row._asdict() for row in spot_data] + [row._asdict() for row in option_data]
-        
+        _current_day_cache[cache_key] = combined_data
+        logger.debug(f"[{instrument}] get_current_day_historical_data: cache miss → DB query ({len(combined_data)} rows)")
         return combined_data
 
     except Exception as e:
@@ -867,6 +925,12 @@ def get_previous_trading_day():
 
 def get_current_day_instrument_data(symbol: str):
     """Fetches all 1-minute candle data for the current day for a specific instrument/symbol."""
+    cache_key = ('inst', symbol)
+    cached = _current_day_cache.get(cache_key)
+    if cached is not None:
+        logger.debug(f"[{symbol}] get_current_day_instrument_data: cache hit ({len(cached)} rows)")
+        return cached
+
     session = SessionLocal()
     try:
         today = get_valid_trading_day(exchange="NSE")
@@ -887,7 +951,7 @@ def get_current_day_instrument_data(symbol: str):
                 NiftyData.timestamp >= start_of_day_ts
             ).order_by(NiftyData.timestamp.asc()).all()
             
-            return [row._asdict() for row in nifty_data]
+            result = [row._asdict() for row in nifty_data]
         elif symbol == 'BANKNIFTY':
             # Query BankNifty data
             banknifty_data = session.query(
@@ -902,7 +966,7 @@ def get_current_day_instrument_data(symbol: str):
                 BankNiftyData.timestamp >= start_of_day_ts
             ).order_by(BankNiftyData.timestamp.asc()).all()
             
-            return [row._asdict() for row in banknifty_data]
+            result = [row._asdict() for row in banknifty_data]
         else:
             # Query Option data for the specific symbol
             option_data = session.query(
@@ -918,7 +982,11 @@ def get_current_day_instrument_data(symbol: str):
                 OptionData.timestamp >= start_of_day_ts
             ).order_by(OptionData.timestamp.asc()).all()
             
-            return [row._asdict() for row in option_data]
+            result = [row._asdict() for row in option_data]
+
+        _current_day_cache[cache_key] = result
+        logger.debug(f"[{symbol}] get_current_day_instrument_data: cache miss → DB query ({len(result)} rows)")
+        return result
 
     except Exception as e:
         logger.error(f"Error fetching current day instrument data for {symbol}: {e}", exc_info=True)
