@@ -1162,7 +1162,13 @@ export const DEFAULT_NODE_DATA = {
   start: {
     scheduleType: 'daily' as const,
     time: '09:15',
+    // The scheduler has always read these; only the switch had a default, so a
+    // workflow inherited the exchange's full session unless someone edited the
+    // JSON by hand. 15:15 leaves room to square off before the 15:30 close.
     marketHoursOnly: true,
+    marketHoursStart: '09:15',
+    marketHoursEnd: '15:15',
+    marketHoursExchange: 'NSE',
   },
   priceAlert: {
     symbol: '',
@@ -1184,9 +1190,10 @@ export const DEFAULT_NODE_DATA = {
     trigger: 'once' as const,
   },
   webhookTrigger: {
+    // No symbol or exchange: the request carries them. Downstream nodes read
+    // `{{webhook.symbol}}` and friends, so a copy stored on the trigger would
+    // be a second source of truth that the executor never looks at.
     label: '',
-    symbol: '',
-    exchange: 'NSE',
   },
   placeOrder: {
     symbol: '',

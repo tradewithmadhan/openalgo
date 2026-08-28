@@ -12,30 +12,31 @@
  * candles → on-chart order lines, right-click to place, drag to modify, ✕ to
  * cancel, real-time order stream, REST fallback) is unchanged.
  */
+
+import type { LinkGroup } from 'openalgo-charts'
 import {
   type Bar,
   BuySellButtons,
   CandleBuilder,
   compactVolume,
   createChart,
-  readChartSettings,
   type IPrimitive,
   LogoWatermark,
   type LtpEvent,
   type MarketDepth,
   OpenAlgoDataFeed,
-  tryResolveInterval,
-  withBarCache,
   OpenAlgoTradeFeed,
   OpenAlgoWsFeed,
   type PriceLine,
   ReplayController,
   type ReplayState,
+  readChartSettings,
   type SeriesApi,
   type SeriesStyle,
   type SeriesType,
+  tryResolveInterval,
+  withBarCache,
 } from 'openalgo-charts'
-import type { LinkGroup } from 'openalgo-charts'
 import type { DrawingController } from 'openalgo-charts/draw'
 import { runTransform } from 'openalgo-charts/transform'
 
@@ -918,6 +919,13 @@ export class TradingTerminal {
       style,
       priceFormat: { type: 'custom', formatter: (p: number) => p.toFixed(dp) },
     })
+    // Tell the engine the instrument's tick. Without it the price scale treats
+    // `minMove: 0` as "infer precision from the visible range", so RELIANCE at a
+    // 0.05 tick renders a decimal short, drawings snap to an invented grid, and
+    // an indicator asking `ctx.tickSize` is told nobody knows. The value is the
+    // same one this host already formats and snaps orders with.
+    const tick = this.tick()
+    if (tick > 0) this.chart.setPriceScaleOptions({ minMove: tick })
     // Volume rides an OVERLAY price scale inside the price pane rather than a
     // pane of its own: it autoscales independently but draws no axis, so the
     // right-hand column stays a clean price ladder instead of stacking a second
@@ -1481,9 +1489,27 @@ export class TradingTerminal {
   }
 
   private async loadIndicators(): Promise<void> {
-    if (this.indicatorsLoaded) return
-    await import('openalgo-charts/indicators')
-    this.indicatorsLoaded = true
+    // The built-in tier is a static bundle: import it once.
+    if (!this.indicatorsLoaded) {
+      await import('openalgo-charts/indicators')
+      this.indicatorsLoaded = true
+    }
+    // The user's own modules are re-checked on every call, which is what makes a
+    // newly added indicator appear on the next picker open rather than after a
+    // page reload. The loader skips anything it has already imported, so a
+    // repeat call costs one small JSON fetch. They register after the built-in
+    // tier, so a module reusing a built-in id overrides it, not the reverse.
+    const { loadCustomIndicators } = await import('./customIndicators')
+    const custom = await loadCustomIndicators({
+      // Raised while the indicator is running rather than while loading: a
+      // `calc` whose columns do not line up with the bars draws nothing and
+      // throws nothing, so this is the only place a user would hear about it.
+      onProblem: (message) => this.toast(message, 'err'),
+    })
+    // A broken user file must not take the picker down with it, but it must not
+    // fail silently either: without this the indicator is simply absent and
+    // there is nothing anywhere to say why.
+    for (const err of custom.errors) this.toast(`${err.file}: ${err.message}`, 'err')
   }
 
   /** Re-add the tracked indicators to a freshly built chart. */
@@ -2066,6 +2092,34 @@ export class TradingTerminal {
               if (f && (this.liveBucket == null || f.time < this.liveBucket)) {
                 this.rawBars[i] = f
                 changed = true
+              }
+            }
+            // The forming bar's volume cannot come from the tick stream. A
+            // tradeable's only subscription is Depth, and a depth payload
+            // carries ltp but no last-traded-qty, so 'ltq-sum' has nothing to
+            // accumulate and the live bar reads 0 on a symbol visibly trading.
+            // History is the only source that has it, so take it from there --
+            // and take only it. OHLC stays with the ticks, which are fresher
+            // than a 30-second poll and must not jump backwards to it.
+            if (this.builder && this.liveBucket != null) {
+              const f = byTime.get(this.liveBucket)
+              const cur = this.builder.current()
+              if (f && cur && cur.time === this.liveBucket) {
+                // Volume inside a bar only ever grows, so the higher of the two
+                // is the later reading. It also keeps the histogram monotonic
+                // when a poll lands mid-print and briefly reports less.
+                const vol = Math.max(f.volume ?? 0, cur.volume ?? 0)
+                if (vol !== (cur.volume ?? 0)) {
+                  // Re-seed rather than patch rawBars alone: the builder folds
+                  // the next tick into its own copy of the bar, which would
+                  // write the stale volume straight back over this.
+                  this.builder.seed({ ...cur, volume: vol })
+                  const last = this.rawBars[this.rawBars.length - 1]
+                  if (last && last.time === this.liveBucket) {
+                    this.rawBars[this.rawBars.length - 1] = { ...last, volume: vol }
+                    changed = true
+                  }
+                }
               }
             }
             if (changed) this.setPriceData()
