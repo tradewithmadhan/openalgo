@@ -1045,7 +1045,20 @@ class NiftyDataFetcher:
                         self.stop_event.set()
                         break
                     else:
-                        logger.debug(f"Market closed but waiting for all candles. NIFTY: {nifty_ts}, BANKNIFTY: {banknifty_ts}")
+                        hard_stop_time = market_close_time + timedelta(minutes=1)
+                        if now > hard_stop_time:
+                            today_str = datetime.now().strftime('%Y-%m-%d')
+                            try:
+                                export_db_to_parquet(today_str)
+                            except Exception as e:
+                                logger.error(f"Failed to export to parquet: {e}")
+                            logger.info(f"Hard stop: past FNO end + 1 min. NIFTY: {nifty_ts}, BANKNIFTY: {banknifty_ts}. Stopping fetcher.")
+                            self.is_running = False
+                            self.status = "Stopped (Market Closed)"
+                            self.stop_event.set()
+                            break
+                        else:
+                            logger.debug(f"Market closed but waiting for all candles. NIFTY: {nifty_ts}, BANKNIFTY: {banknifty_ts}")
 
             except Exception as e:
                 logger.error(f"Exception during incremental fetch: {e}")
