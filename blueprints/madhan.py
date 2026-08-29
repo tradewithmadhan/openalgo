@@ -360,6 +360,45 @@ def nifty_option_ohlc():
         logger.error(f"Error fetching option OHLC for {symbol}: {str(e)}")
         return jsonify({'status': 'error', 'message': f'Error fetching option OHLC: {str(e)}'}), 500
 
+@madhan_bp.route('/api/nifty/option-ohlc-batch')
+@check_session_validity
+def nifty_option_ohlc_batch():
+    """Gets OHLC data for multiple option symbols in one DB call."""
+    symbols_raw = request.args.get('symbols', '')
+    if not symbols_raw:
+        return jsonify({'status': 'error', 'message': 'symbols parameter is required (comma-separated)'}), 400
+
+    symbols = [s.strip() for s in symbols_raw.split(',') if s.strip()]
+    if not symbols:
+        return jsonify({'status': 'error', 'message': 'No valid symbols provided'}), 400
+
+    try:
+        batch_data = get_current_day_instrument_data_batch(symbols)
+
+        result = {}
+        for symbol in symbols:
+            data = batch_data.get(symbol, [])
+            if data:
+                result[symbol] = {
+                    'timestamps': [row['timestamp'] for row in data],
+                    'open': [row['open'] for row in data],
+                    'high': [row['high'] for row in data],
+                    'low': [row['low'] for row in data],
+                    'close': [row['close'] for row in data],
+                    'volume': [row['volume'] for row in data],
+                    'oi': [row['oi'] for row in data]
+                }
+            else:
+                result[symbol] = {
+                    'timestamps': [], 'open': [], 'high': [], 'low': [],
+                    'close': [], 'volume': [], 'oi': []
+                }
+
+        return jsonify({'status': 'success', 'data': result})
+    except Exception as e:
+        logger.error(f"Error fetching batch option OHLC: {str(e)}")
+        return jsonify({'status': 'error', 'message': f'Error fetching batch option OHLC: {str(e)}'}), 500
+
 @madhan_bp.route('/api/nifty/previous-day-oi')
 @check_session_validity
 def nifty_previous_day_oi():

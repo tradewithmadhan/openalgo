@@ -321,49 +321,45 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
         fetchSpotData();
     }, [refreshTrigger, instrument]);
 
-    // Fetch data for specific symbol
-    const fetchSymbolData = async (symbol: string) => {
+    // Batch-fetch OHLC data for all strike symbols in one API call
+    const fetchAllSymbolsData = async () => {
+        if (!expiryDate || strikes.length === 0) return;
         try {
-            const response = await fetch(`/madhan/api/nifty/option-ohlc?instrument=${instrument}&symbol=${symbol}&_=${Date.now()}`);
+            const allSymbols: string[] = [];
+            strikes.forEach(strike => {
+                const ce = getSymbol(strike, 'CE');
+                const pe = getSymbol(strike, 'PE');
+                if (ce) allSymbols.push(ce);
+                if (pe) allSymbols.push(pe);
+            });
+            if (allSymbols.length === 0) return;
+
+            const response = await fetch(`/madhan/api/nifty/option-ohlc-batch?symbols=${allSymbols.join(',')}&_=${Date.now()}`);
             const json = await response.json();
             if (json.status === 'success') {
-                const { timestamps, open, high, low, close, volume, oi } = json.data;
-                
-                // Reconstruct array of objects if data exists
-                let formattedData: OptionOHLC[] = [];
-                if (timestamps && Array.isArray(timestamps)) {
-                     formattedData = timestamps.map((ts: number, i: number) => ({
-                        timestamp: ts,
-                        open: open[i],
-                        high: high[i],
-                        low: low[i],
-                        close: close[i],
-                        volume: volume[i],
-                        oi: oi[i]
-                    }));
+                const next = new Map<string, OptionOHLC[]>();
+                for (const [symbol, ohlc] of Object.entries(json.data as Record<string, { timestamps: number[]; open: number[]; high: number[]; low: number[]; close: number[]; volume: number[]; oi: number[] }>)) {
+                    const { timestamps, open, high, low, close, volume, oi } = ohlc;
+                    if (timestamps && Array.isArray(timestamps) && timestamps.length > 0) {
+                        next.set(symbol, timestamps.map((ts: number, i: number) => ({
+                            timestamp: ts, open: open[i], high: high[i], low: low[i],
+                            close: close[i], volume: volume[i], oi: oi[i]
+                        })));
+                    } else {
+                        next.set(symbol, []);
+                    }
                 }
-
-                setOptionsData(prev => {
-                    const next = new Map(prev);
-                    next.set(symbol, formattedData);
-                    return next;
-                });
+                setOptionsData(next);
             }
         } catch (error) {
-            console.error(`Failed to fetch data for ${symbol}`, error);
+            console.error("Failed to fetch batch option data", error);
         }
     };
 
     // Effect to fetch data when selection changes or refresh triggers
     useEffect(() => {
         if (!expiryDate) return;
-        
-        strikes.forEach(strike => {
-            const ceSymbol = getSymbol(strike, 'CE');
-            const peSymbol = getSymbol(strike, 'PE');
-            if (ceSymbol) fetchSymbolData(ceSymbol);
-            if (peSymbol) fetchSymbolData(peSymbol);
-        });
+        fetchAllSymbolsData();
     }, [strikes, expiryDate, refreshTrigger, instrument]);
 
     // Toggle strike selection
