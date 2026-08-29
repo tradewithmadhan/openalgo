@@ -206,7 +206,7 @@ def ws_get_multiquotes(symbols: list[dict]) -> list:
 
 
 def ws_get_depth(symbol: str, exchange: str) -> dict:
-    """On-demand depth via WS proxy."""
+    """On-demand depth via WS proxy. Matches original zerodha get_market_depth format."""
     ticks = _ws_fetch_ticks([{"exchange": exchange, "symbol": symbol}], mode="Depth")
     key = f"{exchange}:{symbol}"
     data = ticks.get(key, {})
@@ -217,23 +217,38 @@ def ws_get_depth(symbol: str, exchange: str) -> dict:
     buy_orders = depth.get("buy", [])
     sell_orders = depth.get("sell", [])
 
+    asks = []
+    bids = []
+
+    for i in range(5):
+        if i < len(sell_orders):
+            asks.append({
+                "price": sell_orders[i].get("price", 0),
+                "quantity": sell_orders[i].get("quantity", 0),
+            })
+        else:
+            asks.append({"price": 0, "quantity": 0})
+
+    for i in range(5):
+        if i < len(buy_orders):
+            bids.append({
+                "price": buy_orders[i].get("price", 0),
+                "quantity": buy_orders[i].get("quantity", 0),
+            })
+        else:
+            bids.append({"price": 0, "quantity": 0})
+
     return {
-        "symbol": symbol,
-        "exchange": exchange,
+        "asks": asks,
+        "bids": bids,
+        "high": data.get("high", 0),
+        "low": data.get("low", 0),
         "ltp": data.get("ltp", 0),
         "ltq": data.get("last_quantity", 0),
         "oi": data.get("oi", 0),
         "open": data.get("open", 0),
-        "high": data.get("high", 0),
-        "low": data.get("low", 0),
         "prev_close": data.get("close", 0),
+        "totalbuyqty": sum(order.get("quantity", 0) for order in buy_orders),
+        "totalsellqty": sum(order.get("quantity", 0) for order in sell_orders),
         "volume": data.get("volume", 0),
-        "buy": [
-            {"price": o.get("price", 0), "quantity": o.get("quantity", 0), "orders": o.get("orders", 0)}
-            for o in buy_orders[:5]
-        ],
-        "sell": [
-            {"price": o.get("price", 0), "quantity": o.get("quantity", 0), "orders": o.get("orders", 0)}
-            for o in sell_orders[:5]
-        ],
     }
