@@ -320,7 +320,7 @@ def get_tracked_symbols() -> list[str]:
     """Retrieves all tracked symbols from the database."""
     cached = _tracked_symbols_cache.get('symbols')
     if cached is not None:
-        logger.debug(f"get_tracked_symbols: cache hit ({len(cached)} symbols)")
+        logger.info(f"get_tracked_symbols: cache hit ({len(cached)} symbols)")
         return cached
 
     session = SessionLocal()
@@ -328,7 +328,7 @@ def get_tracked_symbols() -> list[str]:
         results = session.query(TrackedSymbol.symbol).order_by(TrackedSymbol.symbol).all()
         symbols = [r[0] for r in results]
         _tracked_symbols_cache['symbols'] = symbols
-        logger.debug(f"get_tracked_symbols: cache miss → DB query ({len(symbols)} symbols)")
+        logger.info(f"get_tracked_symbols: cache miss → DB query ({len(symbols)} symbols)")
         return symbols
     except Exception as e:
         logger.error(f"Error fetching tracked symbols: {e}")
@@ -603,7 +603,7 @@ def get_previous_day_oi(instrument: str = 'NIFTY'):
     cache_key = (instrument, current_trading_day)
     cached = _prev_day_oi_cache.get(cache_key)
     if cached is not None:
-        logger.debug(f"[{instrument}] get_previous_day_oi: cache hit ({len(cached)} rows)")
+        logger.info(f"[{instrument}] get_previous_day_oi: cache hit ({len(cached)} rows)")
         return cached
 
     session = SessionLocal()
@@ -835,7 +835,7 @@ def get_current_day_historical_data(end_ts: int = None, instrument: str = 'NIFTY
     cache_key = (instrument, end_ts)
     cached = _current_day_cache.get(cache_key)
     if cached is not None:
-        logger.debug(f"[{instrument}] get_current_day_historical_data: cache hit ({len(cached)} rows)")
+        logger.info(f"[{instrument}] get_current_day_historical_data: cache hit ({len(cached)} rows)")
         return cached
 
     session = SessionLocal()
@@ -873,7 +873,7 @@ def get_current_day_historical_data(end_ts: int = None, instrument: str = 'NIFTY
 
         combined_data = [row._asdict() for row in spot_data] + [row._asdict() for row in option_data]
         _current_day_cache[cache_key] = combined_data
-        logger.debug(f"[{instrument}] get_current_day_historical_data: cache miss → DB query ({len(combined_data)} rows)")
+        logger.info(f"[{instrument}] get_current_day_historical_data: cache miss → DB query ({len(combined_data)} rows)")
         return combined_data
 
     except Exception as e:
@@ -928,7 +928,7 @@ def get_current_day_instrument_data(symbol: str):
     cache_key = ('inst', symbol)
     cached = _current_day_cache.get(cache_key)
     if cached is not None:
-        logger.debug(f"[{symbol}] get_current_day_instrument_data: cache hit ({len(cached)} rows)")
+        logger.info(f"[{symbol}] get_current_day_instrument_data: cache hit ({len(cached)} rows)")
         return cached
 
     session = SessionLocal()
@@ -985,7 +985,7 @@ def get_current_day_instrument_data(symbol: str):
             result = [row._asdict() for row in option_data]
 
         _current_day_cache[cache_key] = result
-        logger.debug(f"[{symbol}] get_current_day_instrument_data: cache miss → DB query ({len(result)} rows)")
+        logger.info(f"[{symbol}] get_current_day_instrument_data: cache miss → DB query ({len(result)} rows)")
         return result
 
     except Exception as e:
