@@ -201,60 +201,22 @@ class BrokerData:
 
     def get_quotes(self, symbol: str, exchange: str) -> dict:
         """
-        Get real-time quotes for given symbol
-        Args:
-            symbol: Trading symbol
-            exchange: Exchange (e.g., NSE, BSE)
-        Returns:
-            dict: Quote data with required fields
+        Get real-time quotes for given symbol via on-demand WebSocket.
+        Falls back to empty if WS proxy is unavailable.
         """
         try:
-            # Convert symbol to broker format
+            from .ws_fetch import ws_get_quotes
+            result = ws_get_quotes(symbol, exchange)
+            if result and result.get("ltp", 0) > 0:
+                return result
+            # WS returned no data — symbol may not be subscribed, try with exchange info
             br_symbol = get_br_symbol(symbol, exchange)
-            logger.debug(f"Fetching quotes for {exchange}:{br_symbol}")
-
-            # Get exchange_token from database
-            with db_session() as session:
-                symbol_info = (
-                    session.query(SymToken)
-                    .filter(SymToken.exchange == exchange, SymToken.brsymbol == br_symbol)
-                    .first()
-                )
-
-                if not symbol_info:
-                    raise Exception(f"Could not find exchange token for {exchange}:{br_symbol}")
-
-                # Split token to get exchange_token for quotes
-                exchange_token = symbol_info.token.split("::::")[1]
-                row_brexchange = symbol_info.brexchange
-
-            exchange = _kite_quote_exchange(exchange, row_brexchange)
-
-            # URL encode the symbol to handle special characters
-            encoded_symbol = urllib.parse.quote(f"{exchange}:{br_symbol}")
-
-            response = get_api_response(f"/quote?i={encoded_symbol}", self.auth_token)
-
-            # Get quote data from response
-            quote = response.get("data", {}).get(f"{exchange}:{br_symbol}", {})
-            if not quote:
-                raise ZerodhaAPIError("No quote data found")
-
-            # Return quote data
-            return {
-                "ask": quote.get("depth", {}).get("sell", [{}])[0].get("price", 0),
-                "bid": quote.get("depth", {}).get("buy", [{}])[0].get("price", 0),
-                "high": quote.get("ohlc", {}).get("high", 0),
-                "low": quote.get("ohlc", {}).get("low", 0),
-                "ltp": quote.get("last_price", 0),
-                "open": quote.get("ohlc", {}).get("open", 0),
-                "prev_close": quote.get("ohlc", {}).get("close", 0),
-                "volume": quote.get("volume", 0),
-                "oi": quote.get("oi", 0),
-            }
-
+            logger.debug(f"WS returned no data for {exchange}:{br_symbol}, trying with br_symbol")
+            result = ws_get_quotes(br_symbol, exchange)
+            if result and result.get("ltp", 0) > 0:
+                return result
+            raise ZerodhaAPIError("No quote data available via WebSocket")
         except ZerodhaPermissionError as e:
-            # Log at debug level to avoid spam for personal API without data feed
             logger.debug(f"Permission error fetching quotes: {e}")
             raise
         except (ZerodhaAPIError, Exception) as e:
@@ -263,46 +225,11 @@ class BrokerData:
 
     def get_multiquotes(self, symbols: list) -> list:
         """
-        Get real-time quotes for multiple symbols with automatic batching
-        Args:
-            symbols: List of dicts with 'symbol' and 'exchange' keys
-                     Example: [{'symbol': 'SBIN', 'exchange': 'NSE'}, ...]
-        Returns:
-            list: List of quote data for each symbol with format:
-                  [{'symbol': 'SBIN', 'exchange': 'NSE', 'data': {...}}, ...]
+        Get real-time quotes for multiple symbols via on-demand WebSocket.
         """
         try:
-            BATCH_SIZE = 500  # Zerodha API limit per request
-            RATE_LIMIT_DELAY = 1.0  # 1 request per second = 500 symbols/second
-
-            # If symbols exceed batch size, process in batches
-            if len(symbols) > BATCH_SIZE:
-                logger.info(f"Processing {len(symbols)} symbols in batches of {BATCH_SIZE}")
-                all_results = []
-
-                # Split symbols into batches
-                for i in range(0, len(symbols), BATCH_SIZE):
-                    batch = symbols[i : i + BATCH_SIZE]
-                    logger.debug(
-                        f"Processing batch {i // BATCH_SIZE + 1}: symbols {i + 1} to {min(i + BATCH_SIZE, len(symbols))}"
-                    )
-
-                    # Process this batch
-                    batch_results = self._process_quotes_batch(batch)
-                    all_results.extend(batch_results)
-
-                    # Rate limit delay between batches
-                    if i + BATCH_SIZE < len(symbols):
-                        time.sleep(RATE_LIMIT_DELAY)
-
-                logger.info(
-                    f"Successfully processed {len(all_results)} quotes in {(len(symbols) + BATCH_SIZE - 1) // BATCH_SIZE} batches"
-                )
-                return all_results
-            else:
-                # Single batch processing
-                return self._process_quotes_batch(symbols)
-
+            from .ws_fetch import ws_get_multiquotes
+            return ws_get_multiquotes(symbols)
         except ZerodhaPermissionError as e:
             logger.debug(f"Permission error fetching multiquotes: {e}")
             raise
@@ -568,93 +495,14 @@ class BrokerData:
 
     def get_market_depth(self, symbol: str, exchange: str) -> dict:
         """
-        Get market depth for given symbol
-        Args:
-            symbol: Trading symbol
-            exchange: Exchange (e.g., NSE, BSE)
-        Returns:
-            dict: Market depth data
+        Get market depth for given symbol via on-demand WebSocket.
         """
         try:
-            # Convert symbol to broker format
-            br_symbol = get_br_symbol(symbol, exchange)
-            logger.debug(f"Fetching market depth for {exchange}:{br_symbol}")
-
-            # Get exchange_token from database
-            with db_session() as session:
-                symbol_info = (
-                    session.query(SymToken)
-                    .filter(SymToken.exchange == exchange, SymToken.brsymbol == br_symbol)
-                    .first()
-                )
-
-                if not symbol_info:
-                    raise Exception(f"Could not find exchange token for {exchange}:{br_symbol}")
-
-                # Split token to get exchange_token for quotes
-                exchange_token = symbol_info.token.split("::::")[1]
-                row_brexchange = symbol_info.brexchange
-
-            exchange = _kite_quote_exchange(exchange, row_brexchange)
-
-            # URL encode the symbol to handle special characters
-            encoded_symbol = urllib.parse.quote(f"{exchange}:{br_symbol}")
-
-            response = get_api_response(f"/quote?i={encoded_symbol}", self.auth_token)
-
-            # Get quote data from response
-            quote = response.get("data", {}).get(f"{exchange}:{br_symbol}", {})
-            if not quote:
-                raise ZerodhaAPIError("No market depth data found")
-
-            depth = quote.get("depth", {})
-
-            # Format asks and bids data
-            asks = []
-            bids = []
-
-            # Process sell orders (asks)
-            sell_orders = depth.get("sell", [])
-            for i in range(5):
-                if i < len(sell_orders):
-                    asks.append(
-                        {
-                            "price": sell_orders[i].get("price", 0),
-                            "quantity": sell_orders[i].get("quantity", 0),
-                        }
-                    )
-                else:
-                    asks.append({"price": 0, "quantity": 0})
-
-            # Process buy orders (bids)
-            buy_orders = depth.get("buy", [])
-            for i in range(5):
-                if i < len(buy_orders):
-                    bids.append(
-                        {
-                            "price": buy_orders[i].get("price", 0),
-                            "quantity": buy_orders[i].get("quantity", 0),
-                        }
-                    )
-                else:
-                    bids.append({"price": 0, "quantity": 0})
-
-            # Return market depth data
-            return {
-                "asks": asks,
-                "bids": bids,
-                "high": quote.get("ohlc", {}).get("high", 0),
-                "low": quote.get("ohlc", {}).get("low", 0),
-                "ltp": quote.get("last_price", 0),
-                "ltq": quote.get("last_quantity", 0),
-                "oi": quote.get("oi", 0),
-                "open": quote.get("ohlc", {}).get("open", 0),
-                "prev_close": quote.get("ohlc", {}).get("close", 0),
-                "totalbuyqty": sum(order.get("quantity", 0) for order in buy_orders),
-                "totalsellqty": sum(order.get("quantity", 0) for order in sell_orders),
-                "volume": quote.get("volume", 0),
-            }
-
+            from .ws_fetch import ws_get_depth
+            result = ws_get_depth(symbol, exchange)
+            if result and result.get("ltp", 0) > 0:
+                return result
+            raise ZerodhaAPIError("No depth data available via WebSocket")
         except ZerodhaPermissionError as e:
             logger.error(f"Permission error fetching market depth: {str(e)}")
             raise
