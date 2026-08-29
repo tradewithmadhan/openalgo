@@ -514,12 +514,100 @@ def get_option_data(end_ts: int = None, instrument: str = 'NIFTY'):
     finally:
         session.close()
 
+def find_consistent_timestamp(instrument: str):
+    """Find the latest timestamp where ALL tracked symbols for this instrument have data.
+    
+    Called by the fetcher after storing option data for an instrument.
+    Returns the timestamp (int) if consistent, None if no consistent timestamp found.
+    """
+    session = SessionLocal()
+    try:
+        tracked_count = session.query(func.count(TrackedSymbol.symbol)).filter(
+            TrackedSymbol.symbol.startswith(instrument)
+        ).scalar()
+        if not tracked_count:
+            return None
+
+        today = get_valid_trading_day(exchange="NSE")
+        start_ts = int(datetime.combine(today, time.min).timestamp())
+
+        ts = (
+            session.query(OptionData.timestamp)
+            .filter(OptionData.timestamp >= start_ts, OptionData.symbol.startswith(instrument))
+            .group_by(OptionData.timestamp)
+            .having(func.count(func.distinct(OptionData.symbol)) >= tracked_count)
+            .order_by(OptionData.timestamp.desc())
+            .limit(1)
+            .scalar()
+        )
+        return ts
+    except Exception as e:
+        logger.error(f"Error finding consistent timestamp for {instrument}: {e}")
+        return None
+    finally:
+        session.close()
+
 def get_consistent_current_option_data(end_ts: int = None, instrument: str = 'NIFTY'):
     """
     Returns option data at the last timestamp where ALL tracked symbols are present.
     This prevents partial/inconsistent data during incremental fetch when different
     symbols may be at different timestamps.
+    
+    In live mode (end_ts=None), reads pre-computed timestamp from FetcherState
+    instead of running expensive GROUP BY query.
     """
+    # Live mode: try FetcherState first (O(1) lookup, no GROUP BY)
+    if end_ts is None:
+        is_consistent = get_fetcher_state(f'{instrument.lower()}_options_consistent')
+        cached_ts = get_fetcher_state(f'{instrument.lower()}_last_consistent_ts')
+        
+        if is_consistent == 'true' and cached_ts:
+            latest_consistent_ts = int(cached_ts)
+            logger.info(f"[{instrument}] get_consistent_current_option_data: using fetcher timestamp {latest_consistent_ts}")
+            session = SessionLocal()
+            try:
+                from sqlalchemy.orm import aliased
+                today = get_valid_trading_day(exchange="NSE")
+                start_ts = int(datetime.combine(today, time.min).timestamp())
+                
+                vol_filter = [OptionData.timestamp >= start_ts, OptionData.symbol.startswith(instrument)]
+                subq = (
+                    select(
+                        OptionData,
+                        func.count(OptionData.id).over(
+                            partition_by=OptionData.symbol
+                        ).label('candle_count'),
+                        func.sum(case((and_(*vol_filter), OptionData.volume), else_=0)).over(
+                            partition_by=OptionData.symbol
+                        ).label('total_day_volume')
+                    ).filter(OptionData.timestamp == latest_consistent_ts, OptionData.symbol.startswith(instrument))
+                ).subquery()
+                
+                option_data_alias = aliased(OptionData, subq)
+                results = session.query(option_data_alias, subq.c.candle_count, subq.c.total_day_volume).order_by(option_data_alias.symbol).all()
+                
+                return [
+                    {
+                        'timestamp': r.timestamp,
+                        'symbol': r.symbol,
+                        'open': r.open,
+                        'high': r.high,
+                        'low': r.low,
+                        'close': r.close,
+                        'volume': r.volume,
+                        'day_volume': int(total_day_volume) if total_day_volume is not None else 0,
+                        'oi': r.oi,
+                        'candle_count': candle_count
+                    }
+                    for r, candle_count, total_day_volume in results
+                ]
+            except Exception as e:
+                logger.error(f"Error fetching consistent Option data (live mode): {e}")
+                return []
+            finally:
+                session.close()
+    
+    # Replay mode or no cached timestamp: fall back to GROUP BY
     session = SessionLocal()
     try:
         from sqlalchemy.orm import aliased
