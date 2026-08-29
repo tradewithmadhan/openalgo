@@ -4,6 +4,7 @@ Database setup and utility functions for MadhaN's custom data.
 import os
 import re
 import pandas as pd
+from collections import defaultdict
 from datetime import datetime, time, date, timedelta
 from sqlalchemy import create_engine, Column, Integer, Float, String, Index, text, func, select, literal_column, and_, case
 from sqlalchemy.pool import NullPool
@@ -925,72 +926,68 @@ def get_previous_trading_day():
 
 def get_current_day_instrument_data(symbol: str):
     """Fetches all 1-minute candle data for the current day for a specific instrument/symbol."""
-    cache_key = ('inst', symbol)
-    cached = _current_day_cache.get(cache_key)
-    if cached is not None:
-        logger.info(f"[{symbol}] get_current_day_instrument_data: cache hit ({len(cached)} rows)")
-        return cached
+    results = get_current_day_instrument_data_batch([symbol])
+    return results.get(symbol, [])
 
+
+def get_current_day_instrument_data_batch(symbols: list[str]) -> dict[str, list]:
+    """Fetches all 1-minute candle data for the current day for multiple symbols in minimal DB queries.
+
+    Returns a dict mapping each symbol to its list of candle dicts.
+    Spot symbols (NIFTY/BANKNIFTY) are queried separately; option symbols are batched into one query.
+    """
+    if not symbols:
+        return {}
+
+    today = get_valid_trading_day(exchange="NSE")
+    start_of_day_ts = int(datetime.combine(today, time.min).timestamp())
+
+    spot_symbols = [s for s in symbols if s in ('NIFTY', 'BANKNIFTY')]
+    option_symbols = [s for s in symbols if s not in ('NIFTY', 'BANKNIFTY')]
+
+    result = {}
     session = SessionLocal()
     try:
-        today = get_valid_trading_day(exchange="NSE")
-        start_of_day = datetime.combine(today, time.min)
-        start_of_day_ts = int(start_of_day.timestamp())
+        # Query spot data (at most 2 queries: NIFTY + BANKNIFTY)
+        for sym in spot_symbols:
+            if sym == 'NIFTY':
+                rows = session.query(
+                    NiftyData.timestamp, NiftyData.open, NiftyData.high, NiftyData.low,
+                    NiftyData.close, NiftyData.volume, func.coalesce(NiftyData.oi, 0).label('oi')
+                ).filter(NiftyData.timestamp >= start_of_day_ts).order_by(NiftyData.timestamp.asc()).all()
+            else:
+                rows = session.query(
+                    BankNiftyData.timestamp, BankNiftyData.open, BankNiftyData.high, BankNiftyData.low,
+                    BankNiftyData.close, BankNiftyData.volume, func.coalesce(BankNiftyData.oi, 0).label('oi')
+                ).filter(BankNiftyData.timestamp >= start_of_day_ts).order_by(BankNiftyData.timestamp.asc()).all()
+            result[sym] = [row._asdict() for row in rows]
 
-        if symbol == 'NIFTY':
-            # Query Nifty data
-            nifty_data = session.query(
-                NiftyData.timestamp,
-                NiftyData.open,
-                NiftyData.high,
-                NiftyData.low,
-                NiftyData.close,
-                NiftyData.volume,
-                func.coalesce(NiftyData.oi, 0).label('oi')
-            ).filter(
-                NiftyData.timestamp >= start_of_day_ts
-            ).order_by(NiftyData.timestamp.asc()).all()
-            
-            result = [row._asdict() for row in nifty_data]
-        elif symbol == 'BANKNIFTY':
-            # Query BankNifty data
-            banknifty_data = session.query(
-                BankNiftyData.timestamp,
-                BankNiftyData.open,
-                BankNiftyData.high,
-                BankNiftyData.low,
-                BankNiftyData.close,
-                BankNiftyData.volume,
-                func.coalesce(BankNiftyData.oi, 0).label('oi')
-            ).filter(
-                BankNiftyData.timestamp >= start_of_day_ts
-            ).order_by(BankNiftyData.timestamp.asc()).all()
-            
-            result = [row._asdict() for row in banknifty_data]
-        else:
-            # Query Option data for the specific symbol
-            option_data = session.query(
-                OptionData.timestamp,
-                OptionData.open,
-                OptionData.high,
-                OptionData.low,
-                OptionData.close,
-                OptionData.volume,
+        # Query all option symbols in ONE query
+        if option_symbols:
+            rows = session.query(
+                OptionData.symbol, OptionData.timestamp, OptionData.open, OptionData.high,
+                OptionData.low, OptionData.close, OptionData.volume,
                 func.coalesce(OptionData.oi, 0).label('oi')
             ).filter(
-                OptionData.symbol == symbol,
+                OptionData.symbol.in_(option_symbols),
                 OptionData.timestamp >= start_of_day_ts
-            ).order_by(OptionData.timestamp.asc()).all()
-            
-            result = [row._asdict() for row in option_data]
+            ).order_by(OptionData.symbol, OptionData.timestamp.asc()).all()
 
-        _current_day_cache[cache_key] = result
-        logger.info(f"[{symbol}] get_current_day_instrument_data: cache miss → DB query ({len(result)} rows)")
+            grouped = defaultdict(list)
+            for row in rows:
+                d = row._asdict()
+                sym = d.pop('symbol')
+                grouped[sym].append(d)
+
+            for sym in option_symbols:
+                result[sym] = grouped.get(sym, [])
+
+        logger.info(f"get_current_day_instrument_data_batch: {len(symbols)} symbols, {sum(len(v) for v in result.values())} total rows")
         return result
 
     except Exception as e:
-        logger.error(f"Error fetching current day instrument data for {symbol}: {e}", exc_info=True)
-        return []
+        logger.error(f"Error in get_current_day_instrument_data_batch: {e}", exc_info=True)
+        return {s: [] for s in symbols}
     finally:
         session.close()
 

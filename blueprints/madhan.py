@@ -11,7 +11,7 @@ from services.madhan.atp_signal import (
 )
 from services.madhan.volume_signal import compute_spike_flags
 from services.madhan.hx_lx import compute_hx_lx_counts
-from database.madhan_db import extract_strike, get_nifty_data, get_banknifty_data, get_option_data, get_consistent_current_option_data, get_nifty_data_count, get_banknifty_data_count, get_previous_day_oi, get_nth_candle_oi_for_all_symbols, get_current_day_historical_data, get_current_day_instrument_data, get_instrument_data_for_date, get_previous_trading_day, get_coi_history, get_valid_trading_day, get_tracked_symbols
+from database.madhan_db import extract_strike, get_nifty_data, get_banknifty_data, get_option_data, get_consistent_current_option_data, get_nifty_data_count, get_banknifty_data_count, get_previous_day_oi, get_nth_candle_oi_for_all_symbols, get_current_day_historical_data, get_current_day_instrument_data, get_current_day_instrument_data_batch, get_instrument_data_for_date, get_previous_trading_day, get_coi_history, get_valid_trading_day, get_tracked_symbols
 from database.auth_db import get_api_key_for_tradingview
 from blueprints.react_app import serve_react_app
 
@@ -147,28 +147,31 @@ def get_atp_ltp_data():
         
         # Calculate ATP for ATM options using proper NSE ATP formula
         # ATP = Total Turnover / Total Volume
+        symbols_to_fetch = [s for s in [atm_call_symbol, atm_put_symbol, itm_call_symbol1, itm_call_symbol2, itm_put_symbol1, itm_put_symbol2] if s]
+        instrument_data = get_current_day_instrument_data_batch(symbols_to_fetch) if symbols_to_fetch else {}
+
         if atm_call_symbol:
-            call_intraday_data = get_current_day_instrument_data(atm_call_symbol)
+            call_intraday_data = instrument_data.get(atm_call_symbol, [])
             if call_intraday_data:
                 atm_call_atp = compute_atp_from_candles(call_intraday_data, atm_call_ltp)
         
         if atm_put_symbol:
-            put_intraday_data = get_current_day_instrument_data(atm_put_symbol)
+            put_intraday_data = instrument_data.get(atm_put_symbol, [])
             if put_intraday_data:
                 atm_put_atp = compute_atp_from_candles(put_intraday_data, atm_put_ltp)
         
         # Calculate ATP for ITM options (both strikes)
         itm1_call_atp = compute_atp_from_candles(
-            get_current_day_instrument_data(itm_call_symbol1) if itm_call_symbol1 else [], itm1_call_ltp
+            instrument_data.get(itm_call_symbol1, []) if itm_call_symbol1 else [], itm1_call_ltp
         ) if itm_call_symbol1 else 0
         itm2_call_atp = compute_atp_from_candles(
-            get_current_day_instrument_data(itm_call_symbol2) if itm_call_symbol2 else [], itm2_call_ltp
+            instrument_data.get(itm_call_symbol2, []) if itm_call_symbol2 else [], itm2_call_ltp
         ) if itm_call_symbol2 else 0
         itm1_put_atp = compute_atp_from_candles(
-            get_current_day_instrument_data(itm_put_symbol1) if itm_put_symbol1 else [], itm1_put_ltp
+            instrument_data.get(itm_put_symbol1, []) if itm_put_symbol1 else [], itm1_put_ltp
         ) if itm_put_symbol1 else 0
         itm2_put_atp = compute_atp_from_candles(
-            get_current_day_instrument_data(itm_put_symbol2) if itm_put_symbol2 else [], itm2_put_ltp
+            instrument_data.get(itm_put_symbol2, []) if itm_put_symbol2 else [], itm2_put_ltp
         ) if itm_put_symbol2 else 0
         
         # Calculate ATP signals using shared function
@@ -1162,18 +1165,12 @@ def ezay_chart_data():
             return jsonify({'status': 'error', 'message': f'No option data found for strike {strike_price}'}), 404
         
         # Get current day's historical data for both CE and PE
-        ce_data = []
-        pe_data = []
-        spot_data = []
+        symbols_to_fetch = [s for s in [ce_symbol, pe_symbol, spot_symbol] if s]
+        batch_data = get_current_day_instrument_data_batch(symbols_to_fetch) if symbols_to_fetch else {}
         
-        if ce_symbol:
-            ce_data = get_current_day_instrument_data(ce_symbol)
-        
-        if pe_symbol:
-            pe_data = get_current_day_instrument_data(pe_symbol)
-            
-        # Get spot data for intrinsic value calculations
-        spot_data = get_current_day_instrument_data(spot_symbol)
+        ce_data = batch_data.get(ce_symbol, []) if ce_symbol else []
+        pe_data = batch_data.get(pe_symbol, []) if pe_symbol else []
+        spot_data = batch_data.get(spot_symbol, []) if spot_symbol else []
         
         # Get previous day's data if requested
         prev_ce_data = []
@@ -1414,7 +1411,10 @@ def ezay_chart_signals():
             elif symbol.endswith('PE'):
                 strikes_map[strike]['pe'] = symbol
 
-        spot_data = get_current_day_instrument_data(spot_symbol)
+        all_option_symbols = [s for symbols in strikes_map.values() for s in [symbols['ce'], symbols['pe']] if s]
+        batch_data = get_current_day_instrument_data_batch([spot_symbol] + all_option_symbols)
+
+        spot_data = batch_data.get(spot_symbol, [])
         spot_lookup = {item['timestamp']: item['close'] for item in spot_data}
 
         all_signals = []
@@ -1427,8 +1427,8 @@ def ezay_chart_signals():
             if not ce_symbol or not pe_symbol:
                 continue
 
-            ce_data = get_current_day_instrument_data(ce_symbol)
-            pe_data = get_current_day_instrument_data(pe_symbol)
+            ce_data = batch_data.get(ce_symbol, [])
+            pe_data = batch_data.get(pe_symbol, [])
             if not ce_data or not pe_data:
                 continue
 
