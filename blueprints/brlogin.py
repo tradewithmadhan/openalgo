@@ -1002,6 +1002,8 @@ def broker_callback(broker, para=None):
         logger.info(f"Successfully connected broker: {broker}")
         if broker == "zerodha":
             auth_token = f"{BROKER_API_KEY}:{auth_token}"
+        if broker == "zerodhaenctoken":
+            auth_token = f"{BROKER_API_KEY}:{auth_token}"
         if broker == "dhan":
             auth_token = f"{auth_token}"
 
@@ -1209,4 +1211,70 @@ def nubra_ip_status():
             else "Current IP does NOT match the registered static IPs. "
                  "Update them with Nubra to restore access."
         ),
+    })
+
+
+# ======================================================================
+# ZERODHA ENCTOKEN — Save/validate enctoken for personal Kite API
+# ======================================================================
+
+
+@brlogin_bp.route("/<broker>/enctoken", methods=["POST"])
+@limiter.limit(LOGIN_RATE_LIMIT_MIN)
+def save_broker_enctoken(broker):
+    """Save and validate enctoken for zerodhaenctoken broker.
+
+    Expects JSON body: { "enctoken": "..." }
+    Validates by calling Kite profile API, stores in feed_token + user_id columns.
+    """
+    from database.auth_db import save_enctoken
+    from utils.session import check_session_validity
+
+    # Check session
+    if "user" not in session:
+        return jsonify({"status": "error", "message": "Not logged in"}), 401
+
+    if broker != "zerodhaenctoken":
+        return jsonify({"status": "error", "message": "Enctoken is only supported for zerodhaenctoken broker"}), 400
+
+    data = request.get_json()
+    if not data or not data.get("enctoken"):
+        return jsonify({"status": "error", "message": "Enctoken is required"}), 400
+
+    enctoken = data["enctoken"].strip()
+    if not enctoken:
+        return jsonify({"status": "error", "message": "Enctoken cannot be empty"}), 400
+
+    username = session["user"]
+    success, message, kite_user_id = save_enctoken(username, enctoken)
+
+    if success:
+        return jsonify({
+            "status": "success",
+            "message": message,
+            "user_id": kite_user_id,
+        })
+    else:
+        return jsonify({
+            "status": "error",
+            "message": message,
+        }), 400
+
+
+@brlogin_bp.route("/<broker>/enctoken/status", methods=["GET"])
+def get_enctoken_status(broker):
+    """Check if enctoken is saved for the current user."""
+    from database.auth_db import has_enctoken
+
+    if "user" not in session:
+        return jsonify({"status": "error", "message": "Not logged in"}), 401
+
+    if broker != "zerodhaenctoken":
+        return jsonify({"status": "error", "message": "Only for zerodhaenctoken broker"}), 400
+
+    username = session["user"]
+    has = has_enctoken(username)
+    return jsonify({
+        "status": "success",
+        "has_enctoken": has,
     })

@@ -1,9 +1,18 @@
-import { BookOpen, ExternalLink, Info, Loader2 } from 'lucide-react'
+import { BookOpen, ExternalLink, Info, Loader2, Key } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { BrokerAuthSignOut } from '@/components/auth/BrokerAuthSignOut'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import {
   Select,
@@ -52,6 +61,7 @@ const allBrokers = [
   { id: 'wisdom', name: 'Wisdom Capital', authType: 'totp' },
   { id: 'zebu', name: 'Zebu', authType: 'totp' },
   { id: 'zerodha', name: 'Zerodha', authType: 'oauth' },
+  { id: 'zerodhaenctoken', name: 'Zerodha Personal (enctoken)', authType: 'oauth' },
 ] as const
 
 interface BrokerConfig {
@@ -85,6 +95,13 @@ export default function BrokerSelect() {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [brokerConfig, setBrokerConfig] = useState<BrokerConfig | null>(null)
+
+  // Enctoken modal state
+  const [enctokenModalOpen, setEnctokenModalOpen] = useState(false)
+  const [enctokenValue, setEnctokenValue] = useState('')
+  const [enctokenSaving, setEnctokenSaving] = useState(false)
+  const [enctokenError, setEnctokenError] = useState<string | null>(null)
+  const [enctokenSuccess, setEnctokenSuccess] = useState<string | null>(null)
 
   useEffect(() => {
     // Fetch broker configuration
@@ -192,6 +209,10 @@ export default function BrokerSelect() {
         loginUrl = `https://kite.trade/connect/login?api_key=${broker_api_key}`
         break
 
+      case 'zerodhaenctoken':
+        loginUrl = `https://kite.trade/connect/login?api_key=${broker_api_key}`
+        break
+
       case 'arrow':
         // Arrow hosted login; redirects back to /arrow/callback with request-token.
         loginUrl = `https://app.arrow.trade/app/login?appID=${broker_api_key}`
@@ -232,6 +253,45 @@ export default function BrokerSelect() {
     setTimeout(() => {
       window.location.href = loginUrl
     }, 100)
+  }
+
+  const handleSaveEnctoken = async () => {
+    if (!enctokenValue.trim()) {
+      setEnctokenError('Enctoken cannot be empty')
+      return
+    }
+
+    setEnctokenSaving(true)
+    setEnctokenError(null)
+    setEnctokenSuccess(null)
+
+    try {
+      const csrfRes = await fetch('/auth/csrf-token', { credentials: 'include' })
+      const { csrf_token } = await csrfRes.json()
+
+      const response = await fetch('/zerodhaenctoken/enctoken', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRFToken': csrf_token,
+        },
+        credentials: 'include',
+        body: JSON.stringify({ enctoken: enctokenValue.trim() }),
+      })
+      const data = await response.json()
+
+      if (data.status === 'success') {
+        setEnctokenSuccess(data.message)
+        setEnctokenValue('')
+        setTimeout(() => setEnctokenModalOpen(false), 2000)
+      } else {
+        setEnctokenError(data.message || 'Failed to save enctoken')
+      }
+    } catch {
+      setEnctokenError('Failed to save enctoken')
+    } finally {
+      setEnctokenSaving(false)
+    }
   }
 
   if (isLoading) {
@@ -300,6 +360,27 @@ export default function BrokerSelect() {
                   </Alert>
                 )}
 
+                {selectedBroker === 'zerodhaenctoken' && (
+                  <div className="space-y-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="w-full"
+                      onClick={() => {
+                        setEnctokenModalOpen(true)
+                        setEnctokenError(null)
+                        setEnctokenSuccess(null)
+                      }}
+                    >
+                      <Key className="mr-2 h-4 w-4" />
+                      Add Enctoken
+                    </Button>
+                    <p className="text-xs text-muted-foreground text-center">
+                      Paste your Kite personal enctoken for market data & WebSocket streaming
+                    </p>
+                  </div>
+                )}
+
                 <Button type="submit" className="w-full" disabled={!selectedBroker || isSubmitting}>
                   {isSubmitting ? (
                     <>
@@ -348,6 +429,71 @@ export default function BrokerSelect() {
           </div>
         </div>
       </div>
+
+      {/* Enctoken Dialog Modal */}
+      <Dialog open={enctokenModalOpen} onOpenChange={setEnctokenModalOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Add Kite Personal Enctoken</DialogTitle>
+            <DialogDescription>
+              Your enctoken enables market data (historical) and WebSocket streaming via Kite's personal API.
+              Orders and margins use the paid Kite Connect API key (handled automatically).
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="enctoken">Enctoken</Label>
+              <Input
+                id="enctoken"
+                type="password"
+                placeholder="Paste your enctoken here..."
+                value={enctokenValue}
+                onChange={(e) => setEnctokenValue(e.target.value)}
+                disabled={enctokenSaving}
+              />
+            </div>
+
+            {enctokenError && (
+              <Alert variant="destructive">
+                <AlertDescription>{enctokenError}</AlertDescription>
+              </Alert>
+            )}
+
+            {enctokenSuccess && (
+              <Alert>
+                <AlertDescription>
+                  {enctokenSuccess}
+                  <p className="mt-1 text-xs text-muted-foreground">Click Connect for Order API</p>
+                </AlertDescription>
+              </Alert>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setEnctokenModalOpen(false)}
+              disabled={enctokenSaving}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleSaveEnctoken}
+              disabled={enctokenSaving || !enctokenValue.trim()}
+            >
+              {enctokenSaving ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Validating...
+                </>
+              ) : (
+                'Save Enctoken'
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

@@ -1271,3 +1271,169 @@ def samco_has_registered_ip(user_id):
     """Check if a Samco user has registered IPs."""
     record = _get_samco_auth(user_id)
     return record is not None and record.primary_ip is not None
+
+
+# ======================================================================
+# ZERODHA ENCTOKEN — Personal/free Kite API support
+# ======================================================================
+# The zerodhaenctoken broker uses Kite's personal (free) enctoken API
+# (kite.zerodha.com/oms) for data and WebSocket streaming, while using
+# the existing paid API key for orders/margins.
+#
+# Storage:
+#   - feed_token column  → stores the encrypted enctoken
+#   - user_id column     → stores the Zerodha user_id (e.g. "YW8287")
+#   - auth column        → stores api_key:access_token (unchanged, for orders)
+# ======================================================================
+
+
+def save_enctoken(name, enctoken):
+    """Validate enctoken via Kite profile API and store in the auth table.
+
+    Calls https://kite.zerodha.com/oms/user/profile with the enctoken to
+    validate it and extract the Zerodha user_id. On success, stores the
+    encrypted enctoken in the ``feed_token`` column and the user_id in
+    the ``user_id`` column.
+
+    Args:
+        name: The OpenAlgo username.
+        enctoken: The Kite personal enctoken string.
+
+    Returns:
+        Tuple of (success: bool, message: str, user_id: str or None).
+    """
+    if not name or not enctoken:
+        return False, "Username and enctoken are required", None
+
+    try:
+        import httpx
+
+        resp = httpx.get(
+            "https://kite.zerodha.com/oms/user/profile",
+            headers={"Authorization": f"enctoken {enctoken}"},
+            timeout=10,
+        )
+        profile = resp.json()
+
+        if profile.get("status") != "success":
+            return False, f"Invalid enctoken: {profile.get('message', 'Unknown error')}", None
+
+        kite_user_id = profile["data"]["user_id"]
+        user_name = profile["data"].get("user_name", "")
+
+        # Store enctoken in feed_token column, user_id in user_id column
+        auth_obj = Auth.query.filter_by(name=name).first()
+        if auth_obj:
+            auth_obj.feed_token = encrypt_token(enctoken)
+            auth_obj.user_id = kite_user_id
+        else:
+            # No auth record yet — create one (will be completed on OAuth login)
+            auth_obj = Auth(
+                name=name,
+                auth="",
+                feed_token=encrypt_token(enctoken),
+                broker="zerodhaenctoken",
+                user_id=kite_user_id,
+                is_revoked=False,
+            )
+            db_session.add(auth_obj)
+
+        db_session.commit()
+
+        # Clear caches so subsequent reads get fresh data
+        feed_token_cache.clear()
+
+        logger.info(f"Saved enctoken for {name}: kite_user_id={kite_user_id}, name={user_name}")
+        return True, f"Enctoken validated for {user_name} ({kite_user_id})", kite_user_id
+
+    except Exception as e:
+        db_session.rollback()
+        logger.error(f"Error saving enctoken for {name}: {e}")
+        return False, f"Failed to validate enctoken: {e}", None
+
+
+def get_enctoken(name, bypass_cache=False):
+    """Get the decrypted enctoken for a user from the feed_token column.
+
+    Args:
+        name: The OpenAlgo username.
+        bypass_cache: If True, skip the cache and query the database directly.
+
+    Returns:
+        The decrypted enctoken string, or None if not found.
+    """
+    if not name:
+        return None
+
+    cache_key = f"feed-{name}"
+
+    if bypass_cache:
+        if cache_key in feed_token_cache:
+            del feed_token_cache[cache_key]
+        auth_obj = Auth.query.filter_by(name=name).first()
+        if isinstance(auth_obj, Auth) and not auth_obj.is_revoked:
+            feed_token_cache[cache_key] = auth_obj
+            return decrypt_token(auth_obj.feed_token) if auth_obj.feed_token else None
+        return None
+
+    # Normal cache-first lookup (reuse feed_token_cache)
+    if cache_key in feed_token_cache:
+        auth_obj = feed_token_cache[cache_key]
+        if isinstance(auth_obj, Auth) and not auth_obj.is_revoked:
+            return decrypt_token(auth_obj.feed_token) if auth_obj.feed_token else None
+        else:
+            del feed_token_cache[cache_key]
+            return None
+    else:
+        auth_obj = Auth.query.filter_by(name=name).first()
+        if isinstance(auth_obj, Auth) and not auth_obj.is_revoked:
+            feed_token_cache[cache_key] = auth_obj
+            return decrypt_token(auth_obj.feed_token) if auth_obj.feed_token else None
+        return None
+
+
+def get_enctoken_by_auth_token(auth_token):
+    """Get enctoken by looking up the auth record that matches the given auth token.
+
+    This is used by data.py where only the auth_token (api_key:access_token)
+    is available, not the username.
+
+    Args:
+        auth_token: The full auth token string (api_key:access_token format).
+
+    Returns:
+        Tuple of (enctoken: str or None, username: str or None).
+    """
+    if not auth_token:
+        return None, None
+
+    try:
+        # Search all non-revoked zerodhaenctoken records
+        records = Auth.query.filter_by(broker="zerodhaenctoken", is_revoked=False).all()
+        for record in records:
+            try:
+                decrypted = decrypt_token(record.auth)
+                if decrypted == auth_token:
+                    enctoken = decrypt_token(record.feed_token) if record.feed_token else None
+                    return enctoken, record.name
+            except Exception:
+                continue
+        return None, None
+    except Exception as e:
+        logger.error(f"Error looking up enctoken by auth token: {e}")
+        return None, None
+
+
+def has_enctoken(name):
+    """Check if a user has an enctoken stored.
+
+    Args:
+        name: The OpenAlgo username.
+
+    Returns:
+        True if enctoken exists, False otherwise.
+    """
+    if not name:
+        return False
+    enctoken = get_enctoken(name)
+    return bool(enctoken)
