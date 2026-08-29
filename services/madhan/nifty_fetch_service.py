@@ -21,12 +21,13 @@ from database.madhan_db import (
     get_valid_trading_day, clear_madhan_db, validate_backfill_consistency,
     get_current_day_historical_data, get_last_option_candle_timestamp,
     get_last_option_candle_timestamp_for_instrument,
-    get_lot_size, export_db_to_parquet
+    get_lot_size, export_db_to_parquet, find_consistent_timestamp
 )
 from database.market_calendar_db import is_market_holiday, get_market_timings_for_date
 from database.auth_db import get_first_available_api_key_with_user
 from utils.session import has_login_this_trading_session
 from utils.notifier import emit_notification
+from extensions import socketio
 from services.madhan.atp_signal import process_historical_atp_data
 from services.madhan.volume_signal import detect_volume_spike
 
@@ -968,6 +969,26 @@ class NiftyDataFetcher:
                     opt_start = time.time()
                     self._fetch_and_store_options_data(self.nifty, today_str, today_str)
                     logger.info(f"[{self.nifty.instrument_name}] Options fetched in {time.time() - opt_start:.2f}s")
+
+                    # Find and store consistent timestamp immediately after store
+                    nifty_ts = find_consistent_timestamp(self.nifty.instrument_name)
+                    if nifty_ts:
+                        save_fetcher_state('nifty_options_consistent', 'true')
+                        save_fetcher_state('nifty_last_consistent_ts', str(nifty_ts))
+                        logger.info(f"[{self.nifty.instrument_name}] Consistent timestamp: {nifty_ts}")
+                    else:
+                        save_fetcher_state('nifty_options_consistent', 'false')
+                        save_fetcher_state('nifty_last_consistent_ts', '')
+                        logger.warning(f"[{self.nifty.instrument_name}] No consistent timestamp found")
+
+                    # Emit SocketIO event for frontend refresh
+                    socketio.emit('nifty_data_updated', {
+                        'instrument': 'NIFTY',
+                        'consistent_ts': nifty_ts,
+                        'is_consistent': nifty_ts is not None,
+                        'time': datetime.now(pytz.timezone('Asia/Kolkata')).isoformat()
+                    })
+
                     self.nifty.last_update = datetime.now(pytz.timezone('Asia/Kolkata'))
 
                     try:
@@ -985,6 +1006,26 @@ class NiftyDataFetcher:
                     opt_start = time.time()
                     self._fetch_and_store_options_data(self.banknifty, today_str, today_str)
                     logger.info(f"[{self.banknifty.instrument_name}] Options fetched in {time.time() - opt_start:.2f}s")
+
+                    # Find and store consistent timestamp immediately after store
+                    banknifty_ts = find_consistent_timestamp(self.banknifty.instrument_name)
+                    if banknifty_ts:
+                        save_fetcher_state('banknifty_options_consistent', 'true')
+                        save_fetcher_state('banknifty_last_consistent_ts', str(banknifty_ts))
+                        logger.info(f"[{self.banknifty.instrument_name}] Consistent timestamp: {banknifty_ts}")
+                    else:
+                        save_fetcher_state('banknifty_options_consistent', 'false')
+                        save_fetcher_state('banknifty_last_consistent_ts', '')
+                        logger.warning(f"[{self.banknifty.instrument_name}] No consistent timestamp found")
+
+                    # Emit SocketIO event for frontend refresh
+                    socketio.emit('banknifty_data_updated', {
+                        'instrument': 'BANKNIFTY',
+                        'consistent_ts': banknifty_ts,
+                        'is_consistent': banknifty_ts is not None,
+                        'time': datetime.now(pytz.timezone('Asia/Kolkata')).isoformat()
+                    })
+
                     self.banknifty.last_update = datetime.now(pytz.timezone('Asia/Kolkata'))
 
                     try:

@@ -28,6 +28,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/authStore'
+import { useSocketContext } from '@/components/socket/SocketProvider'
 import { useThemeStore } from '@/stores/themeStore'
 import { useAlertStore } from '@/stores/alertStore'
 import { useMadhanSignalStore } from '@/stores/madhanSignalStore'
@@ -111,6 +112,7 @@ function Madhan01Inner() {
   const alertStore = useAlertStore()
   const { atp_ltp_signal, volume_spike, atp_ltp_nifty, atp_ltp_banknifty, volume_spike_nifty, volume_spike_banknifty, setToggle } = useMadhanSignalStore()
   const profileMenuItems = useProfileMenuItems()
+  const { socket } = useSocketContext()
   
   const [status, setStatus] = useState<NiftyStatus | null>(null)
   const [isLoading, setIsLoading] = useState(false)
@@ -332,6 +334,26 @@ function Madhan01Inner() {
       clearInterval(intervalId)
     }
   }, [fetchStatus, fetchPrevDayOi, fetchLiveData, getServerNow])
+
+  // SocketIO: instant refresh on data update events from backend
+  useEffect(() => {
+    if (!socket) return
+
+    const handleNiftyUpdate = (data: { instrument: string }) => {
+      if (data.instrument === instrument) setRefreshTrigger(prev => prev + 1)
+    }
+    const handleBankniftyUpdate = (data: { instrument: string }) => {
+      if (data.instrument === instrument) setRefreshTrigger(prev => prev + 1)
+    }
+
+    socket.on('nifty_data_updated', handleNiftyUpdate)
+    socket.on('banknifty_data_updated', handleBankniftyUpdate)
+
+    return () => {
+      socket.off('nifty_data_updated', handleNiftyUpdate)
+      socket.off('banknifty_data_updated', handleBankniftyUpdate)
+    }
+  }, [socket, instrument])
 
   const buildUnifiedStrikes = (): UnifiedStrikeRow[] => {
     if (!prevDayOi.length) return []
