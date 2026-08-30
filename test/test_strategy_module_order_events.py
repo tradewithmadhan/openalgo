@@ -102,7 +102,11 @@ def test_a_fill_updates_the_row_and_seeds_the_leg(order):
     assert row["filled_qty"] == 75
     assert row["filled_at"] is not None
 
-    apply_fill.assert_called_once_with(order.run_id, 1, 101.5, is_entry=True)
+    # filled_qty rides along so the engine manages the size that actually
+    # traded rather than the size that was asked for.
+    apply_fill.assert_called_once_with(
+        order.run_id, 1, 101.5, is_entry=True, filled_qty=75, order_row_id=order.order_id
+    )
 
 
 def test_the_same_fill_arriving_twice_is_applied_once(order):
@@ -137,7 +141,9 @@ def test_an_exit_fill_is_applied_as_an_exit_not_an_entry(order):
     with patch("services.strategy_module.engine.apply_fill") as apply_fill:
         order_events._apply_update("BRK-2", _event("BRK-2", avg=80.0))
 
-    apply_fill.assert_called_once_with(order.run_id, 1, 80.0, is_entry=False)
+    apply_fill.assert_called_once_with(
+        order.run_id, 1, 80.0, is_entry=False, filled_qty=75, order_row_id=exit_row.id
+    )
 
 
 def test_a_rejection_marks_the_row_and_seeds_nothing(order):
@@ -214,3 +220,56 @@ def test_subscribing_twice_registers_one_subscriber():
             assert fake_bus.subscribe.call_count == 1
     finally:
         order_events._started = False
+
+
+def test_a_fill_that_arrives_before_its_row_exists_is_not_lost(order):
+    """The sandbox fills a MARKET order inside the dispatch call.
+
+    engine._place_entries dispatches and only then records the order row, so
+    the sandbox's "complete" event is published while no row carries that
+    broker id yet. Keyed on broker id alone, the update reads as somebody
+    else's order and is dropped, and the leg keeps entry_avg 0.0: no stop, no
+    target, no mark to market. In sandbox that is not a race, it happens every
+    time, so the risk engine manages nothing at all. A live broker whose fill
+    beats the insert lands in the same place.
+
+    The update has to survive until its row appears.
+    """
+    unrecorded = "BRK-LATE"
+
+    # The fill arrives first. Nothing on the platform knows this order yet.
+    with patch("services.strategy_module.engine.apply_fill") as apply_fill:
+        order_events._apply_update(unrecorded, _event(unrecorded, avg=142.5))
+    assert apply_fill.call_count == 0, "there is no row to apply it to yet"
+
+    # The engine now records the row, exactly as _place_entries does.
+    row = store.record_order(
+        order.run_id,
+        leg_id=2,
+        kind="entry",
+        order={
+            "symbol": "NIFTY28MAY2624000PE",
+            "exchange": "NFO",
+            "action": "SELL",
+            "qty": 75,
+            "broker_order_id": unrecorded,
+            "status": "open",
+        },
+    )
+    assert row is not None
+
+    with patch("services.strategy_module.engine.apply_fill") as apply_fill:
+        order_events.replay_for(unrecorded)
+
+    apply_fill.assert_called_once_with(
+        order.run_id, 2, 142.5, is_entry=True, filled_qty=75, order_row_id=row.id
+    )
+    stored = [o for o in store.list_orders(order.run_id) if o["broker_order_id"] == unrecorded][0]
+    assert stored["status"] == "complete"
+    assert stored["avg_fill_price"] == 142.5
+
+
+def test_replaying_an_id_nothing_buffered_is_harmless(order):
+    with patch("services.strategy_module.engine.apply_fill") as apply_fill:
+        order_events.replay_for("BRK-1")
+    assert apply_fill.call_count == 0

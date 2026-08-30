@@ -33,6 +33,8 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
+from cachetools import TTLCache
+
 from database import strategy_module_db as store
 from utils.env_config import env_int
 from utils.event_bus import bus
@@ -53,6 +55,39 @@ _POOL = ThreadPoolExecutor(
 # done and it traded", normalised the same way recovery normalises them.
 _FILLED = frozenset({"complete", "completed", "filled", "executed", "traded"})
 _DEAD = frozenset({"rejected", "cancelled", "canceled"})
+_CANCELLED = frozenset({"cancelled", "canceled"})
+
+
+def _usable_price(value: Any) -> float | None:
+    """A strictly positive finite price, or None.
+
+    The guard here used to be a truthiness test, which several brokers defeat
+    simply by sending numerics as strings: "0" is truthy, so a fill at no price
+    was applied as a fill at zero, and the leg was marked complete with an
+    entry of 0.0. stop_from_points refuses a non-positive entry, so that leg
+    then had no stop at all while the UI, the audit trail and the operator all
+    read it as a filled, managed position. A negative was written straight on.
+
+    services.risk.models.is_price is the same predicate the risk core applies
+    to a tick, used here so a fill cannot enter by a door a tick could not.
+    """
+    from services.risk.models import is_price
+
+    try:
+        price = float(value)
+    except (TypeError, ValueError):
+        return None
+    return price if is_price(price) else None
+
+
+def _whole_qty(value: Any) -> int | None:
+    """A positive whole quantity, or None when the broker did not say."""
+    try:
+        qty = int(float(value))
+    except (TypeError, ValueError):
+        return None
+    return qty if qty > 0 else None
+
 
 _lock = threading.Lock()
 _started = False
@@ -81,6 +116,60 @@ def start() -> bool:
 
 def _shutdown_pool() -> None:
     _POOL.shutdown(wait=False, cancel_futures=True)
+
+
+#: Updates that arrived before their order row existed, keyed by broker order
+#: id. Small and short-lived on purpose: the window this covers is the few
+#: milliseconds between a dispatch returning and its row being committed.
+_pending_updates: TTLCache = TTLCache(maxsize=512, ttl=120)
+
+
+def replay_for(order_id: str | None) -> None:
+    """Apply an update that arrived before this order's row was written.
+
+    Called by the engine straight after it records an order, which is the
+    moment the update becomes matchable. A no-op when nothing was held, which
+    is the normal case for a broker that answers before it fills.
+    """
+    if not order_id:
+        return
+    event = _pending_updates.pop(str(order_id), None)
+    if event is None:
+        return
+    logger.debug("Replaying an order update that arrived before its row: %s", order_id)
+    _apply_update(str(order_id), event)
+
+
+def _report_stranded_exit(run_id: int, leg_id: Any, row: Any, ended: str) -> None:
+    """Record that an exit died after its run closed, so a held position is not silent.
+
+    A stop finalises as soon as the broker accepts its exits rather than
+    waiting for the fills, so a rejection arriving afterwards finds no run
+    state to put right. Nothing can be retried automatically from here: the
+    event log is the one place left that an operator reads.
+    """
+    try:
+        run = store.get_run(run_id)
+        if run is None:
+            return
+        strategy = store.get_strategy_unscoped(run.strategy_id)
+        if strategy is None:
+            return
+        store.record_event(
+            run.strategy_id,
+            strategy.user_id,
+            "run_stop_failed",
+            (
+                f"Exit order {row.broker_order_id} for leg {leg_id} was {ended} after the run "
+                f"had already closed. The {row.action} of {row.qty} {row.symbol} did not happen, "
+                "so that position is still held and nothing is managing it."
+            ),
+            run_id=run_id,
+            leg_id=leg_id,
+            severity="critical",
+        )
+    except Exception:
+        logger.exception("Could not record a stranded exit for run %s leg %s", run_id, leg_id)
 
 
 def _on_order_update(event: Any) -> None:
@@ -119,7 +208,21 @@ def _apply_update(order_id: str, event: Any) -> None:
     try:
         row = store.get_order_by_broker_id(order_id)
         if row is None:
-            # Not ours. The overwhelmingly common case.
+            # Either somebody else's order, which is the overwhelmingly common
+            # case, or ours a moment too early. The engine dispatches and only
+            # then records the row, and the sandbox executes a MARKET order
+            # synchronously inside the dispatch call, so its fill is published
+            # while no row carries that broker id yet. Dropping it there is not
+            # a rare race in sandbox: it happens every time, and the leg keeps
+            # an entry of zero, which means no stop, no target and no mark to
+            # market. A live broker whose fill beats the insert lands in the
+            # same place.
+            #
+            # Held briefly instead, and replayed by replay_for() the moment the
+            # row appears. Bounded in both size and time, so the updates that
+            # really do belong to other surfaces cost a capped amount of memory
+            # and expire on their own.
+            _pending_updates[order_id] = event
             return
 
         status = _normalise(getattr(event, "order_status", ""))
@@ -145,16 +248,28 @@ def _apply_update(order_id: str, event: Any) -> None:
                 avg_fill_price=avg_price,
                 filled_qty=filled_qty,
             )
-            if avg_price:
+            price = _usable_price(avg_price)
+            if price is not None:
                 from services.strategy_module import engine
 
-                engine.apply_fill(run_id, leg_id, float(avg_price), is_entry=is_entry)
+                engine.apply_fill(
+                    run_id,
+                    leg_id,
+                    price,
+                    is_entry=is_entry,
+                    filled_qty=_whole_qty(filled_qty),
+                    # Which order this fill is for. A signal flip leaves one
+                    # leg id naming two positions for as long as the closing
+                    # order is unfilled, and only the order id separates them.
+                    order_row_id=row.id,
+                )
             else:
-                # A fill with no price cannot seed a stop or a realized figure.
-                # Recorded, but deliberately not applied to the run.
+                # A fill with no usable price cannot seed a stop or a realized
+                # figure. Recorded, but deliberately not applied to the run.
                 logger.warning(
-                    "Order %s reported filled with no average price; leg %s not marked",
+                    "Order %s reported filled with an unusable average price %r; leg %s not marked",
                     order_id,
+                    avg_price,
                     leg_id,
                 )
 
@@ -167,8 +282,53 @@ def _apply_update(order_id: str, event: Any) -> None:
         if status in _DEAD:
             if already_terminal:
                 return
-            store.update_order(row.id, status="rejected", reject_reason=rejection)
+            # A cancel is not a rejection. store.ORDER_STATUSES carries both
+            # and recovery.normalise_order_status already distinguishes them,
+            # so collapsing them here only loses audit accuracy.
+            ended = "cancelled" if status in _CANCELLED else "rejected"
+            store.update_order(row.id, status=ended, reject_reason=rejection)
             logger.warning("Strategy order %s ended as %s", order_id, status)
+
+            # An order that dies after the dispatch returned has to undo what
+            # the dispatch claimed, or the leg is stranded. The synchronous
+            # refusal path already does this; nothing did it for a rejection or
+            # cancellation that arrived later.
+            from services.strategy_module import state
+
+            if is_entry:
+                # The entry will never fill, so the leg is not a position. Left
+                # as "open" it is exited by the next square-off, which sends a
+                # full-size order against nothing.
+                with state.run_state(run_id) as run:
+                    leg = run["legs"].get(str(leg_id)) if run else None
+                    if leg is not None and leg.get("entry_status") != "complete":
+                        leg["entry_status"] = ended
+                        leg["status"] = "rejected"
+            elif state.release_superseded_exit(run_id, leg_id, row.id):
+                # This closed the outgoing side of a flip, and it was refused.
+                # Both sides are on the book now: the leg describes the new
+                # one, and the old one is held with its exit dead. Cleared so
+                # it can be closed again, and said out loud because nothing
+                # else will notice.
+                logger.warning(
+                    "The exit for the outgoing side of a flip on leg %s was %s; that position "
+                    "is still held",
+                    leg_id,
+                    ended,
+                )
+                _report_stranded_exit(run_id, leg_id, row, ended)
+            elif state.get_run_state(run_id) is not None:
+                # Release the exit claim so the position stays exitable. Held,
+                # its stop loss, its target, the scheduler's square-off and the
+                # operator's Close button all pass over a position the broker
+                # still holds, for the rest of the session.
+                state.release_leg_exit(run_id, leg_id)
+            else:
+                # The run has already finalised, which is what a stop does as
+                # soon as its exits are accepted. There is nothing left to
+                # release and nothing still managing this leg, so the position
+                # is real, uncovered, and invisible unless it is said out loud.
+                _report_stranded_exit(run_id, leg_id, row, ended)
             return
 
         # Anything else is still working. Recorded so the audit trail follows

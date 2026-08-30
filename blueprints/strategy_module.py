@@ -30,6 +30,7 @@ Three rules the routes hold to:
 
 from __future__ import annotations
 
+import hashlib
 import ipaddress
 import math
 import os
@@ -43,6 +44,7 @@ from flask_socketio import join_room, leave_room
 from database import strategy_module_db as store
 from extensions import socketio
 from limiter import limiter
+from utils.ip_helper import get_real_ip
 from utils.logging import get_logger
 from utils.session import check_session_validity
 
@@ -64,9 +66,17 @@ WEBHOOK_RATE_LIMIT = os.getenv("WEBHOOK_RATE_LIMIT", "100 per minute")
 
 
 def _webhook_token_key():
-    """Rate-limit key naming the strategy instead of the caller."""
+    """Rate-limit key naming the strategy instead of the caller.
+
+    Hashed, because the limiter's in-memory storage keeps a key forever once
+    it has seen it: the event list for an expired window is emptied but the
+    key itself is never removed. A raw token there would be a second copy of
+    the credential sitting in process memory for the life of the worker, one
+    entry per token ever presented, including every guess from a scanner. The
+    digest keys the same bucket without being replayable.
+    """
     token = (request.view_args or {}).get("token") or ""
-    return f"strategy-webhook:{token}"
+    return "strategy-webhook:" + hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
 # Two limits at one budget, because neither subsumes the other.
@@ -127,7 +137,13 @@ def _rate_limited(error):
 CONFIG_FIELDS = store.UPDATABLE_FIELDS
 
 PRODUCTS = ("CNC", "NRML", "MIS")
-PRICETYPES = ("MARKET", "LIMIT", "SL", "SL-M")
+# MARKET only, and deliberately so. Neither the strategy configuration nor a
+# leg carries a price, so a LIMIT, SL or SL-M entry was built with price and
+# trigger_price both defaulting to zero: every entry of a LIMIT strategy went
+# out as a limit order at zero. Accepting a price type the module cannot
+# supply a price for is worse than not offering it. Exits are MARKET on every
+# path regardless, because a stop that cannot fill is not a stop.
+PRICETYPES = ("MARKET",)
 
 #: Exchanges an underlying can be quoted on. Indices are where an options
 #: strategy usually starts, but a stock or an MCX commodity underlying is valid
@@ -179,6 +195,10 @@ LEG_FIELDS = (
 #: A signal leg is a different shape from a batch leg, not a superset of it.
 #: It names its own instrument and its own absolute quantity, and it carries no
 #: option fields at all: multi-leg option spreads stay in batch mode.
+# Where a signal leg may trade. Cash plus the derivative venues; an index
+# pseudo-exchange is not orderable and is deliberately absent.
+SIGNAL_LEG_EXCHANGES = ("NSE", "BSE", "NFO", "BFO", "MCX", "CDS", "BCD", "NCDEX", "NCO")
+
 SIGNAL_LEG_FIELDS = (
     "id",
     "symbol",
@@ -221,6 +241,10 @@ SCHEDULER_FIELDS = ("enabled", "days", "start_time", "auto_stop_time", "default_
 MIN_LEGS = 1
 MAX_LEGS = 10
 MAX_LOTS = 50
+# A cash leg's "lots" is a share count, because a cash contract's lot size is 1.
+# Matched to the signal path's own cash ceiling so the same instrument is not
+# capped differently by which kind of strategy holds it.
+MAX_CASH_QUANTITY = 1_000_000
 MAX_NAME_LENGTH = 200
 MAX_UNIVERSE_TAB_LENGTH = 30
 MAX_UNDERLYING_LENGTH = 50
@@ -444,9 +468,14 @@ def _validate_signal_leg(raw: Any, index: int) -> dict:
             else index + 1
         ),
         "symbol": _text(_required(leg, "symbol", label), f"{label}.symbol", max_length=100).upper(),
-        "exchange": _text(
-            _required(leg, "exchange", label), f"{label}.exchange", max_length=20
-        ).upper(),
+        # Checked against the known venues, not taken as free text. Nothing
+        # downstream catches a typo: a signal leg is never resolved against an
+        # underlying, so "NSEE" simply became the exchange on a real order.
+        "exchange": _choice(
+            _text(_required(leg, "exchange", label), f"{label}.exchange", max_length=20).upper(),
+            SIGNAL_LEG_EXCHANGES,
+            f"{label}.exchange",
+        ),
         # Which signals this leg accepts. "both" is the usual intraday case.
         "side": _choice(leg.get("side") or "both", LEG_SIDES, f"{label}.side"),
         "segment": segment,
@@ -476,6 +505,12 @@ def _validate_signal_leg(raw: Any, index: int) -> dict:
         maximum=MAX_SIGNAL_LOTS if qty_mode == "lots" else MAX_SIGNAL_QTY,
     )
 
+    # A signal leg names its own contract, so this rank is descriptive only:
+    # nothing resolves against it. What used to happen is that "NIFTY" on NFO
+    # with expiry "current" placed an order for the literal string NIFTY, with
+    # a quantity that looked entirely plausible because the lot size is read
+    # from the root. _resolve_signal_leg now refuses a symbol the master
+    # contract does not list, which is what actually stops that.
     if segment == "futures":
         clean["expiry"] = _choice(leg.get("expiry") or "current", LEG_EXPIRIES, f"{label}.expiry")
     elif leg.get("expiry") is not None:
@@ -533,8 +568,17 @@ def _validate_leg(raw: Any, index: int) -> dict:
         ),
         "segment": segment,
         "position": _choice(_required(leg, "position", label), LEG_POSITIONS, f"{label}.position"),
+        # A cash contract's lot size is 1, so on a cash leg this number is the
+        # share count and the derivative cap of 50 made 50 shares the largest
+        # cash order a batch strategy could place. Signal mode counts the same
+        # instrument in units up to a million. The cap that matters on a
+        # derivative is lots; on cash it is shares, and they are not the same
+        # number.
         "lots": _integer(
-            _required(leg, "lots", label), f"{label}.lots", minimum=1, maximum=MAX_LOTS
+            _required(leg, "lots", label),
+            f"{label}.lots",
+            minimum=1,
+            maximum=MAX_CASH_QUANTITY if segment == "cash" else MAX_LOTS,
         ),
     }
 
@@ -1575,12 +1619,29 @@ def webhook(token):
     address banned, and a legitimate alert carrying a rotated token deserves a
     clear answer rather than a redirect.
     """
-    from services.strategy_module.webhook import handle_webhook
+    from services.strategy_module.webhook import MAX_PAYLOAD_BYTES, handle_webhook
+
+    # Refuse an oversized body from the header, before reading it. The cap
+    # applied inside the pipeline is measured on bytes already in memory, so
+    # an unauthenticated caller could make the worker read whatever it sent
+    # before anything checked the token.
+    declared = request.content_length
+    if declared is not None and declared > MAX_PAYLOAD_BYTES:
+        return jsonify(
+            {
+                "status": "error",
+                "message": f"Payload larger than {MAX_PAYLOAD_BYTES} bytes",
+            }
+        ), 413
 
     outcome = handle_webhook(
         token,
         request.get_data(cache=False),
-        ip=request.remote_addr,
+        # get_real_ip, not remote_addr: behind a reverse proxy, which is how
+        # most installs run, remote_addr is the proxy and every caller looks
+        # like the same address. The IP allowlist is then either useless or
+        # blocks everything, and the audit trail names the proxy.
+        ip=get_real_ip(),
         user_agent=request.headers.get("User-Agent"),
     )
     body, status = outcome.as_response()

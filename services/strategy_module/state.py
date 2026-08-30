@@ -35,7 +35,7 @@ do the slow work.
 from __future__ import annotations
 
 import threading
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from copy import deepcopy
 from typing import Any
@@ -131,6 +131,12 @@ def init_run_state(run_id: int, strategy_id: int, legs: list[dict]) -> dict[str,
     return state
 
 
+#: Placeholder written into a superseded record while its replacement exit is
+#: being dispatched, so a second alert cannot claim the same outgoing position
+#: before the real order id is known.
+_SUPERSEDED_EXIT_PENDING = "pending"
+
+
 def _new_leg_state(leg: dict) -> dict[str, Any]:
     """One leg's starting state.
 
@@ -185,7 +191,175 @@ def _new_leg_state(leg: dict) -> dict[str, Any]:
         # value, computed by favorable_peak_points() when the UI wants them.
         "highest_price": None,
         "lowest_price": None,
+        # Set only while a flip's outgoing position is still unfilled. See
+        # add_leg for why this leg id can name two positions at once.
+        "superseded": None,
     }
+
+
+def claim_leg_exit(run_id: int, leg_id: Any, kind: str) -> dict[str, Any] | None:
+    """Claim a leg for exit, or return None if it must not be exited again.
+
+    The claim and the check happen under one lock hold, which is the whole
+    point. Both callers used to set ``exit_kind`` at claim time and then test
+    ``exit_order_id``, which is only written after the dispatch returns: two
+    rules firing on the same leg before the first order came back both passed
+    the guard and sent a covering order each, leaving the account positioned
+    the opposite way. The same test also failed open when ``record_order``
+    could not write its row, because ``exit_order_id`` was then set to None.
+
+    ``exit_kind`` is the marker instead: written here, under the lock, before
+    any dispatch, and cleared only by ``release_leg_exit`` when the broker
+    refused. It cannot be defeated by timing or by a database failure.
+
+    Returns a copy of the leg to dispatch from, so the caller does its order
+    building and its network call outside the lock.
+    """
+    # create=False: a dispatch can outlive the run it belongs to, and creating
+    # a lock here would register one for a run id that no longer has state and
+    # that nothing ever removes. That is the leak _lock_for was given its
+    # create flag for; a run with no lock has no state either way.
+    lock = _lock_for(run_id, create=False)
+    if lock is None:
+        return None
+    with lock:
+        state = _run_state.get(run_id)
+        if state is None:
+            return None
+        leg = state["legs"].get(str(leg_id))
+        if leg is None or leg.get("status") != "open":
+            return None
+        if leg.get("entry_status") != "complete":
+            # Accepted by the broker but not yet filled. A leg is "open" from
+            # the moment its entry is accepted, so exiting here sends the full
+            # quantity the other way against a position that may be nothing at
+            # all: if the entry then cancels or rejects, that square-off is
+            # itself a naked position in the reverse direction. Nothing is
+            # confirmed to close, so nothing is closed. The caller reports it
+            # rather than treating it as flat, so the run stays managed and the
+            # stop can be retried once the fill lands.
+            return None
+        if leg.get("exit_kind") is not None or leg.get("exit_order_id") is not None:
+            return None
+        leg["exit_kind"] = kind
+        return dict(leg)
+
+
+def claim_legs_for_exit(
+    run_id: int, leg_ids: Iterable[Any], kind: str
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Claim every exitable leg and name the ones that cannot be, in one hold.
+
+    Returns ``(claimed, unfilled)``. A leg is claimed when it is open, has a
+    confirmed entry fill, and has no exit already in flight; it is reported as
+    unfilled when it is open but its entry has only been accepted.
+
+    One lock hold for both, deliberately. Claiming under one and classifying
+    under another leaves a window the width of a database round trip: a fill
+    landing inside it makes the leg exitable after the claim pass has skipped
+    it and no longer unfilled when the classify pass looks, so it appears in
+    neither list. The caller then finalises the run believing there was
+    nothing to exit, while the position is open at the broker with nothing
+    watching it.
+    """
+    claimed: list[dict[str, Any]] = []
+    unfilled: list[dict[str, Any]] = []
+
+    lock = _lock_for(run_id, create=False)
+    if lock is None:
+        return claimed, unfilled
+    with lock:
+        state = _run_state.get(run_id)
+        if state is None:
+            return claimed, unfilled
+        for leg_id in leg_ids:
+            leg = state["legs"].get(str(leg_id))
+            if leg is None or leg.get("status") != "open":
+                continue
+            if leg.get("exit_kind") is not None or leg.get("exit_order_id") is not None:
+                continue
+            if leg.get("entry_status") != "complete":
+                unfilled.append(dict(leg))
+                continue
+            leg["exit_kind"] = kind
+            claimed.append(dict(leg))
+    return claimed, unfilled
+
+
+def release_superseded_exit(run_id: int, leg_id: Any, exit_order_id: Any) -> bool:
+    """Mark a flip's outgoing exit as no longer in flight. Says whether it matched.
+
+    A flip squares the held side and opens the other immediately, so until the
+    closing order fills the leg keeps the outgoing position under
+    ``superseded``. If that closing order is then rejected, the outgoing
+    position is still held: both sides are on the book, and the leg itself
+    describes only the new one. Clearing the dead order id is what lets the old
+    side be closed again.
+    """
+    lock = _lock_for(run_id, create=False)
+    if lock is None:
+        return False
+    with lock:
+        state = _run_state.get(run_id)
+        leg = state["legs"].get(str(leg_id)) if state else None
+        superseded = leg.get("superseded") if leg else None
+        if not superseded or superseded.get("exit_order_id") != exit_order_id:
+            return False
+        superseded["exit_order_id"] = None
+        return True
+
+
+def claim_superseded_exit(run_id: int, leg_id: Any, position: str) -> dict[str, Any] | None:
+    """Claim a flip's outgoing position for a fresh exit, if it is still held.
+
+    Returns a snapshot to dispatch from, carrying the outgoing side and size,
+    or None when there is no such position or an exit for it is already in
+    flight. The symbol comes from the leg, because a flip is a reversal on the
+    same contract.
+    """
+    lock = _lock_for(run_id, create=False)
+    if lock is None:
+        return None
+    with lock:
+        state = _run_state.get(run_id)
+        leg = state["legs"].get(str(leg_id)) if state else None
+        superseded = leg.get("superseded") if leg else None
+        if not superseded or superseded.get("exit_order_id") is not None:
+            return None
+        if str(superseded.get("position") or "").upper() != str(position or "").upper():
+            return None
+        # Marked in flight straight away, under the same hold, so two alerts
+        # cannot each send a covering order for the one outgoing position.
+        superseded["exit_order_id"] = _SUPERSEDED_EXIT_PENDING
+        return {
+            "leg_id": leg["leg_id"],
+            "position": superseded["position"],
+            "symbol": leg["symbol"],
+            "exchange": leg["exchange"],
+            "quantity": superseded.get("qty"),
+            "entry_avg": superseded.get("entry_avg"),
+        }
+
+
+def release_leg_exit(run_id: int, leg_id: Any) -> None:
+    """Undo a claim whose order the broker refused, so the exit stays possible.
+
+    Without this the leg is skipped by every later exit attempt for the rest of
+    the session: its stop loss, its target, the scheduler square-off and the
+    operator's own Close button all pass over it while the position is still
+    held at the broker.
+    """
+    lock = _lock_for(run_id, create=False)
+    if lock is None:
+        return
+    with lock:
+        state = _run_state.get(run_id)
+        if state is None:
+            return
+        leg = state["legs"].get(str(leg_id))
+        if leg is not None:
+            leg["exit_kind"] = None
+            leg["exit_order_id"] = None
 
 
 def favorable_peak_points(leg: dict[str, Any]) -> float:
@@ -217,8 +391,33 @@ def add_leg(run_id: int, leg: dict) -> dict[str, Any] | None:
         state = _run_state.get(run_id)
         if state is None:
             return None
+        key = str(leg["leg_id"])
         leg_state = _new_leg_state(leg)
-        state["legs"][str(leg["leg_id"])] = leg_state
+        previous = state["legs"].get(key)
+        if previous is not None and previous.get("exit_order_id") is not None:
+            # A flip squares the held side and opens the other one straight
+            # away, so for as long as the closing order is unfilled this leg id
+            # names two positions. Overwriting wholesale lost the outgoing
+            # one's order id, and because a fill is matched on (run, leg) the
+            # old long's exit fill then closed the new short: it vanished from
+            # open_legs, no stop was evaluated for it, no square-off would
+            # reach it, and the broker still held it. Keep what is needed to
+            # settle the outgoing position when its fill arrives.
+            leg_state["superseded"] = {
+                "exit_order_id": previous.get("exit_order_id"),
+                "position": previous.get("position"),
+                "entry_avg": previous.get("entry_avg"),
+                "qty": previous.get("qty"),
+            }
+        if previous is not None:
+            # A signal leg is re-entered on the same id after it has been
+            # closed, and a fresh state would reset realized_pnl to zero. That
+            # figure is what overall_sl_mtm, overall_target_mtm and the
+            # lock-profit floor are judged against, so zeroing it turns a daily
+            # loss limit into a per-round-trip one: a strategy that loses 1000
+            # five times never reaches a 5000 limit. Carry it forward.
+            leg_state["realized_pnl"] = float(previous.get("realized_pnl") or 0.0)
+        state["legs"][key] = leg_state
         return leg_state
 
 

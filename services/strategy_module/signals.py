@@ -42,7 +42,7 @@ from typing import Any
 import pytz
 
 from database import strategy_module_db as store
-from services.strategy_module import order_dispatch, state
+from services.strategy_module import order_dispatch, session, state
 from utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -241,35 +241,11 @@ def _day_run(strategy: Any) -> tuple[int | None, str | None]:
     return run.id, None
 
 
-def _session_reset_time() -> dt_time:
-    """The hour the platform ends a trading session and revokes broker tokens.
-
-    OpenAlgo logs the user out at ``SESSION_EXPIRY_TIME``, 03:00 IST by
-    default, because Indian broker tokens expire daily around then.
-    """
-    raw = os.getenv("SESSION_EXPIRY_TIME", "03:00")
-    try:
-        hour, minute = (int(part) for part in raw.split(":", 1))
-        return dt_time(hour=hour, minute=minute)
-    except (TypeError, ValueError):
-        logger.warning("SESSION_EXPIRY_TIME is not HH:MM (%r); using 03:00", raw)
-        return dt_time(hour=3)
-
-
-def _session_day(moment: datetime) -> date:
-    """Which trading session an IST moment belongs to.
-
-    Not the calendar date. A session runs until the platform's own reset, so
-    anything before that hour still belongs to the previous day's session:
-    01:00 on Tuesday is Monday's session, and Monday 22:00 and Tuesday 01:00
-    are the same one.
-
-    Using midnight instead would split a session in half and merge across the
-    real boundary, which is exactly backwards.
-    """
-    if moment.time() < _session_reset_time():
-        return (moment - timedelta(days=1)).date()
-    return moment.date()
+# Both live in services/strategy_module/session.py now: the engine needs the
+# same boundary for the daily loss limit and neither module may import the
+# other. Re-exported under their old names so this file reads as it did.
+_session_reset_time = session.session_reset_time
+_session_day = session.session_day
 
 
 def _started_before_today(run: Any) -> bool:
@@ -427,7 +403,11 @@ def _resolve_signal_leg(leg: dict, side: str) -> tuple[dict | None, str | None]:
     of 65 becomes 325. Storing the lot count rather than the product is what
     lets a leg survive an exchange revising its lot size.
     """
-    from services.strategy_module.symbol_resolver import resolve_quantity
+    from services.strategy_module.symbol_resolver import (
+        DERIVATIVE_EXCHANGES,
+        contract_exists,
+        resolve_quantity,
+    )
 
     symbol = leg.get("symbol")
     exchange = leg.get("exchange")
@@ -437,6 +417,14 @@ def _resolve_signal_leg(leg: dict, side: str) -> tuple[dict | None, str | None]:
 
     symbol = str(symbol).upper()
     exchange = str(exchange).upper()
+
+    # A signal leg names its instrument outright, so this is the only place
+    # that can tell whether it names a real one. A futures leg configured as
+    # the base symbol produced an entirely plausible quantity, because the lot
+    # size is read from the root, and then sent the literal base to the broker
+    # as an order. Batch mode refuses the same leg with contract_not_found.
+    if exchange in DERIVATIVE_EXCHANGES and not contract_exists(symbol, exchange):
+        return None, f"{symbol} is not a contract on {exchange}"
     quantity, lot_size, error = resolve_quantity(
         raw_qty, leg.get("qty_mode") or "units", symbol, exchange
     )
@@ -464,18 +452,54 @@ def _exit(strategy: Any, run_id: int, leg: dict, side: str) -> SignalResult:
     leg_id = _leg_id_of(leg)
     held = _held_side(run_id, leg_id)
     if held != side:
+        # Before calling this flat: a flip whose closing order was refused
+        # leaves the outgoing position held while the leg describes the new
+        # one, so an exit for the old side is real and has nowhere else to go.
+        outgoing = state.claim_superseded_exit(run_id, leg_id, _POSITION_OF_SIDE[side])
+        if outgoing is not None:
+            placed = _place(strategy, run_id, outgoing, "exit_signal", outgoing["position"], True)
+            if not placed.ok:
+                state.release_superseded_exit(run_id, leg_id, state._SUPERSEDED_EXIT_PENDING)
+                return SignalResult(ok=False, leg_id=leg_id, run_id=run_id, error=placed.error)
+            return SignalResult(ok=True, leg_id=leg_id, run_id=run_id)
+
         # Flat, or held the other way. An exit for something not held is not a
         # failure; the alert simply arrived after the position had gone.
         return SignalResult(ok=True, note="no_matching_position", leg_id=leg_id, run_id=run_id)
 
-    with state.run_state(run_id) as run:
-        live = run["legs"].get(str(leg_id)) if run else None
-        if live is None:
-            return SignalResult(ok=True, note="no_matching_position", leg_id=leg_id)
-        snapshot = dict(live)
+    # Claim the leg before dispatching. A leg stays "open" until its exit fill
+    # arrives, so a repeated exit alert, or a late one after the scheduler had
+    # already squared off, found _held_side still answering and sent a second
+    # closing order: the account ended up positioned the opposite way. Signal
+    # mode is precisely the mode driven by an alert engine that repeats itself.
+    snapshot = state.claim_leg_exit(run_id, leg_id, "exit_signal")
+    if snapshot is None:
+        # Two very different reasons the claim can fail, and they must not be
+        # answered the same way. An exit already in flight, or a leg that is no
+        # longer held, is a no-op: reporting it as a failure would invite the
+        # retry that turns one alert into two positions. An entry the broker
+        # has accepted but not filled is neither, and answering "nothing held"
+        # there lets a flip open the opposite side while the original entry is
+        # still working, leaving both on the book.
+        run_state = state.get_run_state(run_id) or {}
+        live = (run_state.get("legs") or {}).get(str(leg_id)) or {}
+        if live.get("status") == "open" and live.get("entry_status") != "complete":
+            return SignalResult(
+                ok=False,
+                leg_id=leg_id,
+                run_id=run_id,
+                error=(
+                    "The entry for this leg has been accepted but not filled, so there is no "
+                    "confirmed quantity to exit. Retry once it fills."
+                ),
+            )
+        return SignalResult(ok=True, note="no_matching_position", leg_id=leg_id, run_id=run_id)
 
     outcome = _place(strategy, run_id, snapshot, "exit_signal", snapshot["position"], exiting=True)
     if not outcome.ok:
+        # Leave the leg exitable: its stop loss, its target and the square-off
+        # all skip a leg that still looks like it has an exit in flight.
+        state.release_leg_exit(run_id, leg_id)
         return SignalResult(ok=False, leg_id=leg_id, run_id=run_id, error=outcome.error)
 
     return SignalResult(ok=True, leg_id=leg_id, run_id=run_id)
@@ -517,8 +541,11 @@ def _place(
         if exiting
         else getattr(strategy, "pricetype", "MARKET"),
     )
-    result = order_dispatch.dispatch_order(mode=mode, api_key=api_key, order=order)
-
+    # Durable intent before the broker is called, exactly as the batch path
+    # does. Recording afterwards meant a crash or a database failure between
+    # broker acceptance and the insert left a real position that no row
+    # described: invisible to the operator, to recovery and to every later
+    # exit. The row carries no broker id yet, because there is not one yet.
     row = store.record_order(
         run_id,
         leg["leg_id"],
@@ -528,24 +555,77 @@ def _place(
             "exchange": leg["exchange"],
             "action": action,
             "qty": leg.get("quantity") or leg.get("qty"),
+            "product": order.get("product"),
             "pricetype": order.get("pricetype", "MARKET"),
-            "broker_order_id": result.broker_order_id,
-            "status": "open" if result.ok else "rejected",
+            "status": "pending",
         },
     )
-    if row and not result.ok:
-        store.update_order(row.id, reject_reason=result.error)
+    if row is None and not exiting:
+        # An entry that cannot be recorded is one that cannot be managed, so it
+        # is not placed. Exits take the opposite decision below, deliberately.
+        store.record_event(
+            strategy.id,
+            strategy.user_id,
+            "leg_entry_rejected",
+            f"Signal entry for leg {leg['leg_id']} not placed: its order row could not be written",
+            run_id=run_id,
+            leg_id=leg["leg_id"],
+            severity="critical",
+        )
+        return _Placement(ok=False, error="Could not record the order before placing it")
+
+    # The id, not the instance: dispatch runs arbitrary code in between, and
+    # the sandbox publishes its fill from inside the call.
+    row_id = row.id if row is not None else None
+    if row is None:
+        # An exit that cannot be recorded is placed anyway. Refusing would
+        # leave the position open with a database outage between it and every
+        # attempt to close it; getting flat wins, and the audit row is lost.
+        store.record_event(
+            strategy.id,
+            strategy.user_id,
+            "leg_exit_placed",
+            (
+                f"Signal exit for leg {leg['leg_id']} is being placed without an order row: "
+                "it could not be written"
+            ),
+            run_id=run_id,
+            leg_id=leg["leg_id"],
+            severity="critical",
+        )
+
+    result = order_dispatch.dispatch_order(mode=mode, api_key=api_key, order=order)
+
+    if row_id is not None:
+        from services.strategy_module.engine import _record_acknowledgement
+
+        _record_acknowledgement(
+            row_id, result, strategy.id, strategy.user_id, run_id, leg["leg_id"]
+        )
 
     with state.run_state(run_id) as state_run:
         live = state_run["legs"].get(str(leg["leg_id"])) if state_run else None
         if live is not None:
             if exiting:
-                live["exit_order_id"] = row.id if row else None
-                live["exit_kind"] = kind
+                if result.ok:
+                    live["exit_order_id"] = row_id
+                    live["exit_kind"] = kind
+                # A refused exit writes nothing. Arming the markers here would
+                # disarm the leg's stop loss, its target and the square-off for
+                # the rest of the session; the caller releases the claim.
             else:
-                live["entry_order_id"] = row.id if row else None
+                live["entry_order_id"] = row_id
                 live["entry_status"] = "open" if result.ok else "rejected"
                 live["status"] = "open" if result.ok else "rejected"
+
+    if row_id is not None and result.ok:
+        # After the leg bookkeeping above, never before it. See
+        # engine._replay_order_update: the sandbox publishes this order's fill
+        # from inside the dispatch, before the row existed, and replaying it
+        # early would have the block above write "open" back over it.
+        from services.strategy_module.engine import _replay_order_update
+
+        _replay_order_update(result.broker_order_id)
 
     store.record_event(
         strategy.id,
@@ -559,34 +639,3 @@ def _place(
     )
 
     return _Placement(ok=result.ok, error=result.error)
-
-
-def close_all_signal_legs(strategy: Any, reason: str = "eod") -> int:
-    """Square every open leg. The scheduler's end-of-day job for signal runs.
-
-    Returns how many legs were sent an exit. Each leg is exited on the side it
-    is actually held, read from run state rather than from configuration.
-    """
-    run_id = getattr(strategy, "current_run_id", None)
-    if not run_id:
-        return 0
-
-    with state.run_state(run_id) as run:
-        open_ids = [leg["leg_id"] for leg in state.open_legs(run)] if run else []
-
-    closed = 0
-    for leg_id in open_ids:
-        held = _held_side(run_id, leg_id)
-        if held is None:
-            continue
-        leg = _find_leg(strategy, leg_id, None, None)
-        if leg is None:
-            continue
-        result = _exit(strategy, run_id, leg, held)
-        if result.acted:
-            closed += 1
-
-    logger.info(
-        "Signal square-off (%s) closed %d leg(s) on strategy %s", reason, closed, strategy.id
-    )
-    return closed

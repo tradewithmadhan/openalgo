@@ -19,7 +19,7 @@ import pytest
 # restx_api first: see the note in test_strategy_module_order_dispatch.py.
 import restx_api  # noqa: F401
 from database import strategy_module_db as store
-from services.strategy_module import signals, state
+from services.strategy_module import engine, signals, state
 from services.strategy_module.order_dispatch import DispatchResult
 
 USER = "signal_test_user"
@@ -77,10 +77,33 @@ def placed():
         return DispatchResult(ok=True, broker_order_id=f"SB-{len(seen)}", response={})
 
     with (
+        # Both modules hold their own reference to the dispatcher and their own
+        # _api_key_for, and a signal strategy is squared off through the
+        # engine, so patching only the signal side records the entries and
+        # silently misses every exit.
         patch.object(signals.order_dispatch, "dispatch_order", side_effect=record),
         patch.object(signals, "_api_key_for", return_value="test-key"),
+        patch.object(engine.order_dispatch, "dispatch_order", side_effect=record),
+        patch.object(engine, "_api_key_for", return_value="test-key"),
+        patch.object(engine, "_subscribe_run"),
+        patch.object(engine, "_unsubscribe_run"),
     ):
         yield seen
+
+
+def _fill(strategy, *leg_ids, price=100.0):
+    """Confirm the entry fills for these legs.
+
+    An exit closes a confirmed quantity. A leg whose entry the broker accepted
+    but has not filled has nothing to close, and sending the configured size
+    the other way would be a naked position if that entry later cancels, so the
+    module refuses. Every test that goes on to exit something has to say the
+    entry filled, which is what happens in life.
+    """
+    run_id = store.get_strategy(strategy.id, USER).current_run_id
+    for leg_id in leg_ids:
+        engine.apply_fill(run_id, leg_id, price, is_entry=True)
+    return run_id
 
 
 def _make(**overrides):
@@ -217,6 +240,10 @@ def test_a_long_signal_opens_a_long(placed):
 def test_an_exit_covers_the_side_actually_held(placed):
     strategy = _make()
     signals.handle_signal(strategy, "short_entry", leg_id=1)
+    # Filled, because an exit closes a confirmed quantity. A leg whose entry
+    # the broker has accepted but not filled has nothing to close, and sending
+    # the configured size the other way would be a naked position.
+    _fill(strategy, 1)
 
     result = signals.handle_signal(strategy, "short_exit", leg_id=1)
 
@@ -271,6 +298,7 @@ def test_an_opposite_entry_squares_first_then_opens(placed):
     # Reversing without closing would leave both positions on the book.
     strategy = _make()
     signals.handle_signal(strategy, "long_entry", leg_id=1)
+    _fill(strategy, 1)
     placed.clear()
 
     result = signals.handle_signal(strategy, "short_entry", leg_id=1)
@@ -371,15 +399,22 @@ def test_a_run_is_sandbox_unless_the_strategy_opted_into_live(placed):
 
 
 def test_squaring_off_closes_every_open_leg_on_the_side_it_is_held(placed):
+    """Through engine.stop_run, which is the path every square-off takes.
+
+    The scheduler, the kill switch and the operator's Close All all reach it,
+    and it handles both strategy kinds. signals used to carry its own
+    close_all_signal_legs for this, with no caller anywhere: a second way to
+    send exits, reachable only by somebody wiring it up later.
+    """
     strategy = _make()
     signals.handle_signal(strategy, "short_entry", leg_id=1)
     signals.handle_signal(strategy, "long_entry", leg_id=2)
+    _fill(strategy, 1, 2)
     placed.clear()
 
-    refreshed = store.get_strategy(strategy.id, USER)
-    closed = signals.close_all_signal_legs(refreshed, reason="eod")
+    run_id = store.get_strategy(strategy.id, USER).current_run_id
+    engine.stop_run(run_id, USER, reason="scheduler")
 
-    assert closed == 2
     actions = sorted(o["action"] for o in placed)
     assert actions == ["BUY", "SELL"]  # cover the short, sell the long
 
@@ -503,8 +538,6 @@ def test_a_flat_run_from_an_earlier_day_is_rolled(placed):
 
     # Close the leg so nothing is held. An exit ORDER is not a closed leg: the
     # leg closes when the fill arrives, which is what apply_fill delivers.
-    from services.strategy_module import engine
-
     engine.apply_fill(first_run, 1, 100.0, is_entry=True)
     signals.handle_signal(store.get_strategy(strategy.id, USER), "long_exit", leg_id=1)
     engine.apply_fill(first_run, 1, 105.0, is_entry=False)
@@ -568,8 +601,6 @@ def test_a_signal_run_survives_a_round_trip_and_stays_open_for_the_session(place
     # ordinary mid-session event and the next alert reopens it. Ending the run
     # here would give five round trips five separate runs, fragmenting the
     # P&L, the peak and trough, and the audit trail meant to describe the day.
-    from services.strategy_module import engine
-
     strategy = _make()
     signals.handle_signal(strategy, "long_entry", leg_id=1)
     run_id = store.get_strategy(strategy.id, USER).current_run_id
@@ -591,8 +622,6 @@ def test_a_signal_run_survives_a_round_trip_and_stays_open_for_the_session(place
 
 def test_a_batch_run_still_ends_when_it_goes_flat(placed):
     # The other half of the same rule: a basket with nothing held is finished.
-    from services.strategy_module import engine
-
     strategy = _make(strategy_kind="batch", underlying="NIFTY", underlying_exchange="NSE_INDEX")
     run = store.create_run(strategy.id, "sandbox", "sandbox")
     store.set_strategy_status(strategy.id, "running", run.id)

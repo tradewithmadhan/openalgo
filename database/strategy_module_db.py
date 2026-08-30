@@ -72,6 +72,19 @@ Base.query = db_session.query_property()
 # stop working quickly, and the cache is invalidated explicitly on both.
 _webhook_token_cache: TTLCache = TTLCache(maxsize=2000, ttl=300)
 
+# What each strategy has banked this session, read on every tick by the daily
+# loss limit. Bounded by strategy count rather than by tick rate, and
+# invalidated whenever a run's realized figure changes, so the TTL only covers
+# a path that forgot to invalidate.
+_session_pnl_cache: TTLCache = TTLCache(maxsize=512, ttl=60)
+
+
+def _forget_session_pnl(strategy_id: int | None) -> None:
+    """Drop the cached session total for one strategy, or all of them."""
+    for key in [k for k in list(_session_pnl_cache) if strategy_id is None or k[0] == strategy_id]:
+        _session_pnl_cache.pop(key, None)
+
+
 # Webhook token prefix, so a leaked string is recognisable in a log or a paste.
 WEBHOOK_TOKEN_PREFIX = "oaws_"
 
@@ -143,6 +156,7 @@ EVENT_KINDS = (
     "run_paused",
     "run_resumed",
     "run_stopped",
+    "run_stop_failed",
     "close_all_manual",
     # Entry and exit
     "leg_entry_placed",
@@ -152,6 +166,8 @@ EVENT_KINDS = (
     "leg_exit_filled",
     "leg_exit_rejected",
     "leg_close_manual",
+    "leg_expiry_fallback",
+    "order_ack_unrecorded",
     # Per-leg risk
     "leg_sl_hit",
     "leg_target_hit",
@@ -342,6 +358,11 @@ class SmStrategyOrder(Base):
     exchange = Column(String(20), nullable=False)
     action = Column(String(10), nullable=False)
     qty = Column(Integer, nullable=False)
+    # What was actually sent, which is not always what the strategy carries:
+    # build_order translates the product to the venue, so a CNC strategy with
+    # an option leg sends NRML for that leg. Without this column nothing
+    # records which, and an order cannot be reconciled against the broker's.
+    product = Column(String(10), nullable=True)
     pricetype = Column(String(10), nullable=False, default="MARKET")
     price = Column(Numeric(18, 4), nullable=False, default=0)
     trigger_price = Column(Numeric(18, 4), nullable=False, default=0)
@@ -587,6 +608,7 @@ def order_to_dict(row: SmStrategyOrder) -> dict:
         "exchange": row.exchange,
         "action": row.action,
         "qty": row.qty,
+        "product": row.product,
         "pricetype": row.pricetype,
         "price": _num(row.price),
         "trigger_price": _num(row.trigger_price),
@@ -1045,6 +1067,7 @@ def finish_run(
         row.pnl_peak = pnl_peak
         row.pnl_trough = pnl_trough
         db_session.commit()
+        _forget_session_pnl(row.strategy_id)
         return True
     except Exception:
         db_session.rollback()
@@ -1057,6 +1080,122 @@ def get_run(run_id: int) -> SmStrategyRun | None:
         return db_session.query(SmStrategyRun).filter_by(id=run_id).first()
     except Exception:
         logger.exception("Could not read run %s", run_id)
+        return None
+
+
+def realized_pnl_since(
+    strategy_id: int, since: datetime, exclude_run_id: int | None = None
+) -> float:
+    """What this strategy has already banked this session, as a signed figure.
+
+    Summed over the runs that have finished since the session began, so a
+    strategy that starts and stops repeatedly, which is every signal strategy
+    and every scheduler-driven one, is judged on the day rather than on
+    whichever run happens to be open. A loss is negative.
+
+    ``exclude_run_id`` leaves the live run out, because its own figure is read
+    from run state where it is current rather than from the row where it is
+    only written at finalisation.
+    """
+    # started_at is stored as naive UTC, so an aware boundary has to be
+    # converted rather than compared: SQLite would otherwise compare the
+    # strings and quietly answer with the wrong set of runs.
+    if since.tzinfo is not None:
+        since = since.astimezone(UTC).replace(tzinfo=None)
+
+    # Cached, because the caller is the per-tick risk evaluation and this
+    # figure only changes when a run finishes. Without it a strategy with a
+    # daily limit set opened and closed a database connection on every tick of
+    # every leg, which under NullPool is a real connection each time, in the
+    # one worker that serves everything else too. finish_run and
+    # reconcile_run_pnl invalidate it, so the TTL is a safety net rather than
+    # the mechanism.
+    key = (strategy_id, since, exclude_run_id)
+    cached = _session_pnl_cache.get(key)
+    if cached is not None:
+        return cached
+
+    try:
+        query = db_session.query(SmStrategyRun.pnl_realized).filter(
+            SmStrategyRun.strategy_id == strategy_id,
+            SmStrategyRun.started_at >= since,
+        )
+        if exclude_run_id is not None:
+            query = query.filter(SmStrategyRun.id != exclude_run_id)
+        total = float(sum(float(row[0] or 0.0) for row in query.all()))
+        _session_pnl_cache[key] = total
+        return total
+    except Exception:
+        logger.exception("Could not total realized P&L for strategy %s", strategy_id)
+        # Zero, not a guess. A caller uses this to decide whether a limit has
+        # been reached, and inventing a loss would stop a strategy that has
+        # not lost anything.
+        return 0.0
+
+
+def reconcile_run_pnl(run_id: int) -> float | None:
+    """Recompute a run's realized P&L from its own order rows, and store it.
+
+    stop_run places the exits and finalises in the next statement rather than
+    waiting for the fills, because the position is on its way out and nothing
+    should be blocked on the broker. That left pnl_realized at whatever live
+    state held at that instant, which is zero because no leg had closed yet,
+    and clearing the state meant the fill arriving a moment later had nothing
+    to be applied to. The figure was then computed nowhere: a run that made
+    1500 recorded 0, unrecoverably.
+
+    The order rows carry everything needed, so the fill that arrives after
+    finalisation reconciles the row instead of being dropped. Returns the
+    figure written, or None when there is nothing to say.
+    """
+    try:
+        row = db_session.query(SmStrategyRun).filter_by(id=run_id).first()
+        if row is None:
+            return None
+
+        per_leg: dict[Any, dict[str, Any]] = {}
+        for order in db_session.query(SmStrategyOrder).filter_by(run_id=run_id).all():
+            if order.status != "complete" or order.avg_fill_price is None:
+                continue
+            price = float(order.avg_fill_price)
+            if price <= 0:
+                # An entry of zero means the leg never traded, so nothing can
+                # be derived from it. Same rule the engine applies live.
+                continue
+            quantity = int(order.filled_qty or order.qty or 0)
+            leg = per_leg.setdefault(order.leg_id, {"entry": None, "action": None, "exits": []})
+            if order.kind == "entry":
+                leg["entry"] = price
+                leg["action"] = (order.action or "").upper()
+                leg["qty"] = quantity
+            else:
+                leg["exits"].append((price, quantity))
+
+        realized = 0.0
+        settled = 0
+        for leg in per_leg.values():
+            entry = leg.get("entry")
+            if not entry:
+                continue
+            sign = 1.0 if leg.get("action") == "BUY" else -1.0
+            for price, quantity in leg["exits"]:
+                realized += (price - entry) * quantity * sign
+                settled += 1
+
+        if not settled:
+            # No round trip is recorded on any order row, so this cannot speak
+            # to what the run made. Writing the zero it would otherwise compute
+            # would overwrite a figure the engine had already got right from
+            # live state, which is exactly backwards.
+            return None
+
+        row.pnl_realized = realized
+        db_session.commit()
+        _forget_session_pnl(row.strategy_id)
+        return realized
+    except Exception:
+        db_session.rollback()
+        logger.exception("Could not reconcile the P&L of run %s", run_id)
         return None
 
 
@@ -1106,6 +1245,7 @@ def record_order(run_id: int, leg_id: int, kind: str, order: dict) -> SmStrategy
             exchange=order["exchange"],
             action=order["action"],
             qty=order["qty"],
+            product=order.get("product"),
             pricetype=order.get("pricetype", "MARKET"),
             price=order.get("price", 0) or 0,
             trigger_price=order.get("trigger_price", 0) or 0,
@@ -1371,6 +1511,54 @@ def prune_checkpoints(run_id: int, keep: int = 200) -> int:
 # ---------------------------------------------------------------------------
 
 
+# An event that names no strategy came in on a token nothing recognises, so
+# there is no owner to show it to and nothing that ever deletes it. Left
+# unbounded, anyone who can reach the webhook URL can grow the database without
+# limit, and none of it is visible to say so. Kept, because the first sign of
+# somebody walking the token space is a run of these, but capped.
+MAX_UNATTRIBUTED_WEBHOOK_EVENTS = 1000
+_PRUNE_UNATTRIBUTED_EVERY = 100
+_unattributed_since_prune = 0
+
+
+def _prune_unattributed_webhook_events() -> None:
+    """Trim ownerless audit rows to the newest MAX, every Nth one.
+
+    Counted in process rather than queried per request: the check itself must
+    not become the cost of the flood it is bounding.
+    """
+    global _unattributed_since_prune
+    _unattributed_since_prune += 1
+    if _unattributed_since_prune < _PRUNE_UNATTRIBUTED_EVERY:
+        return
+    _unattributed_since_prune = 0
+    try:
+        keep = (
+            db_session.query(SmWebhookEvent.id)
+            .filter(SmWebhookEvent.strategy_id.is_(None))
+            .order_by(SmWebhookEvent.id.desc())
+            .limit(MAX_UNATTRIBUTED_WEBHOOK_EVENTS)
+            .all()
+        )
+        if len(keep) < MAX_UNATTRIBUTED_WEBHOOK_EVENTS:
+            return
+        oldest_kept = keep[-1][0]
+        removed = (
+            db_session.query(SmWebhookEvent)
+            .filter(
+                SmWebhookEvent.strategy_id.is_(None),
+                SmWebhookEvent.id < oldest_kept,
+            )
+            .delete(synchronize_session=False)
+        )
+        db_session.commit()
+        if removed:
+            logger.info("Pruned %d unattributed webhook audit rows", removed)
+    except Exception:
+        db_session.rollback()
+        logger.exception("Could not prune unattributed webhook events")
+
+
 def record_webhook_event(
     result: str,
     strategy_id: int | None = None,
@@ -1399,6 +1587,8 @@ def record_webhook_event(
         )
         db_session.add(row)
         db_session.commit()
+        if strategy_id is None:
+            _prune_unattributed_webhook_events()
         return row
     except Exception:
         db_session.rollback()

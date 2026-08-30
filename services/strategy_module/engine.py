@@ -30,7 +30,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from database import strategy_module_db as store
-from services.strategy_module import order_dispatch, risk_adapter, state
+from services.strategy_module import order_dispatch, risk_adapter, session, state
 from services.strategy_module.symbol_resolver import resolve_leg
 from utils.logging import get_logger
 
@@ -373,6 +373,13 @@ def _resolve_all_legs(
                 "lots": outcome.lots,
                 "quantity": outcome.quantity,
                 "expiry": outcome.expiry,
+                # The chain did not list the rank that was asked for, so a
+                # nearer expiry was used. Carried out of the resolver so the
+                # run can say so: next_week silently becoming the current week
+                # is a different trade from the one that was configured, and
+                # nothing recorded it anywhere.
+                "expiry_fallback": bool((outcome.detail or {}).get("expiry_fallback")),
+                "expiry_rank": (outcome.detail or {}).get("expiry_rank"),
                 "sl_pts": leg.get("sl_pts"),
                 "target_pts": leg.get("target_pts"),
                 "trail": leg.get("trail") or {},
@@ -380,6 +387,76 @@ def _resolve_all_legs(
         )
 
     return resolved, failures
+
+
+def _record_acknowledgement(
+    row_id: int,
+    result: Any,
+    strategy_id: int,
+    user_id: str,
+    run_id: int,
+    leg_id: Any,
+) -> bool:
+    """Write what the broker answered onto the order row. Says whether it stuck.
+
+    update_order swallows its own failure and returns False, and ignoring that
+    is how a position ends up unattributable: the row stays "pending" with no
+    broker order id, so no fill can ever be matched to it, the leg is never
+    seeded, and nothing evaluates a stop for a position that exists. The
+    in-memory replay buffer does not cover this, because the id it would match
+    on is exactly what was lost.
+
+    Retried once, since the common failure is a transient write lock rather
+    than a broken statement. If it still will not persist, the broker order id
+    is put somewhere durable the operator can find, which is the event log, at
+    critical severity: the position is real and now has to be reconciled by
+    hand.
+    """
+    fields = {
+        "status": "open" if result.ok else "rejected",
+        "broker_order_id": result.broker_order_id,
+        "reject_reason": None if result.ok else result.error,
+    }
+    if store.update_order(row_id, **fields) or store.update_order(row_id, **fields):
+        return True
+
+    logger.error(
+        "Could not record the broker acknowledgement for order row %s (broker id %s)",
+        row_id,
+        result.broker_order_id,
+    )
+    if result.ok:
+        _emit(
+            strategy_id,
+            user_id,
+            "order_ack_unrecorded",
+            (
+                f"Broker order {result.broker_order_id} was accepted for leg {leg_id} but its "
+                f"acknowledgement could not be written to order row {row_id}. The position "
+                "exists and is not attributable from the database; reconcile it by hand."
+            ),
+            run_id=run_id,
+            leg_id=leg_id,
+            severity="critical",
+        )
+    return False
+
+
+def _replay_order_update(broker_order_id: str | None) -> None:
+    """Let the fill that arrived before this row existed be applied now.
+
+    Imported here rather than at module scope: order_events imports the engine
+    to apply a fill, so binding it the other way round at import time would be
+    circular.
+    """
+    if not broker_order_id:
+        return
+    try:
+        from services.strategy_module import order_events
+
+        order_events.replay_for(broker_order_id)
+    except Exception:
+        logger.exception("Could not replay a held order update for %s", broker_order_id)
 
 
 def _place_entries(
@@ -399,6 +476,24 @@ def _place_entries(
     outcomes: list[dict[str, Any]] = []
 
     for leg in ordered:
+        if leg.get("expiry_fallback"):
+            # Said out loud, on the run, before the order goes out. The
+            # resolver computes this and the engine used to drop it, so a
+            # next_week leg quietly trading the current week left no record at
+            # all: not an event, not a run row, not the leg state.
+            _emit(
+                strategy["id"],
+                user_id,
+                "leg_expiry_fallback",
+                (
+                    f"Leg {leg['leg_id']} asked for the {leg.get('expiry_rank')} expiry; "
+                    f"the chain lists only {leg.get('expiry')}, which was used"
+                ),
+                run_id=run_id,
+                leg_id=leg["leg_id"],
+                severity="warn",
+            )
+
         action = _position_to_action(leg["position"])
         order = order_dispatch.build_order(
             symbol=leg["symbol"],
@@ -409,10 +504,12 @@ def _place_entries(
             strategy_name=strategy.get("name", ""),
             pricetype=strategy.get("pricetype", "MARKET"),
         )
-        result = order_dispatch.dispatch_order(mode=mode, api_key=api_key, order=order)
-
-        # Written before the outcome is known, so a run can never hold a
-        # position that no row records.
+        # The intent is durable BEFORE the broker is called, not after. It used
+        # to be recorded from the dispatch result, which meant a crash or a
+        # database failure in the window between broker acceptance and the
+        # insert left a real position that no row described: invisible to the
+        # operator, to recovery and to every later exit. The row carries no
+        # broker id yet, because there is not one yet.
         row = store.record_order(
             run_id,
             leg["leg_id"],
@@ -422,21 +519,65 @@ def _place_entries(
                 "exchange": leg["exchange"],
                 "action": action,
                 "qty": leg["quantity"],
+                # From the order, not from the strategy: build_order
+                # translates the product to the venue, so these can differ.
+                "product": order.get("product"),
                 "pricetype": strategy.get("pricetype", "MARKET"),
-                "broker_order_id": result.broker_order_id,
-                "status": "open" if result.ok else "rejected",
+                "status": "pending",
             },
         )
-        if row and not result.ok:
-            store.update_order(row.id, reject_reason=result.error)
+        if row is None:
+            # An entry that cannot be recorded is an entry that cannot be
+            # managed, so it is not placed. Refusing costs one leg; placing it
+            # blind costs a position with no stop and no way to find it. Exits
+            # take the opposite decision, deliberately: see _exit_legs.
+            _emit(
+                strategy["id"],
+                user_id,
+                "leg_entry_rejected",
+                f"Entry for leg {leg['leg_id']} not placed: its order row could not be written",
+                run_id=run_id,
+                leg_id=leg["leg_id"],
+                severity="critical",
+            )
+            outcomes.append(
+                {
+                    "leg_id": leg["leg_id"],
+                    "ok": False,
+                    "symbol": leg["symbol"],
+                    "broker_order_id": None,
+                    "error": "Could not record the order before placing it",
+                }
+            )
+            continue
+
+        # The id, not the instance. Dispatch runs arbitrary code between here
+        # and the update: the sandbox executes and publishes the fill inline,
+        # and the handler for that clears its scoped session, which detaches
+        # any ORM object still being held across the call.
+        row_id = row.id
+
+        result = order_dispatch.dispatch_order(mode=mode, api_key=api_key, order=order)
+
+        acknowledged = _record_acknowledgement(
+            row_id, result, strategy["id"], user_id, run_id, leg["leg_id"]
+        )
 
         with state.run_state(run_id) as run:
             if run is not None:
                 leg_state = run["legs"].get(str(leg["leg_id"]))
                 if leg_state is not None:
-                    leg_state["entry_order_id"] = row.id if row else None
+                    leg_state["entry_order_id"] = row_id
                     leg_state["entry_status"] = "open" if result.ok else "rejected"
                     leg_state["status"] = "open" if result.ok else "rejected"
+
+        # After the leg's own bookkeeping, never before it: the sandbox fills a
+        # MARKET order inside the dispatch above, so the fill was published
+        # before this row existed and was held rather than applied. Replaying it
+        # first would have the block above write "open" back over the fill it
+        # had just recorded.
+        if row_id is not None and result.ok:
+            _replay_order_update(result.broker_order_id)
 
         _emit(
             strategy["id"],
@@ -459,6 +600,11 @@ def _place_entries(
                 "symbol": leg["symbol"],
                 "broker_order_id": result.broker_order_id,
                 "error": result.error,
+                # False when the broker accepted the order but its
+                # acknowledgement could not be persisted, so the caller can see
+                # that this leg is live without being attributable from the
+                # database. The position is real either way.
+                "acknowledged": acknowledged,
             }
         )
 
@@ -470,7 +616,14 @@ def _place_entries(
 # ---------------------------------------------------------------------------
 
 
-def apply_fill(run_id: int, leg_id: Any, avg_price: float, is_entry: bool) -> bool:
+def apply_fill(
+    run_id: int,
+    leg_id: Any,
+    avg_price: float,
+    is_entry: bool,
+    filled_qty: int | None = None,
+    order_row_id: int | None = None,
+) -> bool:
     """Record a fill against a leg. Returns whether the run went flat.
 
     Entry fills set the price every stop and target is measured from, so a leg
@@ -490,13 +643,102 @@ def apply_fill(run_id: int, leg_id: Any, avg_price: float, is_entry: bool) -> bo
     went_flat = False
     with state.run_state(run_id) as run:
         if run is None:
+            # The run has already finalised, which is the ordinary case for
+            # the exit fills of a stop: stop_run places them and closes the run
+            # without waiting, because the position is on its way out. The
+            # figure it wrote was whatever live state held at that instant,
+            # which is zero. Reconcile it from the order rows so the fill that
+            # arrives afterwards is not simply dropped.
+            if not is_entry:
+                store.reconcile_run_pnl(run_id)
             return False
         leg = run["legs"].get(str(leg_id))
         if leg is None:
             return False
 
+        # A signal leg is flipped by squaring the held side and opening the
+        # other immediately, so until the closing order fills this leg id names
+        # two positions. Settle the outgoing one from what add_leg kept, and
+        # leave the position that is now live untouched.
+        superseded = leg.get("superseded")
+        settles_superseded = bool(
+            not is_entry
+            and superseded
+            and (
+                superseded.get("exit_order_id") == order_row_id
+                # No order id to match on: this is an internal caller rather
+                # than the order stream. An exit fill can only belong to the
+                # outgoing position when the live one has no exit in flight.
+                or (order_row_id is None and leg.get("exit_order_id") is None)
+            )
+        )
+        if settles_superseded:
+            entry = float(superseded.get("entry_avg") or 0.0)
+            qty = float(superseded.get("qty") or 0.0)
+            sign = 1.0 if superseded.get("position") == "B" else -1.0
+            if entry > 0.0:
+                leg["realized_pnl"] = float(leg.get("realized_pnl") or 0.0) + (
+                    (float(avg_price) - entry) * qty * sign
+                )
+            leg["superseded"] = None
+            realized, unrealized = risk_adapter.run_pnl(run)
+            run["pnl_realized"] = realized
+            run["pnl_unrealized"] = unrealized
+            run["pnl_total"] = realized + unrealized
+            return False
+
+        # A fill that names an order this leg is not waiting on belongs to an
+        # incarnation that has already been replaced. Applying it would close
+        # or re-price the position that is live now.
+        if order_row_id is not None:
+            expected = leg.get("entry_order_id") if is_entry else leg.get("exit_order_id")
+            if expected is not None and expected != order_row_id:
+                logger.warning(
+                    "Ignoring a fill for order %s on leg %s: the leg is waiting on %s",
+                    order_row_id,
+                    leg_id,
+                    expected,
+                )
+                return False
+
+        if (
+            not is_entry
+            and order_row_id is not None
+            and leg.get("exit_kind") is None
+            and leg.get("exit_order_id") is None
+        ):
+            # A fill from the order stream naming an exit this leg never placed
+            # cannot be closing the position that is live now. Closing anyway
+            # is how a flip's squaring order used to close the position it had
+            # just opened, leaving a live short invisible to open_legs: no stop
+            # evaluated, no square-off reaching it, and the broker still
+            # holding it. exit_kind rather than exit_order_id, because a
+            # successful exit whose audit row could not be written has the
+            # first and not the second.
+            logger.warning(
+                "Ignoring exit fill for order %s on leg %s: it has no exit in flight",
+                order_row_id,
+                leg_id,
+            )
+            return False
+
         if is_entry:
             leg["entry_avg"] = float(avg_price)
+            # Reconcile the size with what actually traded. A partial fill
+            # whose remainder was cancelled is ordinary on an illiquid strike,
+            # and the leg used to keep the size it asked for: every later exit
+            # was then for the full amount, so squaring off a 25 that filled
+            # out of a 75 requested sent a 75 the other way and left the
+            # account holding 50 of a contract nobody chose, with no stop.
+            if filled_qty is not None and filled_qty != leg.get("qty"):
+                logger.warning(
+                    "Leg %s on run %s filled %s of %s; managing the filled size",
+                    leg_id,
+                    run_id,
+                    filled_qty,
+                    leg.get("qty"),
+                )
+                leg["qty"] = filled_qty
             leg["entry_status"] = "complete"
             leg["status"] = "open"
             return False
@@ -505,7 +747,20 @@ def apply_fill(run_id: int, leg_id: Any, avg_price: float, is_entry: bool) -> bo
         entry = float(leg.get("entry_avg") or 0.0)
         qty = float(leg.get("qty") or 0.0)
         sign = 1.0 if leg.get("position") == "B" else -1.0
-        leg["realized_pnl"] = (float(avg_price) - entry) * qty * sign
+        if entry > 0.0:
+            leg["realized_pnl"] = (float(avg_price) - entry) * qty * sign
+        else:
+            # An entry price of zero means the leg never traded, so there is no
+            # round trip to book. Deriving from it books the entire notional as
+            # profit or loss: an exit at 90 on 75 units used to record 6750 the
+            # account never made, and that figure is what the combined stop,
+            # the combined target and the lock-profit floor are judged against.
+            logger.warning(
+                "Leg %s on run %s exited with no entry price; booking no realized P&L",
+                leg_id,
+                run_id,
+            )
+            leg["realized_pnl"] = 0.0
         leg["status"] = "closed"
         leg["mtm"] = 0.0
 
@@ -570,20 +825,33 @@ def _exit_legs(
     different strike, and exiting a contract the run does not hold would open a
     new position instead of closing one.
     """
-    with state.run_state(run_id) as run:
-        if run is None:
-            return []
-        targets = []
-        for leg_id in leg_ids:
-            leg = run["legs"].get(str(leg_id))
-            if leg is None or leg.get("status") != "open":
-                continue
-            # Duplicate-exit guard: a leg already on its way out must not be
-            # sent a second exit by another rule firing on the same tick.
-            if leg.get("exit_order_id") is not None:
-                continue
-            leg["exit_kind"] = kind
-            targets.append(dict(leg))
+    # Claim each leg under the state lock before anything is dispatched. The
+    # guard used to test exit_order_id, which is not written until the order
+    # comes back, so two rules firing on one leg both got through.
+    # Claimed and classified in one hold of the run lock. Legs the broker
+    # accepted but has not filled cannot be squared off: there is no confirmed
+    # quantity to close, and sending the configured size the other way would be
+    # a naked position if that entry later cancels. They are reported as
+    # refusals rather than silently skipped, so stop_run keeps the run open and
+    # managed and the stop can be retried once the fill arrives.
+    #
+    # Doing this in two passes left a window a fill could land in, and a leg
+    # that filled inside it appeared in neither list: the run then finalised
+    # with the position still open.
+    targets, unfilled_legs = state.claim_legs_for_exit(run_id, leg_ids, kind)
+    unfilled = [
+        {
+            "leg_id": leg["leg_id"],
+            "ok": False,
+            "symbol": leg.get("symbol"),
+            "broker_order_id": None,
+            "error": (
+                "The entry for this leg has been accepted but not filled, so there "
+                "is no confirmed quantity to exit. Retry once it fills."
+            ),
+        }
+        for leg in unfilled_legs
+    ]
 
     # Dispatch outside the lock. See the module docstring.
     outcomes: list[dict[str, Any]] = []
@@ -598,8 +866,8 @@ def _exit_legs(
             strategy_name=strategy.get("name", ""),
             pricetype=order_dispatch.EXIT_PRICETYPE,
         )
-        result = order_dispatch.dispatch_order(mode=mode, api_key=api_key, order=order)
-
+        # Recorded before dispatch, as entries are, so an exit that reaches the
+        # broker is never invisible afterwards.
         row = store.record_order(
             run_id,
             leg["leg_id"],
@@ -609,24 +877,52 @@ def _exit_legs(
                 "exchange": leg["exchange"],
                 "action": action,
                 "qty": leg["qty"],
+                "product": order.get("product"),
                 "pricetype": order_dispatch.EXIT_PRICETYPE,
-                "broker_order_id": result.broker_order_id,
-                "status": "open" if result.ok else "rejected",
+                "status": "pending",
             },
         )
-        if row and not result.ok:
-            store.update_order(row.id, reject_reason=result.error)
+        if row is None:
+            # The opposite decision to an entry, and deliberately so. An entry
+            # that cannot be recorded is not placed, because the cost of
+            # refusing is one leg not opened. An exit that cannot be recorded
+            # is placed anyway, because the cost of refusing is a position that
+            # stays open with a database outage between it and every attempt to
+            # close it. Getting flat wins; the audit row is what is lost.
+            _emit(
+                strategy["id"],
+                user_id,
+                "leg_exit_placed",
+                (
+                    f"Exit for leg {leg['leg_id']} is being placed without an order row: "
+                    "it could not be written"
+                ),
+                run_id=run_id,
+                leg_id=leg["leg_id"],
+                severity="critical",
+            )
 
-        with state.run_state(run_id) as run:
-            if run is not None:
-                live = run["legs"].get(str(leg["leg_id"]))
+        # See the note in _place_entries: the id survives the dispatch, the
+        # instance may not.
+        row_id = row.id if row is not None else None
+
+        result = order_dispatch.dispatch_order(mode=mode, api_key=api_key, order=order)
+
+        if row_id is not None:
+            _record_acknowledgement(row_id, result, strategy["id"], user_id, run_id, leg["leg_id"])
+
+        if result.ok:
+            with state.run_state(run_id) as run:
+                live = run["legs"].get(str(leg["leg_id"])) if run else None
                 if live is not None:
-                    if result.ok:
-                        live["exit_order_id"] = row.id if row else None
-                    else:
-                        # Clear the marker so a later attempt is not mistaken
-                        # for a duplicate and skipped forever.
-                        live["exit_kind"] = None
+                    live["exit_order_id"] = row_id
+            if row_id is not None:
+                # See the note in _place_entries: after the bookkeeping.
+                _replay_order_update(result.broker_order_id)
+        else:
+            # Release the claim so a later attempt is not mistaken for a
+            # duplicate and skipped for the rest of the session.
+            state.release_leg_exit(run_id, leg["leg_id"])
 
         _emit(
             strategy["id"],
@@ -644,7 +940,7 @@ def _exit_legs(
 
         outcomes.append({"leg_id": leg["leg_id"], "ok": result.ok, "error": result.error})
 
-    return outcomes
+    return outcomes + unfilled
 
 
 def stop_run(run_id: int, user_id: str, reason: str = "manual") -> dict[str, Any]:
@@ -670,6 +966,35 @@ def stop_run(run_id: int, user_id: str, reason: str = "manual") -> dict[str, Any
         kind = "exit_close_all"
 
     exits = _exit_legs(run_id, strategy, open_ids, kind, run_row.mode, api_key, user_id)
+
+    # A run whose exits the broker refused is still holding those positions.
+    # Finalising here would write stopped_at, release the strategy, drop the
+    # live state and unsubscribe the prices, so the position would sit open for
+    # the rest of the session with nothing evaluating its stop while the
+    # dashboard read "stopped". A broker rate limit or a momentary auth failure
+    # at 15:20 is enough to reach this, so it stays open and says why.
+    refused = [outcome for outcome in exits if not outcome.get("ok")]
+    if refused:
+        with state.run_state(run_id) as run:
+            still_held = bool(state.open_legs(run)) if run else False
+        if still_held:
+            _emit(
+                run_row.strategy_id,
+                user_id,
+                "run_stop_failed",
+                f"Stop refused for {len(refused)} leg(s); the run is still holding them",
+                run_id=run_id,
+                severity="critical",
+            )
+            return {
+                "ok": False,
+                "error": (
+                    f"{len(refused)} of {len(exits)} exit order(s) were refused. "
+                    "The run is still open and still managed; retry the stop."
+                ),
+                "exits": exits,
+            }
+
     _finalise(run_id, run_row.strategy_id, user_id, reason, f"Run stopped ({reason})")
     return {"ok": True, "exits": exits}
 
@@ -700,6 +1025,13 @@ def close_leg(run_id: int, leg_id: Any, user_id: str) -> dict[str, Any]:
     )
     if not exits:
         return {"ok": False, "error": "That leg is not open"}
+
+    # Non-empty is not success: the per-leg flags carry whether the broker took
+    # the order. Reporting a refused exit as closed tells an operator a
+    # position is gone when it is still on the book.
+    if not all(outcome.get("ok") for outcome in exits):
+        errors = "; ".join(o.get("error") or "refused" for o in exits if not o.get("ok"))
+        return {"ok": False, "error": f"Exit refused: {errors}", "exits": exits}
 
     _emit(
         run_row.strategy_id,
@@ -794,6 +1126,65 @@ def process_tick(symbol: str, exchange: str, ltp: float) -> None:
             logger.exception("Tick processing failed for run %s", run_id)
 
 
+def _daily_loss_limit(strategy: dict[str, Any]) -> float | None:
+    """The strategy's daily loss limit as a positive number, or None."""
+    limit = strategy.get("daily_loss_limit_inr")
+    if not limit:
+        return None
+    try:
+        limit_value = abs(float(limit))
+    except (TypeError, ValueError):
+        return None
+    return limit_value if limit_value > 0 else None
+
+
+def _session_banked_pnl(strategy: dict[str, Any], run_id: int) -> float | None:
+    """What earlier runs banked this session, read outside the run lock.
+
+    This is the only part of the daily-loss check that can touch the database,
+    and a cache miss is a real connection under NullPool. Held inside the run
+    lock it would stall the hub for the length of that query, and a greenlet
+    waiting on the lock cannot yield, so exits and socket work for every other
+    run would wait behind it. The module's own rule is that a critical section
+    holds in-memory bookkeeping only; this is how that rule is kept here.
+
+    None when the strategy has no limit, which is also the signal to skip the
+    read entirely rather than pay for it on every tick.
+    """
+    if _daily_loss_limit(strategy) is None:
+        return None
+    return store.realized_pnl_since(
+        strategy["id"], session.session_started_at(), exclude_run_id=run_id
+    )
+
+
+def _daily_loss_breached(
+    strategy: dict[str, Any], banked: float | None, run: dict[str, Any]
+) -> str | None:
+    """Whether this session's loss has reached the strategy's daily limit.
+
+    The session is the one that began at SESSION_EXPIRY_TIME, not at midnight,
+    so a limit resets when the platform's own day rolls over. Runs that have
+    already finished contribute ``banked``, read before the lock was taken; the
+    live run contributes what it is worth right now, marked, because a limit
+    that only counted closed runs would let an open one exceed it unnoticed.
+
+    Pure arithmetic on values already in memory. Safe to call under the lock.
+    """
+    limit_value = _daily_loss_limit(strategy)
+    if limit_value is None or banked is None:
+        return None
+
+    live = float(run.get("pnl_total") or 0.0)
+    day_total = banked + live
+    if day_total > -limit_value:
+        return None
+    return (
+        f"Daily loss limit reached: the session is down {abs(day_total):.2f} "
+        f"against a limit of {limit_value:.2f}"
+    )
+
+
 def _process_tick_for_run(run_id: int, symbol: str, exchange: str, ltp: float) -> None:
     run_row = store.get_run(run_id)
     if not run_row or run_row.stopped_at is not None:
@@ -811,8 +1202,15 @@ def _process_tick_for_run(run_id: int, symbol: str, exchange: str, ltp: float) -
     stop_reason: str | None = None
     events: list[tuple[str, str, dict]] = []
 
+    # Read before the lock is taken, never inside it. This is the one input to
+    # the tick evaluation that can reach the database, and only on a cache
+    # miss; a query held under the run lock stalls the hub, and a greenlet
+    # waiting on that lock cannot yield. None when the strategy has no daily
+    # limit, in which case no read happens at all.
+    banked_pnl = _session_banked_pnl(strategy, run_id)
+
     # Everything inside this block is in-memory arithmetic. No order is placed,
-    # no broker is called, nothing is emitted.
+    # no broker is called, nothing is emitted, and nothing reaches the database.
     with state.run_state(run_id) as run:
         if run is None:
             return
@@ -871,7 +1269,23 @@ def _process_tick_for_run(run_id: int, symbol: str, exchange: str, ltp: float) -
                 )
             )
 
-        if aggregate.breached and aggregate.reason in _STOP_REASON_FOR_REASON:
+        # The daily loss limit, which is a limit on the session rather than on
+        # this run. It was validated, stored and displayed and then read by
+        # nothing, so a strategy that lost its whole budget in three runs
+        # started a fourth. overall_sl_mtm cannot express it: that one is reset
+        # every time a run opens, which for a signal or scheduled strategy is
+        # several times a day.
+        day_loss_reason = _daily_loss_breached(strategy, banked_pnl, run)
+        if day_loss_reason is not None:
+            stop_reason = "daily_loss_limit"
+            events.append(
+                (
+                    "overall_sl_hit",
+                    day_loss_reason,
+                    {"severity": "critical"},
+                )
+            )
+        elif aggregate.breached and aggregate.reason in _STOP_REASON_FOR_REASON:
             stop_reason = _STOP_REASON_FOR_REASON[aggregate.reason]
             events.append(
                 (

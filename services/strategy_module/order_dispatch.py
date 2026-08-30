@@ -8,11 +8,17 @@ which one it is on.
 Three deliberate departures from how the rest of the product places orders:
 
 **Mode is per run, not global.** OpenAlgo's analyzer setting is a single
-platform-wide switch, and ``services/place_order_service.place_order`` consults
-it. A strategy chooses live or sandbox when the run starts, and two runs may
-disagree, so this module branches explicitly on the run's own mode and calls
-each pipe directly. Nothing here reads the global toggle, and nothing here
-changes it.
+platform-wide switch. A strategy chooses live or sandbox when the run starts,
+and two runs may disagree, so this module branches explicitly on the run's own
+mode and calls each pipe directly.
+
+A live order passes ``force_live=True``, which is load bearing rather than
+decorative: ``place_order_with_auth`` consults the global toggle before it
+looks at the broker arguments, so without the flag an operator turning the
+analyzer on to try something elsewhere would divert a live run's exits into the
+sandbox. Those report success, so the engine would close the leg and finalise
+the run while the real broker position stayed open with nothing managing it.
+Nothing here changes the toggle.
 
 **Action Center is bypassed.** ``place_order`` routes API-key orders into the
 semi-automatic approval queue when that is enabled. That is right for a signal
@@ -59,6 +65,37 @@ class DispatchResult:
         return not self.ok
 
 
+# Which products each venue accepts. /scalping already carries this rule
+# (blueprints/scalping.py), and every broker enforces it: CNC is a delivery
+# product for cash, NRML a carry-forward product for derivatives, and neither
+# is accepted on the other's venue.
+DERIVATIVE_EXCHANGES_FOR_PRODUCT = frozenset({"NFO", "BFO", "MCX", "CDS", "BCD", "NCDEX", "NCO"})
+DERIVATIVE_PRODUCTS = frozenset({"MIS", "NRML"})
+EQUITY_PRODUCTS = frozenset({"MIS", "CNC"})
+
+
+def product_for_exchange(product: str, exchange: str) -> str:
+    """The venue's spelling of the product the strategy asked for.
+
+    A strategy carries one product for every leg, so a basket holding a cash
+    leg and an option leg could not be given a product both would accept, and
+    the default NRML reached NSE and BSE while CNC reached NFO, BFO, MCX and
+    CDS. Nothing downstream catches it: the schemas and the sandbox only check
+    the value is one of the three, so it went to the broker as configured.
+
+    The product is read as the intent rather than as a literal. MIS is
+    intraday everywhere and passes through. Anything else means carry the
+    position, which is NRML on a derivatives venue and CNC on cash, so a mixed
+    basket works and no leg is ever sent a product its venue refuses.
+    """
+    wanted = (product or "").upper()
+    if wanted == "MIS":
+        return "MIS"
+    if (exchange or "").upper() in DERIVATIVE_EXCHANGES_FOR_PRODUCT:
+        return "NRML"
+    return "CNC"
+
+
 def build_order(
     *,
     symbol: str,
@@ -81,7 +118,9 @@ def build_order(
         "exchange": exchange,
         "action": action.upper(),
         "quantity": str(int(quantity)),
-        "product": product,
+        # Translated to what this venue accepts. Every order the module places
+        # passes through here, so this is the one place it has to be right.
+        "product": product_for_exchange(product, exchange),
         "pricetype": pricetype,
         "price": str(price or 0),
         "trigger_price": str(trigger_price or 0),
@@ -170,7 +209,16 @@ def _dispatch_live(api_key: str, order: dict[str, Any]) -> DispatchResult:
     original = dict(order)
     original["apikey"] = api_key
     try:
-        ok, response, _status = place_order_with_auth(dict(order), auth_token, broker, original)
+        ok, response, _status = place_order_with_auth(
+            dict(order),
+            auth_token,
+            broker,
+            original,
+            # The run already decided this is live. Without force_live the
+            # platform-wide analyzer toggle would divert it to the sandbox,
+            # which reports success and leaves a real position orphaned.
+            force_live=True,
+        )
     except Exception:
         logger.exception("Live order placement raised for %s", order.get("symbol"))
         return DispatchResult(ok=False, error="Live order placement failed")

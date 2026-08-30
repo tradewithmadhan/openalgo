@@ -9,9 +9,11 @@ import {
   buildRoundTrips,
   closeAll,
   closeLeg,
+  type DerivedPosition,
   deleteStrategy,
   derivePositions,
   deriveTrades,
+  fetchStrategyPositions,
   getStrategy,
   killSwitch,
   LIVE_POLL_MS,
@@ -28,6 +30,7 @@ import {
   stopRun,
   strategyQueryKeys,
   unlockWebhook,
+  useBrokerBook,
   useStrategyLive,
 } from '@/api/strategy_module'
 import { Badge } from '@/components/ui/badge'
@@ -118,10 +121,31 @@ function liveStatusBadge(status: StrategyLiveStatus): {
       return { label: 'live', variant: 'default' }
     case 'connecting':
       return { label: 'connecting', variant: 'secondary' }
+    // Named for what it is. The numbers are still correct, just slower, and
+    // saying "live" while the socket is down is the failure this badge exists
+    // to make visible.
+    case 'polling':
+      return { label: 'polling', variant: 'secondary' }
     case 'error':
       return { label: 'error', variant: 'destructive' }
     default:
       return { label: 'idle', variant: 'outline' }
+  }
+}
+
+/** What the badge means, spelled out for the tooltip. */
+function liveStatusHint(status: StrategyLiveStatus): string {
+  switch (status) {
+    case 'live':
+      return 'Streaming from the strategy room on the shared connection.'
+    case 'connecting':
+      return 'Connected, waiting for the first snapshot.'
+    case 'polling':
+      return `Socket unavailable, so the checkpoint is being read every ${LIVE_POLL_MS / 1000}s instead. The numbers are current, just slower.`
+    case 'error':
+      return 'Could not subscribe to this strategy. The figures below may be stale.'
+    default:
+      return 'Not streaming: the strategy is not running.'
   }
 }
 
@@ -325,14 +349,14 @@ function LiveTab({
             <CardTitle>Live P&amp;L</CardTitle>
             <CardDescription>
               {isRunning
-                ? 'Realized + Unrealized = Total, from the engine’s latest checkpoint.'
+                ? 'Realized + Unrealized = Total, streamed from the engine while the run is active.'
                 : 'Last run — realized P&L from the most recent run; resets on the next Start.'}
             </CardDescription>
           </div>
           <Badge
             variant={badge.variant}
             className="text-[10px]"
-            title={`Polling every ${LIVE_POLL_MS / 1000}s while a run is active. This slot becomes the push-channel indicator when the strategy socket lands.`}
+            title={liveStatusHint(live.status)}
           >
             {badge.label}
           </Badge>
@@ -715,10 +739,47 @@ function PositionsTab({
   runs: Run[]
   loading: boolean
 }) {
-  const positions = useMemo(
+  const derived = useMemo(
     () => derivePositions(orders, strategy.product, live.legs),
     [orders, strategy.product, live.legs]
   )
+  const broker = useBrokerBook(
+    strategy.id,
+    'positions',
+    fetchStrategyPositions,
+    strategy.status === 'running'
+  )
+
+  // The broker's own position book when it answered, the derived view when it
+  // did not. The order rows record what the engine asked for; the broker knows
+  // what happened to it, and a fill or cancellation whose update never arrived
+  // leaves the local rows wrong. Realized-lifetime stays derived either way: a
+  // broker position row carries no history, and that column is strategy
+  // attribution rather than broker truth.
+  const positions = useMemo(() => {
+    if (!broker.rows) return derived
+    const realizedFor = new Map(
+      derived.map((row) => [
+        `${row.symbol}-${row.exchange}-${row.product}`,
+        row.realized_pnl_lifetime,
+      ])
+    )
+    return broker.rows.map((row) => {
+      const quantity = Number(row.quantity ?? 0)
+      const key = `${row.symbol}-${row.exchange}-${row.product}`
+      return {
+        symbol: String(row.symbol ?? ''),
+        exchange: String(row.exchange ?? ''),
+        product: String(row.product ?? ''),
+        side: quantity > 0 ? 'long' : quantity < 0 ? 'short' : 'flat',
+        net_qty: quantity,
+        avg_entry_price: Number(row.average_price ?? 0),
+        ltp: Number(row.ltp ?? 0),
+        unrealized_pnl: Number(row.pnl ?? 0),
+        realized_pnl_lifetime: realizedFor.get(key) ?? 0,
+      } satisfies DerivedPosition
+    })
+  }, [broker.rows, derived])
 
   const checkpoint = live.checkpoint
   // Lifetime realized is the sum of every finalised run. The current run's
@@ -736,7 +797,11 @@ function PositionsTab({
         <CardHeader>
           <CardTitle>Strategy positions</CardTitle>
           <CardDescription>
-            Net positions derived from this strategy's filled orders.
+            {broker.rows
+              ? "The broker's own position book, narrowed to the contracts this strategy traded. A position row is per contract, so if the same contract is also held from a manual order or another strategy the row is shared and cannot be divided: treat the quantity and unrealized figure as belonging to all of them."
+              : broker.unavailable
+                ? "The broker did not answer, so these are net positions derived from this strategy's filled orders."
+                : "Net positions derived from this strategy's filled orders."}
             {live.runId !== null && (
               <>
                 {' '}
@@ -1948,8 +2013,11 @@ function HistoryTab({ runs, orders }: { runs: Run[]; orders: Order[] }) {
 // ---------------------------------------------------------------------------
 
 export default function StrategyDetail() {
-  const { id } = useParams<{ id: string }>()
-  const numId = Number(id)
+  // Named to match the route, which declares :strategyId. Destructuring
+  // `id` from it yields undefined, so every visit to /strategy/<n> failed
+  // its own validity check and rendered "Invalid strategy id".
+  const { strategyId } = useParams<{ strategyId: string }>()
+  const numId = Number(strategyId)
   const navigate = useNavigate()
   const queryClient = useQueryClient()
 

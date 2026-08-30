@@ -11,11 +11,14 @@
 // The fetchers below unwrap to the payload the caller actually wants, so no page
 // repeats the envelope.
 
-import { useQueries, useQuery } from '@tanstack/react-query'
+import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { useSocketContext } from '@/components/socket/SocketProvider'
 import { normalizeExpiryCode } from '@/lib/strategyContracts'
 import { useAuthStore } from '@/stores/authStore'
 import type {
   Checkpoint,
+  LegPosition,
   LegState,
   Order,
   Run,
@@ -48,6 +51,11 @@ export const strategyQueryKeys = {
   events: (id: number) => [...strategyQueryKeys.strategy(id), 'events'] as const,
   webhookEvents: (id: number) => [...strategyQueryKeys.strategy(id), 'webhook-events'] as const,
   checkpoints: (id: number) => [...strategyQueryKeys.strategy(id), 'checkpoints'] as const,
+  // The broker's own books, narrowed to this strategy. Keyed separately from
+  // the local order rows because they answer a different question: what the
+  // broker says happened, rather than what the engine asked for.
+  brokerBook: (id: number, book: string) =>
+    [...strategyQueryKeys.strategy(id), 'broker-book', book] as const,
 }
 
 /**
@@ -58,6 +66,16 @@ export const strategyQueryKeys = {
  * its numbers cannot change until someone starts it.
  */
 export const LIVE_POLL_MS = 5_000
+/**
+ * How long a joined socket may stay silent before the REST fallback resumes.
+ *
+ * The engine pushes a delta on every tick it evaluates and a checkpoint every
+ * few seconds, so a run that is alive has no reason to be quiet for this long.
+ * A socket that is connected and silent is the failure this whole fallback
+ * exists for, and treating the first frame as proof of life forever is how the
+ * page ends up showing a stopped clock while claiming to be live.
+ */
+export const SOCKET_STALE_MS = 20_000
 
 /**
  * How often the supporting tables refresh while a run is active. Slower than
@@ -207,6 +225,102 @@ export async function listOrders(id: number, runId?: number): Promise<Order[]> {
   return response.data.data ?? []
 }
 
+/**
+ * The broker's own view of one strategy, for the books tabs.
+ *
+ * `rows` is the broker's answer when it gave one and null when it did not, so
+ * a page can say which it is showing rather than quietly presenting derived
+ * numbers as the broker's. Polls only while the run is live, on the same
+ * cadence as everything else on the page.
+ */
+export function useBrokerBook<T>(
+  strategyId: number | null,
+  book: 'orderbook' | 'tradebook' | 'positions',
+  fetcher: (id: number, runId?: number) => Promise<T | null>,
+  isRunning: boolean
+) {
+  const query = useQuery({
+    queryKey: strategyQueryKeys.brokerBook(strategyId ?? 0, book),
+    queryFn: () => fetcher(strategyId as number),
+    enabled: strategyId !== null,
+    refetchInterval: strategyId !== null && isRunning ? LIVE_POLL_MS : false,
+  })
+  return {
+    rows: query.data ?? null,
+    isLoading: query.isLoading,
+    // A null payload is the broker refusing, which the fetcher already turned
+    // into a value rather than a throw.
+    unavailable: !query.isLoading && query.data === null,
+  }
+}
+
+/**
+ * The three broker-backed books.
+ *
+ * These read the broker's own orderbook, tradebook and position book and
+ * narrow them to this strategy, rather than deriving from the order rows the
+ * engine wrote. The rows record what was asked for; the broker knows what
+ * happened to it, and for money that difference is the whole point: a fill or
+ * a cancellation whose update never arrived leaves the local rows wrong.
+ *
+ * Each returns null rather than throwing when the broker refuses, so the page
+ * can fall back to the derived view and say which one it is showing. One
+ * failing tab must not take out the detail page.
+ */
+export interface BrokerOrderbook {
+  orders: Record<string, unknown>[]
+  statistics: Record<string, unknown> | null
+}
+
+async function readBook<T>(
+  id: number,
+  path: string,
+  runId: number | undefined,
+  pick: (payload: Record<string, unknown>) => T
+): Promise<T | null> {
+  try {
+    const response = await webClient.get<Record<string, unknown>>(
+      `${BASE}/strategies/${id}/${path}`,
+      { params: runId ? { run_id: runId } : {} }
+    )
+    if (response.data?.status !== 'success') return null
+    return pick(response.data)
+  } catch {
+    return null
+  }
+}
+
+export function fetchStrategyOrderbook(
+  id: number,
+  runId?: number
+): Promise<BrokerOrderbook | null> {
+  return readBook(id, 'orderbook', runId, (payload) => {
+    const data = (payload.data ?? {}) as Record<string, unknown>
+    return {
+      orders: Array.isArray(data.orders) ? (data.orders as Record<string, unknown>[]) : [],
+      statistics: (data.statistics ?? null) as Record<string, unknown> | null,
+    }
+  })
+}
+
+export function fetchStrategyTradebook(
+  id: number,
+  runId?: number
+): Promise<Record<string, unknown>[] | null> {
+  return readBook(id, 'tradebook', runId, (payload) =>
+    Array.isArray(payload.data) ? (payload.data as Record<string, unknown>[]) : []
+  )
+}
+
+export function fetchStrategyPositions(
+  id: number,
+  runId?: number
+): Promise<Record<string, unknown>[] | null> {
+  return readBook(id, 'positions', runId, (payload) =>
+    Array.isArray(payload.data) ? (payload.data as Record<string, unknown>[]) : []
+  )
+}
+
 export async function listEvents(id: number, limit = 500): Promise<StrategyEvent[]> {
   const response = await webClient.get<{ data: StrategyEvent[] }>(
     `${BASE}/strategies/${id}/events`,
@@ -240,17 +354,170 @@ export async function listCheckpoints(id: number, runId?: number): Promise<Check
 //
 // The single seam between the pages and however live state arrives.
 //
-// Today it is a poll of the checkpoint the engine writes for the current run.
-// When the module gets a push channel, this hook is the only thing that
-// changes: it must keep returning a `StrategyLiveState`, and it must reach the
-// socket through the app's shared `useSocketContext()` rather than opening one
-// of its own. Every Socket.IO connection holds an HTTP connection against the
-// browser's per-host limit, shared across every tab the user has open, so a
-// second socket for this page would be spent from the same budget the order
-// stream is already using.
+// The transport is the strategy room on the app's shared Socket.IO connection,
+// with the checkpoint poll kept underneath it as a fallback. It reaches the
+// socket through `useSocketContext()` rather than opening one of its own:
+// every Socket.IO connection holds an HTTP connection against the browser's
+// roughly six-per-host limit, shared across every tab the user has open, so a
+// second socket here would be spent from the same budget the account-level
+// order stream is already using.
+//
+// The fallback is not a leftover. A socket that has dropped looks exactly like
+// a strategy whose numbers have stopped moving, and a page that quietly shows
+// stale P&L is worse than one that polls, so the poll runs whenever the socket
+// is not delivering and the badge says which of the two is feeding the page.
 // ---------------------------------------------------------------------------
 
-export type StrategyLiveStatus = 'idle' | 'connecting' | 'live' | 'error'
+/**
+ * Where the numbers on screen are coming from.
+ *
+ * `polling` is a real answer, not a degraded one: the REST fallback is
+ * authoritative, just slower. It is distinct from `live` so the badge can say
+ * which is running rather than implying a push channel that is not there.
+ */
+export type StrategyLiveStatus = 'idle' | 'connecting' | 'live' | 'polling' | 'error'
+
+/** The envelope every strategy frame carries. */
+interface StrategyFrameEnvelope {
+  strategy_id: number
+  run_id: number | null
+  /** IST ISO 8601 with the offset, for display. */
+  ts: string
+  /** Epoch ms, for ordering. */
+  ts_ms: number
+}
+
+/** One leg as the socket sends it. Non-finite numbers arrive as null. */
+export interface StrategyWireLeg {
+  leg_id: number
+  symbol: string
+  exchange: string
+  position: LegPosition
+  lots: number
+  qty: number
+  status: string
+  entry_status: string
+  exit_kind: string | null
+  ltp: number | null
+  entry_avg: number
+  mtm: number
+  realized_pnl: number
+  effective_sl: number | null
+  effective_target: number | null
+  trail_active: boolean
+  favorable_points: number
+  tick_source: string
+}
+
+/** A `strategy_snapshot` or `strategy_delta` frame. */
+export interface StrategyStateFrame extends StrategyFrameEnvelope {
+  type: 'snapshot' | 'delta'
+  mtm_realized: number
+  mtm_unrealized: number
+  mtm_total: number
+  peak: number
+  trough: number
+  lock_armed: boolean
+  lock_floor: number | null
+  trail_to_entry_active: boolean
+  tick_source_degraded: boolean
+  legs: StrategyWireLeg[]
+}
+
+interface StrategyEventFrame extends StrategyFrameEnvelope {
+  type: 'event'
+  event: StrategyEvent
+}
+
+interface StrategyOrderFrame extends StrategyFrameEnvelope {
+  type: 'order_update'
+  order: Order
+}
+
+interface StrategyRunFrame extends StrategyFrameEnvelope {
+  type: 'run_update'
+  run: Run
+}
+
+interface StrategyTerminalFrame extends StrategyFrameEnvelope {
+  type: 'terminal'
+  stop_reason: string | null
+  pnl_realized: number
+}
+
+interface SubscribeAck {
+  status: 'success' | 'error'
+  message?: string
+}
+
+/** One wire leg in the shape the pages already read. */
+export function wireLegToLegState(leg: StrategyWireLeg): LegState {
+  return {
+    leg_id: leg.leg_id,
+    position: leg.position,
+    symbol: leg.symbol,
+    exchange: leg.exchange,
+    lots: leg.lots,
+    qty: leg.qty,
+    entry_order_id: null,
+    entry_status: leg.entry_status,
+    entry_avg: leg.entry_avg,
+    exit_order_id: null,
+    exit_kind: leg.exit_kind,
+    exit_avg: null,
+    ltp: leg.ltp,
+    mtm: leg.mtm,
+    realized_pnl: leg.realized_pnl,
+    status: leg.status,
+    tick_source: leg.tick_source,
+    sl_pts: null,
+    target_pts: null,
+    trail_x: 0,
+    trail_y: 0,
+    effective_sl: leg.effective_sl,
+    effective_target: leg.effective_target,
+    trail_active: leg.trail_active,
+    // The socket sends the favourable excursion already measured, so the price
+    // ratchet it was derived from is not repeated on the wire.
+    favorable_points: leg.favorable_points,
+    highest_price: null,
+    lowest_price: null,
+  }
+}
+
+/**
+ * Fold a state frame into what is already on screen.
+ *
+ * A snapshot carries every leg and replaces the map. A delta carries only the
+ * open ones, so it is merged: a leg that is not open cannot have moved, and
+ * dropping it would blank a closed leg's final numbers on the next tick.
+ */
+export function foldStrategyFrame(
+  previous: Checkpoint | null,
+  frame: StrategyStateFrame
+): Checkpoint {
+  const incoming: Record<string, LegState> = {}
+  for (const leg of frame.legs ?? []) {
+    incoming[String(leg.leg_id)] = wireLegToLegState(leg)
+  }
+  const legState =
+    frame.type === 'snapshot' ? incoming : { ...(previous?.leg_state ?? {}), ...incoming }
+
+  return {
+    // Synthetic: a frame is not a checkpoint row and has no id of its own.
+    id: 0,
+    run_id: frame.run_id ?? previous?.run_id ?? 0,
+    ts: frame.ts,
+    pnl_realized: frame.mtm_realized,
+    pnl_unrealized: frame.mtm_unrealized,
+    pnl_total: frame.mtm_total,
+    pnl_peak: frame.peak,
+    pnl_trough: frame.trough,
+    lock_floor: frame.lock_floor ?? null,
+    trail_to_entry_active: Boolean(frame.trail_to_entry_active),
+    leg_state: legState,
+  }
+}
 
 export interface StrategyLiveState {
   /** Transport state, for the status badge on the Live tab. */
@@ -273,44 +540,249 @@ export interface StrategyLiveState {
 /**
  * A strategy's live runtime state.
  *
- * Fetches once whatever the status, so a stopped strategy still shows the last
- * run's finalised P&L instead of an empty panel, and polls only while the run
- * is active.
+ * Joins the strategy's room while the run is active and folds the frames it
+ * receives; falls back to the checkpoint poll whenever the socket is not
+ * delivering. The REST read also runs once whatever the status, so a stopped
+ * strategy still shows the last run's finalised P&L instead of an empty panel.
  */
 export function useStrategyLive(strategyId: number | null, isRunning: boolean): StrategyLiveState {
   const enabled = strategyId !== null && Number.isFinite(strategyId) && strategyId > 0
+  const queryClient = useQueryClient()
+  const { socket } = useSocketContext()
+
+  const [connected, setConnected] = useState(false)
+  const [joined, setJoined] = useState(false)
+  const [joinError, setJoinError] = useState<string | null>(null)
+  const [frame, setFrame] = useState<Checkpoint | null>(null)
+  // When the last accepted frame arrived, and a clock that advances so the
+  // staleness check is re-evaluated rather than only recomputed on a render
+  // that happens to occur.
+  const [lastFrameAt, setLastFrameAt] = useState<number | null>(null)
+  const [clock, setClock] = useState(() => Date.now())
+  // Frames are ordered by the server clock, so a delivery that arrives out of
+  // order is dropped rather than winding the numbers backwards.
+  const lastTsRef = useRef(0)
+
+  const wantSocket = enabled && isRunning && socket != null
+
+  // Connection state, tracked separately from the room so a drop shows up as a
+  // transport change even before the rejoin is attempted.
+  useEffect(() => {
+    if (!socket) {
+      setConnected(false)
+      return
+    }
+    setConnected(socket.connected)
+    const onConnect = () => setConnected(true)
+    const onDisconnect = () => {
+      setConnected(false)
+      setJoined(false)
+    }
+    socket.on('connect', onConnect)
+    socket.on('disconnect', onDisconnect)
+    return () => {
+      socket.off('connect', onConnect)
+      socket.off('disconnect', onDisconnect)
+    }
+  }, [socket])
+
+  // Room membership and the frame handlers. Keyed on the strategy id, so
+  // navigating to another strategy leaves the old room on the way out rather
+  // than accumulating memberships on the shared connection.
+  useEffect(() => {
+    if (!wantSocket || !socket || strategyId === null) return
+
+    let active = true
+    setJoined(false)
+    setJoinError(null)
+    setFrame(null)
+    setLastFrameAt(null)
+    lastTsRef.current = 0
+
+    const mine = (payload: { strategy_id?: number } | null | undefined) =>
+      Boolean(payload) && payload?.strategy_id === strategyId
+
+    const join = () => {
+      socket.emit('strategy_subscribe', { strategy_id: strategyId }, (ack?: SubscribeAck) => {
+        if (!active) return
+        if (ack?.status === 'success') {
+          setJoined(true)
+          setJoinError(null)
+        } else {
+          // A strategy that is not yours acknowledges an error rather than
+          // joining, so this is a real answer, not a timeout.
+          setJoined(false)
+          setJoinError(ack?.message ?? 'Could not subscribe to this strategy')
+        }
+      })
+    }
+
+    const onState = (payload: StrategyStateFrame) => {
+      if (!mine(payload)) return
+      const ts = Number(payload.ts_ms ?? 0)
+      if (ts && ts < lastTsRef.current) return
+      lastTsRef.current = ts
+      setLastFrameAt(Date.now())
+      setFrame((previous) => foldStrategyFrame(previous, payload))
+    }
+
+    const onOrder = (payload: StrategyOrderFrame) => {
+      if (!mine(payload) || !payload.order) return
+      queryClient.setQueryData<Order[]>(strategyQueryKeys.orders(strategyId), (previous) => {
+        const list = previous ? [...previous] : []
+        const index = list.findIndex((row) => row.id === payload.order.id)
+        if (index >= 0) list[index] = payload.order
+        else list.unshift(payload.order)
+        return list
+      })
+      // Positions and the tradebook are derived from this same array inside the
+      // Detail page, so splicing it is what refreshes them. There is no second
+      // cache to invalidate.
+    }
+
+    const onRun = (payload: StrategyRunFrame) => {
+      if (!mine(payload) || !payload.run) return
+      queryClient.setQueryData<Run[]>(strategyQueryKeys.runs(strategyId), (previous) => {
+        const list = previous ? [...previous] : []
+        const index = list.findIndex((row) => row.id === payload.run.id)
+        if (index >= 0) list[index] = payload.run
+        else list.unshift(payload.run)
+        return list
+      })
+    }
+
+    const onEvent = (payload: StrategyEventFrame) => {
+      if (!mine(payload) || !payload.event) return
+      queryClient.setQueryData<StrategyEvent[]>(
+        strategyQueryKeys.events(strategyId),
+        (previous) => {
+          const list = previous ? [...previous] : []
+          if (list.some((row) => row.id === payload.event.id)) return list
+          return [payload.event, ...list]
+        }
+      )
+    }
+
+    const onTerminal = (payload: StrategyTerminalFrame) => {
+      if (!mine(payload)) return
+      // The run is over. Drop the live frame so the page stops presenting it as
+      // current, and refetch the rows that now carry the finalised numbers.
+      setFrame(null)
+      setLastFrameAt(null)
+      lastTsRef.current = 0
+      queryClient.invalidateQueries({ queryKey: strategyQueryKeys.strategy(strategyId) })
+      queryClient.invalidateQueries({ queryKey: strategyQueryKeys.runs(strategyId) })
+      queryClient.invalidateQueries({ queryKey: strategyQueryKeys.checkpoints(strategyId) })
+      queryClient.invalidateQueries({ queryKey: strategyQueryKeys.orders(strategyId) })
+    }
+
+    if (socket.connected) join()
+    // Rejoin after a reconnect: the server does not remember the room.
+    socket.on('connect', join)
+    socket.on('strategy_snapshot', onState)
+    socket.on('strategy_delta', onState)
+    socket.on('strategy_event', onEvent)
+    socket.on('strategy_order_update', onOrder)
+    socket.on('strategy_run_update', onRun)
+    socket.on('strategy_terminal', onTerminal)
+
+    return () => {
+      active = false
+      socket.off('connect', join)
+      socket.off('strategy_snapshot', onState)
+      socket.off('strategy_delta', onState)
+      socket.off('strategy_event', onEvent)
+      socket.off('strategy_order_update', onOrder)
+      socket.off('strategy_run_update', onRun)
+      socket.off('strategy_terminal', onTerminal)
+      // Never disconnect the shared socket - only leave this room.
+      if (socket.connected) {
+        socket.emit('strategy_unsubscribe', { strategy_id: strategyId })
+      }
+      setJoined(false)
+    }
+  }, [wantSocket, socket, strategyId, queryClient])
+
+  // Advance the clock only while a socket is in play, so a page with no
+  // subscription does no timer work at all.
+  useEffect(() => {
+    if (!wantSocket) return
+    const id = window.setInterval(() => setClock(Date.now()), LIVE_POLL_MS)
+    return () => window.clearInterval(id)
+  }, [wantSocket])
+
+  // Live means frames are arriving, not that one arrived once. Without the
+  // recency test this stayed true for the life of the page after the first
+  // frame, so a socket that fell silent left the poll disabled and the page
+  // showed indefinitely stale P&L, legs and run state while reporting itself
+  // live.
+  const socketLive =
+    wantSocket &&
+    connected &&
+    joined &&
+    frame !== null &&
+    lastFrameAt !== null &&
+    clock - lastFrameAt < SOCKET_STALE_MS
 
   const query = useQuery({
     queryKey: strategyQueryKeys.checkpoints(strategyId ?? 0),
     queryFn: () => listCheckpoints(strategyId as number),
     enabled,
-    refetchInterval: isRunning ? LIVE_POLL_MS : false,
+    // The poll stands down only while frames are actually arriving. A socket
+    // that is connected but silent still gets the fallback underneath it.
+    refetchInterval: enabled && isRunning && !socketLive ? LIVE_POLL_MS : false,
   })
 
   const page = query.data
-  const checkpoint = page && page.data.length > 0 ? page.data[page.data.length - 1] : null
+  const restCheckpoint = page && page.data.length > 0 ? page.data[page.data.length - 1] : null
+  // The socket frame wins only while the socket is live. Once it has gone
+  // stale the REST fallback is the fresher of the two, and preferring the
+  // frame regardless meant resuming the poll changed nothing an operator could
+  // see: the page kept rendering the last frame it received before the silence
+  // while quietly fetching newer numbers it never showed. The frame is still
+  // the fallback's fallback, for the moment before the first REST answer.
+  const checkpoint = socketLive ? (frame ?? restCheckpoint) : (restCheckpoint ?? frame)
 
   let status: StrategyLiveStatus = 'idle'
   if (!enabled) {
     status = 'idle'
+  } else if (joinError) {
+    status = 'error'
+  } else if (socketLive) {
+    status = 'live'
+  } else if (wantSocket && connected && frame === null) {
+    // Connected and waiting for the first frame. Once one has arrived and then
+    // gone stale this must not read as "connecting" again: the connection is
+    // fine, it is the delivery that stopped, and the page is on the fallback.
+    status = 'connecting'
+  } else if (isRunning) {
+    status = query.isError ? 'error' : 'polling'
   } else if (query.isError) {
     status = 'error'
-  } else if (isRunning) {
-    status = query.isSuccess ? 'live' : 'connecting'
   }
+
+  const refresh = useCallback(() => {
+    void query.refetch()
+  }, [query])
 
   return {
     status,
-    runId: page?.run_id ?? null,
+    // Follows the same precedence as `checkpoint` above, and for the same
+    // reason. Preferring the frame's run id unconditionally meant a stale
+    // socket could label freshly polled state with the run that had already
+    // ended, so the page attributed one run's numbers to another.
+    runId: socketLive
+      ? (frame?.run_id ?? page?.run_id ?? null)
+      : (page?.run_id ?? frame?.run_id ?? null),
     checkpoint,
     legs: checkpoint ? sortLegStates(checkpoint.leg_state) : [],
     updatedAt: checkpoint?.ts ?? null,
+    // History only ever comes from REST: the socket carries the current state,
+    // not the curve behind it.
     curve: page?.data ?? [],
     isFetching: query.isFetching,
-    error: (query.error as Error | null) ?? null,
-    refresh: () => {
-      void query.refetch()
-    },
+    error: joinError ? new Error(joinError) : ((query.error as Error | null) ?? null),
+    refresh,
   }
 }
 
