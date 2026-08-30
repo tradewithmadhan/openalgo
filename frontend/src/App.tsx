@@ -81,12 +81,6 @@ const Arbitrage = lazy(() => import('@/pages/Arbitrage'))
 const StrategyBuilder = lazy(() => import('@/pages/StrategyBuilder'))
 const StrategyPortfolio = lazy(() => import('@/pages/StrategyPortfolio'))
 
-// Strategy pages
-const StrategyIndex = lazy(() => import('@/pages/strategy/StrategyIndex'))
-const NewStrategy = lazy(() => import('@/pages/strategy/NewStrategy'))
-const ViewStrategy = lazy(() => import('@/pages/strategy/ViewStrategy'))
-const ConfigureSymbols = lazy(() => import('@/pages/strategy/ConfigureSymbols'))
-
 // Python Strategy pages
 const PythonStrategyIndex = lazy(() => import('@/pages/python-strategy/PythonStrategyIndex'))
 const NewPythonStrategy = lazy(() => import('@/pages/python-strategy/NewPythonStrategy'))
@@ -94,6 +88,12 @@ const EditPythonStrategy = lazy(() => import('@/pages/python-strategy/EditPython
 const PythonStrategyLogs = lazy(() => import('@/pages/python-strategy/PythonStrategyLogs'))
 const SchedulePythonStrategy = lazy(() => import('@/pages/python-strategy/SchedulePythonStrategy'))
 const PythonStrategyGuide = lazy(() => import('@/pages/python-strategy/PythonStrategyGuide'))
+
+// Strategy module: multi-leg options strategies with risk management
+const StrategyList = lazy(() => import('@/pages/strategy/List'))
+const StrategyWizard = lazy(() => import('@/pages/strategy/Wizard'))
+const StrategyDetail = lazy(() => import('@/pages/strategy/Detail'))
+const StrategyEdit = lazy(() => import('@/pages/strategy/Edit'))
 
 // Chartink pages
 const ChartinkIndex = lazy(() => import('@/pages/chartink/ChartinkIndex'))
@@ -216,10 +216,7 @@ function App() {
                   element={<Navigate to="/portfolio-backtester" replace />}
                 />
                 <Route path="/sip-backtester" element={<SipBacktester />} />
-                <Route
-                  path="/sip-backtester/results"
-                  element={<SipBacktesterResults />}
-                />
+                <Route path="/sip-backtester/results" element={<SipBacktesterResults />} />
                 <Route path="/portfolio-analyzer" element={<PortfolioAnalyzer />} />
                 <Route path="/gocharting" element={<GoCharting />} />
                 <Route path="/pnl-tracker" element={<PnLTracker />} />
@@ -259,11 +256,6 @@ function App() {
                 <Route path="/websocket/test/20" element={<WebSocketTest depthLevel={20} />} />
                 <Route path="/websocket/test/30" element={<WebSocketTest depthLevel={30} />} />
                 <Route path="/websocket/test/50" element={<WebSocketTest depthLevel={50} />} />
-                {/* Phase 6: Webhook Strategies */}
-                <Route path="/strategy" element={<StrategyIndex />} />
-                <Route path="/strategy/new" element={<NewStrategy />} />
-                <Route path="/strategy/:strategyId" element={<ViewStrategy />} />
-                <Route path="/strategy/:strategyId/configure" element={<ConfigureSymbols />} />
                 {/* Phase 6: Python Strategies */}
                 <Route path="/python" element={<PythonStrategyIndex />} />
                 <Route path="/python/new" element={<NewPythonStrategy />} />
@@ -271,6 +263,13 @@ function App() {
                 <Route path="/python/:strategyId/logs" element={<PythonStrategyLogs />} />
                 <Route path="/python/:strategyId/schedule" element={<SchedulePythonStrategy />} />
                 <Route path="/python/guide" element={<PythonStrategyGuide />} />
+                {/* Strategy module. /strategy/new before /strategy/:id so the
+                    literal wins over the parameter. */}
+                <Route path="/strategy" element={<StrategyList />} />
+                <Route path="/strategy/new" element={<StrategyWizard />} />
+                <Route path="/strategy/:strategyId" element={<StrategyDetail />} />
+                <Route path="/strategy/:strategyId/edit" element={<StrategyEdit />} />
+
                 {/* Phase 6: Chartink Strategies */}
                 <Route path="/chartink" element={<ChartinkIndex />} />
                 <Route path="/chartink/new" element={<NewChartinkStrategy />} />

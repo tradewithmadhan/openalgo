@@ -474,8 +474,12 @@ def react_analyzer():
 # ============================================================
 
 
-# Webhook Strategies
-# Note: Using strict_slashes=False to handle both /strategy and /strategy/
+# Strategy module (multi-leg options strategies with risk management)
+#
+# Registered even though React Router would serve these anyway via the 404
+# fallback: an unregistered path counts against Error404Tracker for
+# unauthenticated visitors, and a shared strategy link opened while logged out
+# would push the visitor's address toward an IP ban.
 @react_bp.route("/strategy", strict_slashes=False)
 def react_strategy_index():
     return serve_react_app()
@@ -487,12 +491,12 @@ def react_strategy_new():
 
 
 @react_bp.route("/strategy/<int:strategy_id>", strict_slashes=False)
-def react_strategy_view(strategy_id):
+def react_strategy_detail(strategy_id):
     return serve_react_app()
 
 
-@react_bp.route("/strategy/<int:strategy_id>/configure", strict_slashes=False)
-def react_strategy_configure(strategy_id):
+@react_bp.route("/strategy/<int:strategy_id>/edit", strict_slashes=False)
+def react_strategy_edit(strategy_id):
     return serve_react_app()
 
 
