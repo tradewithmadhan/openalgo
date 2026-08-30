@@ -490,6 +490,13 @@ function Madhan01Inner() {
                 EzayOptionsTable
                 </Link>
             </Button>
+
+             <Button variant="ghost" size="sm" className="h-7 text-xs hidden sm:flex" asChild>
+                <Link to="/madhan/sk-work">
+                <BarChart3 className="h-3.5 w-3.5 mr-1.5" />
+                SK Work
+                </Link>
+            </Button>
           </div>
 
           <div className="flex items-center gap-2">
