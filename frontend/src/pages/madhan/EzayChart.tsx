@@ -35,7 +35,7 @@ import { useProfileMenuItems } from '@/hooks/useProfileMenuItems'
 import { useMadhanTheme } from './useMadhanTheme'
 import { cn } from '@/lib/utils'
 import { tradingApi } from '@/api/trading'
-import { getTimeOffset } from '@/utils/timeSync'
+import { getTimeOffset, setTimeOffset } from '@/utils/timeSync'
 import { chartTheme } from './chartTheme'
 import DrawingToolbar from './DrawingToolbar'
 import FloatingDrawingToolbar from './FloatingDrawingToolbar'
@@ -1516,6 +1516,19 @@ function EzayChartInner() {
 
     // Start data fetcher on page open
     fetch(`/madhan/api/nifty/start?instrument=${instrument}`, { method: 'POST' }).catch(() => {})
+
+    // Sync server time offset
+    fetch(`/madhan/api/nifty/status?instrument=${instrument}&_=${Date.now()}`)
+      .then((r) => r.json())
+      .then((json) => {
+        if (json?.status === 'success' && json.server_time) {
+          const serverMs = new Date(json.server_time).getTime()
+          const offset = serverMs - Date.now()
+          timeOffsetRef.current = offset
+          setTimeOffset(offset)
+        }
+      })
+      .catch(() => {})
 
     return () => {
       if (updaterRef.current) window.clearTimeout(updaterRef.current)
