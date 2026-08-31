@@ -241,6 +241,20 @@ class NiftyDataFetcher:
         return cls._instance
 
 
+    def _set_status(self, new_status: str):
+        """Sets status and emits fetcher_status_changed SocketIO event if changed."""
+        self.status = new_status
+        if new_status != self._last_emitted_status:
+            self._last_emitted_status = new_status
+            try:
+                socketio.emit('fetcher_status_changed', {
+                    'status': new_status,
+                    'is_running': self.is_running,
+                    'time': datetime.now(pytz.timezone('Asia/Kolkata')).isoformat()
+                })
+            except Exception as e:
+                logger.debug(f"Failed to emit fetcher_status_changed: {e}")
+
     def _get_request_delay(self):
         """Calculates the delay between API calls based on the .env setting."""
         rate_limit_str = os.getenv('API_RATE_LIMIT', '5 per second')
@@ -266,6 +280,7 @@ class NiftyDataFetcher:
         self.api_key = None
         
         self.request_delay = self._get_request_delay()
+        self._last_emitted_status = None
 
         # Create per-instrument configs
         self.nifty = IndexDataFetcher(
@@ -345,7 +360,7 @@ class NiftyDataFetcher:
         self.stop_event.set()
         self.thread.join(timeout=5) # Wait for the thread to finish
         self.is_running = False
-        self.status = "Stopped"
+        self._set_status("Stopped")
         logger.info("Data fetcher stopped.")
 
     def _auto_start_scheduler(self):
@@ -769,7 +784,7 @@ class NiftyDataFetcher:
     def _run(self):
         """The main loop for the background thread. Runs NIFTY first, then BANKNIFTY sequentially."""
         # --- Preliminary Fetch to set initial parameters for both instruments ---
-        self.status = "Initializing parameters..."
+        self._set_status("Initializing parameters...")
         logger.info(self.status)
         
         for config in [self.nifty, self.banknifty]:
@@ -798,7 +813,7 @@ class NiftyDataFetcher:
         init_start = time.time()
         
         for config in [self.nifty, self.banknifty]:
-            self.status = f"Backfilling {config.instrument_name}..."
+            self._set_status(f"Backfilling {config.instrument_name}...")
             config.status = f"Performing initial 7-day backfill..."
             logger.info(f"[{config.instrument_name}] {config.status}")
             max_retries = 3
@@ -892,13 +907,13 @@ class NiftyDataFetcher:
         logger.info(f"Initial backfill completed in {init_elapsed:.2f}s total for both instruments")
 
         # --- Calculate previous day's OI for both instruments ---
-        self.status = "Calculating previous day OI..."
+        self._set_status("Calculating previous day OI...")
         today, prev_day = get_trading_days()
         for config in [self.nifty, self.banknifty]:
             self._calculate_and_store_previous_day_oi(config, today, prev_day)
 
         # --- Continuous 1-minute fetch loop (sequential: NIFTY first, then BANKNIFTY) ---
-        self.status = "Running - Fetching live data"
+        self._set_status("Running - Fetching live data")
         first_iteration = True
         while not self.stop_event.is_set():
             now = datetime.now()
@@ -934,7 +949,7 @@ class NiftyDataFetcher:
                     except Exception as e:
                         logger.error(f"Failed to export last trading day to parquet: {e}")
                     self.is_running = False
-                    self.status = f"Stopped ({reason})"
+                    self._set_status(f"Stopped ({reason})")
                     self.stop_event.set()
                     break
 
@@ -942,7 +957,7 @@ class NiftyDataFetcher:
                 cycle_start = time.time()
 
                 # --- Phase 1: Fetch both spots in parallel ---
-                self.status = "Fetching NIFTY + BANKNIFTY spots..."
+                self._set_status("Fetching NIFTY + BANKNIFTY spots...")
                 spot_results = {}
                 with ThreadPoolExecutor(max_workers=2) as executor:
                     futures = {
@@ -965,7 +980,7 @@ class NiftyDataFetcher:
 
                 # --- Phase 2: Fetch NIFTY options ---
                 if spot_results.get("NIFTY") and self.nifty.option_symbols:
-                    self.status = f"Fetching {self.nifty.instrument_name} options..."
+                    self._set_status(f"Fetching {self.nifty.instrument_name} options...")
                     opt_start = time.time()
                     self._fetch_and_store_options_data(self.nifty, today_str, today_str)
                     logger.info(f"[{self.nifty.instrument_name}] Options fetched in {time.time() - opt_start:.2f}s")
@@ -1002,7 +1017,7 @@ class NiftyDataFetcher:
 
                 # --- Phase 3: Fetch BANKNIFTY options ---
                 if spot_results.get("BANKNIFTY") and self.banknifty.option_symbols:
-                    self.status = f"Fetching {self.banknifty.instrument_name} options..."
+                    self._set_status(f"Fetching {self.banknifty.instrument_name} options...")
                     opt_start = time.time()
                     self._fetch_and_store_options_data(self.banknifty, today_str, today_str)
                     logger.info(f"[{self.banknifty.instrument_name}] Options fetched in {time.time() - opt_start:.2f}s")
@@ -1040,9 +1055,9 @@ class NiftyDataFetcher:
                 cycle_elapsed = time.time() - cycle_start
                 last_ts = self.banknifty.last_update or self.nifty.last_update
                 if last_ts:
-                    self.status = f"Running - Last update: {last_ts.strftime('%H:%M:%S')}"
+                    self._set_status(f"Running - Last update: {last_ts.strftime('%H:%M:%S')}")
                 else:
-                    self.status = "Running"
+                    self._set_status("Running")
                 logger.info(f"Full fetch cycle (both instruments) completed in {cycle_elapsed:.2f}s")
 
                 # --- MARKET CLOSE CHECK ---
@@ -1082,7 +1097,7 @@ class NiftyDataFetcher:
                             logger.error(f"Failed to export to parquet: {e}")
                         logger.info(f"Market closed. Both NIFTY and BANKNIFTY last candles fetched. Stopping fetcher.")
                         self.is_running = False
-                        self.status = "Stopped (Market Closed)"
+                        self._set_status("Stopped (Market Closed)")
                         self.stop_event.set()
                         break
                     else:
@@ -1095,7 +1110,7 @@ class NiftyDataFetcher:
                                 logger.error(f"Failed to export to parquet: {e}")
                             logger.info(f"Hard stop: past FNO end + 1 min. NIFTY: {nifty_ts}, BANKNIFTY: {banknifty_ts}. Stopping fetcher.")
                             self.is_running = False
-                            self.status = "Stopped (Market Closed)"
+                            self._set_status("Stopped (Market Closed)")
                             self.stop_event.set()
                             break
                         else:

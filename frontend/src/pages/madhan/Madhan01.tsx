@@ -130,8 +130,26 @@ function Madhan01Inner() {
   const [isRefreshing, setIsRefreshing] = useState(false)
   const latestStatusRef = useRef<NiftyStatus | null>(null)
   const timeOffsetRef = useRef(0)
+  const [serverTime, setServerTime] = useState('')
 
-  const getServerNow = useCallback(() => new Date(Date.now() + timeOffsetRef.current), [])
+  const getServerNow = useCallback(() => {
+    return new Date(Date.now() + timeOffsetRef.current)
+  }, [])
+
+  // Tick server-synced clock every second
+  useEffect(() => {
+    const tick = () => {
+      setServerTime(
+        getServerNow().toLocaleTimeString('en-IN', {
+          timeZone: 'Asia/Kolkata',
+          hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+        })
+      )
+    }
+    tick()
+    const id = setInterval(tick, 1000)
+    return () => clearInterval(id)
+  }, [getServerNow])
 
   const fetchStatus = useCallback(async () => {
     try {
@@ -149,7 +167,6 @@ function Madhan01Inner() {
       const data = await response.json()
       if (data.status === 'success') {
         const statusData = data as NiftyStatus
-        // Re-sync time offset from server_time on every status response
         if (statusData.server_time) {
           const serverMs = new Date(statusData.server_time).getTime()
           timeOffsetRef.current = serverMs - Date.now()
@@ -283,77 +300,49 @@ function Madhan01Inner() {
   }, [instrument])
 
   useEffect(() => {
-    let timeoutId: ReturnType<typeof setTimeout>
-    let intervalId: ReturnType<typeof setInterval>
-    let isFetching = false
-
-    const scheduleNextMinute = () => {
-      const serverNow = getServerNow()
-      const msToNextMinute = (60 - serverNow.getSeconds()) * 1000 - serverNow.getMilliseconds()
-      timeoutId = setTimeout(startPolling, Math.max(0, msToNextMinute))
-    }
-
-    const fetchDataAndScheduleNext = async () => {
-      if (intervalId) clearInterval(intervalId)
-      await fetchPrevDayOi()
-      await fetchLiveData()
-      setRefreshTrigger(prev => prev + 1)
-      scheduleNextMinute()
-    }
-
-    const startPolling = () => {
-      intervalId = setInterval(async () => {
-        if (isFetching) return
-        isFetching = true
-        try {
-          const statusData = await fetchStatus()
-          if (!statusData?.is_running) {
-            clearInterval(intervalId)
-            return
-          }
-          if (statusData.last_update) {
-            const lastUpdate = new Date(statusData.last_update)
-            const serverNow = getServerNow()
-            if (lastUpdate.getMinutes() === serverNow.getMinutes()) {
-              fetchDataAndScheduleNext()
-            }
-          }
-        } finally {
-          isFetching = false
-        }
-      }, 1000)
-    }
-
-    // Immediate fetch on mount so data loads right away
+    // Initial data fetch on mount
+    fetchStatus()
     fetchPrevDayOi()
     fetchLiveData()
-
-    startPolling()
-    return () => {
-      clearTimeout(timeoutId)
-      clearInterval(intervalId)
-    }
-  }, [fetchStatus, fetchPrevDayOi, fetchLiveData, getServerNow])
+  }, [fetchStatus, fetchPrevDayOi, fetchLiveData])
 
   // SocketIO: instant refresh on data update events from backend
   useEffect(() => {
     if (!socket) return
 
     const handleNiftyUpdate = (data: { instrument: string }) => {
-      if (data.instrument === instrument) setRefreshTrigger(prev => prev + 1)
+      if (data.instrument === instrument) {
+        setRefreshTrigger(prev => prev + 1)
+        fetchPrevDayOi()
+        fetchLiveData()
+        showToast.success(`${instrument} data updated`)
+      }
     }
     const handleBankniftyUpdate = (data: { instrument: string }) => {
-      if (data.instrument === instrument) setRefreshTrigger(prev => prev + 1)
+      if (data.instrument === instrument) {
+        setRefreshTrigger(prev => prev + 1)
+        fetchPrevDayOi()
+        fetchLiveData()
+        showToast.success(`${instrument} data updated`)
+      }
+    }
+    const handleStatusChanged = (data: { status: string; is_running: boolean }) => {
+      fetchStatus()
+      if (!data.is_running && data.status.startsWith('Stopped')) {
+        showToast.info(`Fetcher: ${data.status}`)
+      }
     }
 
     socket.on('nifty_data_updated', handleNiftyUpdate)
     socket.on('banknifty_data_updated', handleBankniftyUpdate)
+    socket.on('fetcher_status_changed', handleStatusChanged)
 
     return () => {
       socket.off('nifty_data_updated', handleNiftyUpdate)
       socket.off('banknifty_data_updated', handleBankniftyUpdate)
+      socket.off('fetcher_status_changed', handleStatusChanged)
     }
-  }, [socket, instrument])
+  }, [socket, instrument, fetchPrevDayOi, fetchLiveData, fetchStatus])
 
   const buildUnifiedStrikes = (): UnifiedStrikeRow[] => {
     if (!prevDayOi.length) return []
@@ -645,6 +634,11 @@ function Madhan01Inner() {
              <span className="font-semibold">Expiry:</span>
              <span className="text-secondary-foreground font-mono text-xs">{status?.expiry_date || "-"}</span>
           </div>
+          <span className="text-muted-foreground/30">|</span>
+          <div className="flex items-center gap-1">
+             <span className="font-semibold">Server:</span>
+             <span className="text-secondary-foreground font-mono text-xs">{serverTime || "-"}</span>
+          </div>
         </div>
         
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
@@ -676,15 +670,15 @@ function Madhan01Inner() {
                 {isLoading && !status?.is_running ? <RefreshCw className="mr-2 h-3 w-3 animate-spin" /> : <Play className="mr-2 h-3 w-3" />}
                 Start
               </Button>
-              <Button 
-                variant={status?.is_running ? "destructive" : "outline"} 
-                size="sm" 
-                onClick={stopFetcher}
-                disabled={!status?.is_running || isLoading}
-              >
-                {isLoading && status?.is_running ? <RefreshCw className="mr-2 h-3 w-3 animate-spin" /> : <Pause className="mr-2 h-3 w-3" />}
-                Stop
-              </Button>
+               <Button 
+                 variant={status?.is_running ? "destructive" : "outline"} 
+                 size="sm" 
+                 onClick={stopFetcher}
+                 disabled={!status?.is_running || isLoading}
+               >
+                 {isLoading && status?.is_running ? <RefreshCw className="mr-2 h-3 w-3 animate-spin" /> : <Pause className="mr-2 h-3 w-3" />}
+                 Stop
+               </Button>
             </div>
         </div>
       </div>
