@@ -41,7 +41,7 @@ import { useAuthStore } from '@/stores/authStore'
 import { useProfileMenuItems } from '@/hooks/useProfileMenuItems'
 import { useMadhanTheme } from './useMadhanTheme'
 import { cn } from '@/lib/utils'
-import { setTimeOffset, getTimeOffset } from '@/utils/timeSync'
+
 import { useSocketContext } from '@/components/socket/SocketProvider'
 import { showToast } from '@/utils/toast'
 import { chartTheme } from './chartTheme'
@@ -1830,7 +1830,7 @@ function NiftyChartInner() {
 
   const fetchSignalData = async () => {
     try {
-      const today = new Date(Date.now() + getTimeOffset()).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' })
+      const today = new Date(Date.now() + timeOffsetRef.current).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' })
       let res = await fetch(`/madhan/api/ezayChart_signals?instrument=${instrument}&_=${Date.now()}`)
       let json = await res.json()
       if (json?.status !== 'success' || !Array.isArray(json.data)) {
@@ -2003,7 +2003,6 @@ function NiftyChartInner() {
         if (json.server_time) {
           const serverMs = new Date(json.server_time).getTime()
           timeOffsetRef.current = serverMs - Date.now()
-          setTimeOffset(timeOffsetRef.current)
         }
         return json
       }

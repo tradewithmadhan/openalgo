@@ -35,7 +35,7 @@ import { useProfileMenuItems } from '@/hooks/useProfileMenuItems'
 import { useMadhanTheme } from './useMadhanTheme'
 import { cn } from '@/lib/utils'
 import { tradingApi } from '@/api/trading'
-import { getTimeOffset, setTimeOffset } from '@/utils/timeSync'
+
 import { chartTheme } from './chartTheme'
 import DrawingToolbar from './DrawingToolbar'
 import FloatingDrawingToolbar from './FloatingDrawingToolbar'
@@ -396,7 +396,7 @@ function EzayChartInner() {
     return 1
   }
 
-  const todayStr = () => new Date(Date.now() + getTimeOffset()).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' })
+  const todayStr = () => new Date(Date.now() + timeOffsetRef.current).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' })
 
   const shiftBacktestDate = (days: number) => {
     const cur = backtestDateRef.current || todayStr()
@@ -794,7 +794,7 @@ function EzayChartInner() {
     // In live mode, include ALL API data (including current bucket) so aggregated
     // candles load correctly when switching timeframes. Seed currentOhlcRef so
     // WS update() continues from the API's OHLC instead of starting fresh.
-    const liveBucket = !isBacktestRef.current ? Math.floor((Date.now() + getTimeOffset()) / 1000 / (intervalMin * 60)) * (intervalMin * 60) : 0
+    const liveBucket = !isBacktestRef.current ? Math.floor((Date.now() + timeOffsetRef.current) / 1000 / (intervalMin * 60)) * (intervalMin * 60) : 0
 
     if (ceSeriesRef.current) {
       if (ct === 'candlestick') {
@@ -1525,7 +1525,6 @@ function EzayChartInner() {
           const serverMs = new Date(json.server_time).getTime()
           const offset = serverMs - Date.now()
           timeOffsetRef.current = offset
-          setTimeOffset(offset)
         }
       })
       .catch(() => {})
@@ -1933,7 +1932,7 @@ function EzayChartInner() {
     const update = () => {
       const intervalMin = getIntervalMinutes(intervalRef.current)
       const bucketSec = intervalMin * 60
-      const now = Math.floor((Date.now() + getTimeOffset()) / 1000)
+      const now = Math.floor((Date.now() + timeOffsetRef.current) / 1000)
       const nextBucket = Math.floor(now / bucketSec) * bucketSec + bucketSec
       const remaining = nextBucket - now
       if (intervalMin >= 60) {
