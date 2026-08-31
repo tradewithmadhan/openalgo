@@ -238,7 +238,8 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
     const itmDotsSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
     const itmDotsMarkersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
     const [showMeet, setShowMeet] = useState(false);
-    const meetSeriesRefs = useRef<Map<number, ISeriesApi<"Line">>>(new Map());
+    const meetSeriesRefs = useRef<Map<number, ISeriesApi<"Candlestick">>>(new Map());
+    const meetLiveStateRef = useRef<Map<number, { time: number; open: number; high: number; low: number; close: number }>>(new Map());
     const histogramSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
     const [histogramMode, setHistogramMode] = useState<'strike_vol' | 'total_vol' | 'hlx_count'>('hlx_count');
     const [showHistogram, setShowHistogram] = useState(true);
@@ -522,6 +523,7 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
                 try { chart.removeSeries(s); } catch {}
             });
             meetSeriesRefs.current.clear();
+            meetLiveStateRef.current.clear();
             if (histogramSeriesRef.current) {
                 try { chart.removeSeries(histogramSeriesRef.current); } catch {}
                 histogramSeriesRef.current = null;
@@ -958,6 +960,7 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
 
         // Meet lines - spot where CE = PE for each strike
         // Formula: S_meet = spot + (PE LTP - CE LTP)
+        // Aggregated to OHLC per timeframe bucket
         if (showMeet && chartRef.current && spotData) {
             // Build sorted spot arrays for closest-match lookup
             const spotTimes: number[] = [];
@@ -986,6 +989,7 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
 
             const meetColors = ['#f59e0b', '#a78bfa', '#34d399', '#f472b6', '#60a5fa'];
             let colorIdx = 0;
+            const periodSeconds = timeframe * 60;
 
             strikes.forEach(strike => {
                 const ceSymbol = getSymbol(strike, 'CE');
@@ -1029,8 +1033,8 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
                 const baseColor = meetColors[colorIdx % meetColors.length];
                 colorIdx++;
 
-                // Iterate over CE timestamps, find closest spot and PE close
-                const meetData: { time: any; value: number }[] = [];
+                // Compute 1-min meet values then aggregate to OHLC per timeframe
+                const rawMeetValues: { ts: number; value: number }[] = [];
                 let lastMeetValue = 0;
                 ceRaw.forEach(ceCandle => {
                     const tsSec = ceCandle.timestamp;
@@ -1039,31 +1043,73 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
                     if (!spotClose || !peClose) return;
                     const meetValue = spotClose + (peClose - ceCandle.close);
                     lastMeetValue = meetValue;
-                    meetData.push({ time: tsSec, value: meetValue });
+                    rawMeetValues.push({ ts: tsSec, value: meetValue });
                 });
 
-                if (meetData.length === 0) return;
+                if (rawMeetValues.length === 0) return;
+
+                // Aggregate raw meet values into OHLC per timeframe bucket
+                const meetOhlcData: { time: any; open: number; high: number; low: number; close: number }[] = [];
+                let bucketStart = 0;
+                let o = 0, h = 0, l = 0, c = 0;
+                let inBucket = false;
+
+                rawMeetValues.forEach(({ ts, value }) => {
+                    const bStart = Math.floor(ts / periodSeconds) * periodSeconds;
+                    if (!inBucket || bStart !== bucketStart) {
+                        if (inBucket) {
+                            meetOhlcData.push({ time: bucketStart, open: o, high: h, low: l, close: c });
+                        }
+                        bucketStart = bStart;
+                        o = value;
+                        h = value;
+                        l = value;
+                        c = value;
+                        inBucket = true;
+                    } else {
+                        h = Math.max(h, value);
+                        l = Math.min(l, value);
+                        c = value;
+                    }
+                });
+                if (inBucket) {
+                    meetOhlcData.push({ time: bucketStart, open: o, high: h, low: l, close: c });
+                }
+
+                if (meetOhlcData.length === 0) return;
 
                 // Determine color based on last meeting spot vs current spot
                 const lastSpot = spotData.prices[spotData.prices.length - 1] ?? 0;
                 const threshold = Math.max(5, lastSpot * 0.0002);
-                let lineColor = baseColor; // balanced
+                let bodyColor = baseColor;
                 if (lastMeetValue > lastSpot + threshold) {
-                    lineColor = '#ef4444'; // PE expensive - bearish
+                    bodyColor = '#ef4444'; // PE expensive - bearish
                 } else if (lastMeetValue < lastSpot - threshold) {
-                    lineColor = '#22c55e'; // CE expensive - bullish
+                    bodyColor = '#22c55e'; // CE expensive - bullish
                 }
 
-                series = chartRef.current!.addSeries(LineSeries, {
-                    color: lineColor,
-                    lineWidth: 1,
-                    lineStyle: LineStyle.Dashed,
+                // Apply 50% transparency to body color
+                const hexToRgba = (hex: string, alpha: number) => {
+                    const r = parseInt(hex.slice(1, 3), 16);
+                    const g = parseInt(hex.slice(3, 5), 16);
+                    const b = parseInt(hex.slice(5, 7), 16);
+                    return `rgba(${r},${g},${b},${alpha})`;
+                };
+                const transparentBody = hexToRgba(bodyColor, 0.5);
+
+                series = chartRef.current!.addSeries(CandlestickSeries, {
+                    upColor: transparentBody,
+                    downColor: transparentBody,
+                    borderUpColor: bodyColor,
+                    borderDownColor: bodyColor,
+                    wickUpColor: bodyColor,
+                    wickDownColor: bodyColor,
                     priceScaleId: 'left',
                     priceLineVisible: false,
                     lastValueVisible: false,
                     title: `${strike} Meet`,
                 });
-                series.setData(meetData);
+                series.setData(meetOhlcData as any);
                 meetSeriesRefs.current.set(strike, series);
             });
         } else if (chartRef.current) {
@@ -1312,6 +1358,15 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
             if (spotLtp) {
                 const meetColors = ['#f59e0b', '#a78bfa', '#34d399', '#f472b6', '#60a5fa'];
                 let colorIdx = 0;
+                const periodSeconds = timeframe * 60;
+
+                const hexToRgba = (hex: string, alpha: number) => {
+                    const r = parseInt(hex.slice(1, 3), 16);
+                    const g = parseInt(hex.slice(3, 5), 16);
+                    const b = parseInt(hex.slice(5, 7), 16);
+                    return `rgba(${r},${g},${b},${alpha})`;
+                };
+
                 strikes.forEach(strike => {
                     const ceSymbol = getSymbol(strike, 'CE');
                     const peSymbol = getSymbol(strike, 'PE');
@@ -1325,19 +1380,47 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
 
                     if (ceLtp !== undefined && peLtp !== undefined) {
                         const meetValue = spotLtp + (peLtp - ceLtp);
-                        const time = Math.floor((Date.now() / 1000) / (timeframe * 60)) * (timeframe * 60);
+                        const bucketTime = Math.floor((Date.now() / 1000) / periodSeconds) * periodSeconds;
                         const series = meetSeriesRefs.current.get(strike);
                         if (series) {
+                            // Track open/high/low/close per bucket
+                            const live = meetLiveStateRef.current.get(strike);
+                            if (!live || live.time !== bucketTime) {
+                                // New bucket - set open = close = meetValue
+                                meetLiveStateRef.current.set(strike, {
+                                    time: bucketTime,
+                                    open: meetValue,
+                                    high: meetValue,
+                                    low: meetValue,
+                                    close: meetValue,
+                                });
+                            } else {
+                                // Same bucket - update high/low/close
+                                live.high = Math.max(live.high, meetValue);
+                                live.low = Math.min(live.low, meetValue);
+                                live.close = meetValue;
+                            }
+                            const state = meetLiveStateRef.current.get(strike)!;
+
                             // Dynamic color based on meet vs spot
                             const threshold = Math.max(5, spotLtp * 0.0002);
-                            let lineColor = baseColor;
+                            let bodyColor = baseColor;
                             if (meetValue > spotLtp + threshold) {
-                                lineColor = '#ef4444'; // PE expensive - bearish
+                                bodyColor = '#ef4444';
                             } else if (meetValue < spotLtp - threshold) {
-                                lineColor = '#22c55e'; // CE expensive - bullish
+                                bodyColor = '#22c55e';
                             }
-                            series.applyOptions({ color: lineColor });
-                            series.update({ time: time as any, value: meetValue });
+                            const transparentBody = hexToRgba(bodyColor, 0.5);
+
+                            series.applyOptions({
+                                upColor: transparentBody,
+                                downColor: transparentBody,
+                                borderUpColor: bodyColor,
+                                borderDownColor: bodyColor,
+                                wickUpColor: bodyColor,
+                                wickDownColor: bodyColor,
+                            });
+                            series.update({ time: state.time as any, open: state.open, high: state.high, low: state.low, close: state.close });
                         }
                     }
                 });
