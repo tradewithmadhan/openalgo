@@ -315,7 +315,7 @@ function Madhan01Inner() {
         setRefreshTrigger(prev => prev + 1)
         fetchPrevDayOi()
         fetchLiveData()
-        showToast.success(`${instrument} data updated`)
+        showToast.success(`${instrument} data updated`, 'system', { duration: 1000 })
       }
     }
     const handleBankniftyUpdate = (data: { instrument: string }) => {
@@ -323,13 +323,13 @@ function Madhan01Inner() {
         setRefreshTrigger(prev => prev + 1)
         fetchPrevDayOi()
         fetchLiveData()
-        showToast.success(`${instrument} data updated`)
+        showToast.success(`${instrument} data updated`, 'system', { duration: 1000 })
       }
     }
     const handleStatusChanged = (data: { status: string; is_running: boolean }) => {
       fetchStatus()
       if (!data.is_running && data.status.startsWith('Stopped')) {
-        showToast.info(`Fetcher: ${data.status}`)
+        showToast.info(`Fetcher: ${data.status}`, 'system', { duration: 1000 })
       }
     }
 

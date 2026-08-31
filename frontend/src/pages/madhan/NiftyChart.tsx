@@ -42,6 +42,8 @@ import { useProfileMenuItems } from '@/hooks/useProfileMenuItems'
 import { useMadhanTheme } from './useMadhanTheme'
 import { cn } from '@/lib/utils'
 import { setTimeOffset, getTimeOffset } from '@/utils/timeSync'
+import { useSocketContext } from '@/components/socket/SocketProvider'
+import { showToast } from '@/utils/toast'
 import { chartTheme } from './chartTheme'
 import DrawingToolbar from './DrawingToolbar'
 import FloatingDrawingToolbar from './FloatingDrawingToolbar'
@@ -145,6 +147,7 @@ export default function NiftyChart() {
 
 function NiftyChartInner() {
   const { instrument, setInstrument } = useInstrument();
+  const { socket } = useSocketContext()
   const prevInstrumentRef = useRef(instrument)
   const chartContainerRef = useRef<HTMLDivElement | null>(null)
   const chartRef = useRef<IChartApi | null>(null)
@@ -2007,48 +2010,39 @@ function NiftyChartInner() {
   }, [instrument])
 
   useEffect(() => {
-    let timer: ReturnType<typeof setTimeout>
-    let pollInterval: ReturnType<typeof setInterval>
-    let isFetching = false
-    const getServerNow = () => new Date(Date.now() + timeOffsetRef.current)
+    // Initial status fetch on mount
+    fetchNiftyStatus()
+  }, [fetchNiftyStatus])
 
-    const checkAndRefresh = async () => {
-      if (isFetching) return
-      isFetching = true
-      try {
-        const statusData = await fetchNiftyStatus()
-        if (!statusData?.is_running) {
-          clearInterval(pollInterval)
-          return
-        }
-        if (statusData.last_update) {
-          const lastUpdate = new Date(statusData.last_update)
-          const serverNow = getServerNow()
-          if (lastUpdate.getMinutes() === serverNow.getMinutes()) {
-            await refreshChartDataRef.current()
-            setRefreshTrigger((t) => t + 1)
-            clearInterval(pollInterval)
-            scheduleNextMinute()
-          }
-        }
-      } finally {
-        isFetching = false
+  // SocketIO: event-based refresh instead of polling
+  useEffect(() => {
+    if (!socket) return
+
+    const handleDataUpdate = (data: { instrument: string }) => {
+      if (data.instrument === instrument) {
+        fetchNiftyStatus()
+        refreshChartDataRef.current()
+        setRefreshTrigger((t) => t + 1)
+        showToast.success(`${instrument} data updated`, 'system', { duration: 1000 })
+      }
+    }
+    const handleStatusChanged = (data: { status: string; is_running: boolean }) => {
+      fetchNiftyStatus()
+      if (!data.is_running && data.status.startsWith('Stopped')) {
+        showToast.info(`Fetcher: ${data.status}`, 'system', { duration: 1000 })
       }
     }
 
-    const scheduleNextMinute = () => {
-      clearTimeout(timer)
-      const now = getServerNow()
-      const msToNextMinute = (60 - now.getSeconds()) * 1000 - now.getMilliseconds()
-      timer = setTimeout(() => {
-        pollInterval = setInterval(checkAndRefresh, 1000)
-      }, Math.max(0, msToNextMinute))
-    }
+    socket.on('nifty_data_updated', handleDataUpdate)
+    socket.on('banknifty_data_updated', handleDataUpdate)
+    socket.on('fetcher_status_changed', handleStatusChanged)
 
-    checkAndRefresh()
-    scheduleNextMinute()
-    return () => { clearTimeout(timer); clearInterval(pollInterval) }
-  }, [fetchNiftyStatus, instrument])
+    return () => {
+      socket.off('nifty_data_updated', handleDataUpdate)
+      socket.off('banknifty_data_updated', handleDataUpdate)
+      socket.off('fetcher_status_changed', handleStatusChanged)
+    }
+  }, [socket, instrument, fetchNiftyStatus])
 
   useEffect(() => {
     const live = wsData.get(`NSE_INDEX:${instrument}`)

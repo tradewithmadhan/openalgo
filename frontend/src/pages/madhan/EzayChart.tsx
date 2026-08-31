@@ -45,6 +45,8 @@ import WidgetBar from './WidgetBar'
 import { PositionLinePrimitive, type PositionDatum, OrderLinePrimitive, type OrderLineDatum, VolumeProfilePrimitive } from './chartPrimitives'
 import { useOrderEventRefresh } from '@/hooks/useOrderEventRefresh'
 import { useInstrument, InstrumentProvider, type Instrument } from './InstrumentContext'
+import { useSocketContext } from '@/components/socket/SocketProvider'
+import { showToast } from '@/utils/toast'
 
 import EzaySignals, { type SignalRow, type FirstSignalInfo, type BackendSignals } from './components/EzaySignals'
 import QuickTradePanel from './components/QuickTradePanel'
@@ -215,6 +217,7 @@ export default function EzayChart() {
 
 function EzayChartInner() {
   const { instrument, strikeStep, setInstrument } = useInstrument();
+  const { socket } = useSocketContext()
   const instrumentRef = useRef(instrument)
   useEffect(() => { instrumentRef.current = instrument }, [instrument])
   const chartContainerRef = useRef<HTMLDivElement | null>(null)
@@ -1946,61 +1949,44 @@ function EzayChartInner() {
   useEffect(() => {
     if (updaterRef.current) window.clearTimeout(updaterRef.current)
     if (isBacktest) return
+    // Initial data fetch on mount
+    if (selectedStrike) {
+      updateLiveData()
+      refetchSignals()
+    }
+  }, [selectedStrike, updateLiveData, isBacktest, instrument, refetchSignals])
 
-    let timer = 0
-    let pollInterval = 0
-    let isFetching = false
-    const getServerNow = () => new Date(Date.now() + timeOffsetRef.current)
+  // SocketIO: event-based refresh instead of polling
+  useEffect(() => {
+    if (!socket || isBacktest) return
 
-    const fetchStatusAndCheck = async () => {
-      if (isFetching) return
-      isFetching = true
-      try {
-        const res = await fetch(`/madhan/api/nifty/status?instrument=${instrument}&_=${Date.now()}`)
-        const json = await res.json()
-        if (json?.status === 'success' && json?.server_time) {
-          const serverMs = new Date(json.server_time).getTime()
-          timeOffsetRef.current = serverMs - Date.now()
-          setTimeOffset(timeOffsetRef.current)
-        }
-        if (!json?.is_running) {
-          if (fetcherRunningRef.current) setFetcherRunning(false)
-          fetcherRunningRef.current = false
-          window.clearInterval(pollInterval)
-          return
-        }
-        if (json?.status === 'success' && json?.is_running && json?.last_update) {
-          if (!fetcherRunningRef.current) setFetcherRunning(true)
-          fetcherRunningRef.current = true
-          const lastUpdate = new Date(json.last_update)
-          const serverNow = getServerNow()
-            if (lastUpdate.getMinutes() === serverNow.getMinutes()) {
-              await updateLiveData()
-              await refetchSignals()
-              window.clearInterval(pollInterval)
-              scheduleNextMinute()
-            }
-        }
-      } catch {} finally {
-        isFetching = false
+    const handleDataUpdate = (data: { instrument: string }) => {
+      if (data.instrument === instrument && selectedStrike) {
+        updateLiveData()
+        refetchSignals()
+        showToast.success(`${instrument} data updated`, 'system', { duration: 1000 })
+      }
+    }
+    const handleStatusChanged = (data: { status: string; is_running: boolean }) => {
+      if (fetcherRunningRef.current !== data.is_running) {
+        setFetcherRunning(data.is_running)
+        fetcherRunningRef.current = data.is_running
+      }
+      if (!data.is_running && data.status.startsWith('Stopped')) {
+        showToast.info(`Fetcher: ${data.status}`, 'system', { duration: 1000 })
       }
     }
 
-    const scheduleNextMinute = () => {
-      window.clearTimeout(timer)
-      const now = getServerNow()
-      const msToNextMinute = (60 - now.getSeconds()) * 1000 - now.getMilliseconds()
-      timer = window.setTimeout(() => {
-        pollInterval = window.setInterval(fetchStatusAndCheck, 1000)
-      }, Math.max(0, msToNextMinute))
-    }
+    socket.on('nifty_data_updated', handleDataUpdate)
+    socket.on('banknifty_data_updated', handleDataUpdate)
+    socket.on('fetcher_status_changed', handleStatusChanged)
 
-    if (selectedStrike) {
-      fetchStatusAndCheck()
-      scheduleNextMinute()
+    return () => {
+      socket.off('nifty_data_updated', handleDataUpdate)
+      socket.off('banknifty_data_updated', handleDataUpdate)
+      socket.off('fetcher_status_changed', handleStatusChanged)
     }
-    return () => { window.clearTimeout(timer); window.clearInterval(pollInterval) }
-  }, [selectedStrike, updateLiveData, isBacktest, instrument])
+  }, [socket, instrument, selectedStrike, updateLiveData, refetchSignals, isBacktest])
 
   useEffect(() => {
     if (!strikeListRef.current || !selectedStrike) return

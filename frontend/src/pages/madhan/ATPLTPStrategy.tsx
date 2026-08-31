@@ -40,6 +40,7 @@ import { useThemeStore } from '@/stores/themeStore'
 import { useProfileMenuItems } from '@/hooks/useProfileMenuItems'
 import { useMadhanTheme } from './useMadhanTheme'
 import { useInstrument, InstrumentProvider, type Instrument } from './InstrumentContext'
+import { useSocketContext } from '@/components/socket/SocketProvider'
 import Plot from '@/lib/Plot2D'
 
 interface ATPLTPData {
@@ -70,6 +71,7 @@ export default function ATPLTPStrategy() {
 
 function ATPLTPStrategyInner() {
   const { instrument, setInstrument } = useInstrument();
+  const { socket } = useSocketContext()
   const navigate = useNavigate()
   const { user } = useAuthStore()
   const { appMode, toggleAppMode, isTogglingMode } = useThemeStore()
@@ -185,57 +187,36 @@ function ATPLTPStrategyInner() {
 
   useEffect(() => {
     fetchATPLTPData()
+  }, [fetchATPLTPData])
 
-    let timer: ReturnType<typeof setTimeout>
-    let pollInterval: ReturnType<typeof setInterval>
-    let isFetching = false
-    const getServerNow = () => new Date(Date.now() + timeOffsetRef.current)
+  // SocketIO: event-based refresh instead of polling
+  useEffect(() => {
+    if (!socket) return
 
-    const fetchStatusAndCheck = async () => {
-      if (isFetching) return
-      isFetching = true
-      try {
-        const res = await fetch(`/madhan/api/nifty/status?instrument=${instrument}&_=${Date.now()}`)
-        const json = await res.json()
-        if (json?.status === 'success' && json?.server_time) {
-          const serverMs = new Date(json.server_time).getTime()
-          timeOffsetRef.current = serverMs - Date.now()
-        }
-        if (!json?.is_running) {
-          setFetcherRunning(false)
-          setStatusMessage(json?.message || 'Stopped')
-          clearInterval(pollInterval)
-          return
-        }
-        if (json?.status === 'success' && json?.is_running && json?.last_update) {
-          setFetcherRunning(true)
-          setStatusMessage(json?.message || 'Running')
-          const lastUpdate = new Date(json.last_update)
-          const serverNow = getServerNow()
-          if (lastUpdate.getMinutes() === serverNow.getMinutes()) {
-            await fetchATPLTPData()
-            clearInterval(pollInterval)
-            scheduleNextMinute()
-          }
-        }
-      } catch {} finally {
-        isFetching = false
+    const handleDataUpdate = (data: { instrument: string }) => {
+      if (data.instrument === instrument) {
+        fetchATPLTPData()
+        showToast.success(`${instrument} data updated`, 'system', { duration: 1000 })
+      }
+    }
+    const handleStatusChanged = (data: { status: string; is_running: boolean }) => {
+      setFetcherRunning(data.is_running)
+      setStatusMessage(data.status)
+      if (!data.is_running && data.status.startsWith('Stopped')) {
+        showToast.info(`Fetcher: ${data.status}`, 'system', { duration: 1000 })
       }
     }
 
-    const scheduleNextMinute = () => {
-      clearTimeout(timer)
-      const now = getServerNow()
-      const msToNextMinute = (60 - now.getSeconds()) * 1000 - now.getMilliseconds()
-      timer = setTimeout(() => {
-        pollInterval = setInterval(fetchStatusAndCheck, 1000)
-      }, Math.max(0, msToNextMinute))
-    }
+    socket.on('nifty_data_updated', handleDataUpdate)
+    socket.on('banknifty_data_updated', handleDataUpdate)
+    socket.on('fetcher_status_changed', handleStatusChanged)
 
-    fetchStatusAndCheck()
-    scheduleNextMinute()
-    return () => { clearTimeout(timer); clearInterval(pollInterval) }
-  }, [fetchATPLTPData, instrument])
+    return () => {
+      socket.off('nifty_data_updated', handleDataUpdate)
+      socket.off('banknifty_data_updated', handleDataUpdate)
+      socket.off('fetcher_status_changed', handleStatusChanged)
+    }
+  }, [socket, instrument, fetchATPLTPData])
 
   useEffect(() => {
     if (!wsData || wsData.size === 0) return
