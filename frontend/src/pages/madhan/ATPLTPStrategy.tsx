@@ -14,6 +14,7 @@ import {
   Clock
 } from 'lucide-react'
 import { showToast } from '@/utils/toast'
+import { getTimeOffset } from '@/utils/timeSync'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -187,7 +188,17 @@ function ATPLTPStrategyInner() {
 
   useEffect(() => {
     fetchATPLTPData()
-  }, [fetchATPLTPData])
+    // Sync server time offset for live spot marker
+    fetch(`/madhan/api/nifty/status?instrument=${instrument}&_=${Date.now()}`)
+      .then((r) => r.json())
+      .then((json) => {
+        if (json?.status === 'success' && json.server_time) {
+          const serverMs = new Date(json.server_time).getTime()
+          timeOffsetRef.current = serverMs - Date.now()
+        }
+      })
+      .catch(() => {})
+  }, [fetchATPLTPData, instrument])
 
   // SocketIO: event-based refresh instead of polling
   useEffect(() => {
