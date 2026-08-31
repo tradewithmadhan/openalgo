@@ -144,7 +144,7 @@ def ws_get_quotes(symbol: str, exchange: str) -> dict:
 
     Returns OpenAlgo quote format or empty dict.
     """
-    ticks = _ws_fetch_ticks([{"exchange": exchange, "symbol": symbol}], mode="Quote")
+    ticks = _ws_fetch_ticks([{"exchange": exchange, "symbol": symbol}], mode="Depth")
     key = f"{exchange}:{symbol}"
     data = ticks.get(key, {})
     if not data:
@@ -181,7 +181,7 @@ def ws_get_multiquotes(symbols: list[dict]) -> list:
         List of {"symbol", "exchange", "data": {...}}
     """
     ws_symbols = [{"exchange": s["exchange"], "symbol": s["symbol"]} for s in symbols]
-    ticks = _ws_fetch_ticks(ws_symbols, mode="Quote")
+    ticks = _ws_fetch_ticks(ws_symbols, mode="Depth")
 
     results = []
     for s in symbols:
