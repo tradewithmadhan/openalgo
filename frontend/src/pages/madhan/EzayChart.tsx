@@ -2343,7 +2343,6 @@ function EzayChartInner() {
         </div>
         <div className="h-4 w-px bg-border" />
         <div className="flex items-center gap-1.5">
-          <Label className="text-[11px]" style={{ color: t.textSecondary }}>Time:</Label>
           <Select value={interval} onValueChange={(v) => { setInterval(v); saveSetting('interval', v) }}>
             <SelectTrigger className="h-7 w-16 text-[11px]"><SelectValue /></SelectTrigger>
             <SelectContent>
@@ -2354,7 +2353,6 @@ function EzayChartInner() {
           </Select>
         </div>
         <div className="flex items-center gap-1.5">
-          <Label className="text-[11px]" style={{ color: t.textSecondary }}>Chart:</Label>
           <Select value={chartType} onValueChange={(v) => { setChartType(v as 'candlestick' | 'line'); saveSetting('chartType', v) }}>
             <SelectTrigger className="h-7 w-20 text-[11px]"><SelectValue /></SelectTrigger>
             <SelectContent>
@@ -2362,6 +2360,10 @@ function EzayChartInner() {
               <SelectItem value="line">Line</SelectItem>
             </SelectContent>
           </Select>
+          <div className="flex items-center gap-1">
+            <Checkbox checked={semiTransparent} onCheckedChange={(v) => { setSemiTransparent(!!v); saveSetting('semiTransparent', !!v) }} />
+            <Label className="text-[11px]" style={{ color: t.textSecondary }}>50%</Label>
+          </div>
         </div>
         <div className="flex items-center gap-2">
           <div className="flex items-center gap-1">
@@ -2393,10 +2395,6 @@ function EzayChartInner() {
           <div className="flex items-center gap-1">
             <Checkbox checked={showHC} onCheckedChange={(v) => { setShowHC(!!v); saveSetting('showHC', !!v) }} />
             <Label className="text-[11px]" style={{ color: t.textSecondary }}>HC</Label>
-          </div>
-          <div className="flex items-center gap-1">
-            <Checkbox checked={semiTransparent} onCheckedChange={(v) => { setSemiTransparent(!!v); saveSetting('semiTransparent', !!v) }} />
-            <Label className="text-[11px]" style={{ color: t.textSecondary }}>50% Candles</Label>
           </div>
           <div className="flex items-center rounded border overflow-hidden" style={{ borderColor: t.border }}>
             <Button size="sm" variant="ghost" className="h-6 px-2 text-[10px] rounded-none" style={{ backgroundColor: volumeMode === 'strike' ? (madhanMode === 'dark' ? 'rgba(41,98,255,0.25)' : 'rgba(37,99,235,0.2)') : undefined, color: volumeMode === 'strike' ? (madhanMode === 'dark' ? '#60a5fa' : '#2563eb') : t.textSecondary }} onClick={() => { setVolumeMode('strike'); saveSetting('volumeMode', 'strike') }}>Strike Vol</Button>

@@ -222,6 +222,8 @@ function NiftyChartInner() {
   ])
   const [indicatorInputs, setIndicatorInputs] = useState<Record<string, Record<string, unknown>>>({})
   const [expandedIndicatorKey, setExpandedIndicatorKey] = useState<string | null>(null)
+  const [oiExpanded, setOiExpanded] = useState(false)
+  const [coiExpanded, setCoiExpanded] = useState(false)
   const [showIndicatorPanel, setShowIndicatorPanel] = useState(false)
   const [indicatorPanelPos, setIndicatorPanelPos] = useState({ x: 80, y: 40 })
   const [indicatorPanelWidth, setIndicatorPanelWidth] = useState(320)
@@ -2852,29 +2854,39 @@ function NiftyChartInner() {
           }}>Drawings</Button>
           <div className="flex items-center gap-1.5 rounded border px-1.5 py-0.5">
             <Button variant={oiActive ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={toggleOi}>OI</Button>
-            <Label className="text-[11px]">X%</Label>
-            <Input type="number" min={0} max={100} className="h-7 w-14 px-1 text-[11px]" value={oiX} onChange={(e) => setOiX(Number(e.target.value || 0))} />
-            <div className="flex items-center gap-1">
-              <Checkbox checked={oiShowStrike} onCheckedChange={(v) => setOiShowStrike(!!v)} />
-              <Label className="text-[11px]">Labels</Label>
-            </div>
-            <div className="flex items-center gap-1">
-              <Checkbox checked={oiShowValues} onCheckedChange={(v) => setOiShowValues(!!v)} />
-              <Label className="text-[11px]">Values</Label>
-            </div>
+            <button className="text-sm text-muted-foreground hover:text-foreground leading-none" onClick={() => setOiExpanded((v) => !v)}>{oiExpanded ? '\u25C2' : '\u25B8'}</button>
+            {oiExpanded && (
+              <>
+                <Label className="text-[11px]">X%</Label>
+                <Input type="number" min={0} max={100} className="h-7 w-14 px-1 text-[11px]" value={oiX} onChange={(e) => setOiX(Number(e.target.value || 0))} />
+                <div className="flex items-center gap-1">
+                  <Checkbox checked={oiShowStrike} onCheckedChange={(v) => setOiShowStrike(!!v)} />
+                  <Label className="text-[11px]">Labels</Label>
+                </div>
+                <div className="flex items-center gap-1">
+                  <Checkbox checked={oiShowValues} onCheckedChange={(v) => setOiShowValues(!!v)} />
+                  <Label className="text-[11px]">Values</Label>
+                </div>
+              </>
+            )}
           </div>
           <div className="flex items-center gap-1.5 rounded border px-1.5 py-0.5">
             <Button variant={coiActive ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={toggleCoi}>COI</Button>
-            <Label className="text-[11px]">X%</Label>
-            <Input type="number" min={0} max={100} className="h-7 w-14 px-1 text-[11px]" value={coiX} onChange={(e) => setCoiX(Number(e.target.value || 0))} />
-            <div className="flex items-center gap-1">
-              <Checkbox checked={coiShowStrike} onCheckedChange={(v) => setCoiShowStrike(!!v)} />
-              <Label className="text-[11px]">Labels</Label>
-            </div>
-            <div className="flex items-center gap-1">
-              <Checkbox checked={coiShowValues} onCheckedChange={(v) => setCoiShowValues(!!v)} />
-              <Label className="text-[11px]">Values</Label>
-            </div>
+            <button className="text-sm text-muted-foreground hover:text-foreground leading-none" onClick={() => setCoiExpanded((v) => !v)}>{coiExpanded ? '\u25C2' : '\u25B8'}</button>
+            {coiExpanded && (
+              <>
+                <Label className="text-[11px]">X%</Label>
+                <Input type="number" min={0} max={100} className="h-7 w-14 px-1 text-[11px]" value={coiX} onChange={(e) => setCoiX(Number(e.target.value || 0))} />
+                <div className="flex items-center gap-1">
+                  <Checkbox checked={coiShowStrike} onCheckedChange={(v) => setCoiShowStrike(!!v)} />
+                  <Label className="text-[11px]">Labels</Label>
+                </div>
+                <div className="flex items-center gap-1">
+                  <Checkbox checked={coiShowValues} onCheckedChange={(v) => setCoiShowValues(!!v)} />
+                  <Label className="text-[11px]">Values</Label>
+                </div>
+              </>
+            )}
           </div>
           <Button variant={coiHistoryActive ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={toggleCoiHistory}>COI Hist</Button>
           <Button variant={writersViewActive ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={toggleWritersView}>Writers View</Button>
