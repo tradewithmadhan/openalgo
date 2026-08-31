@@ -17,7 +17,17 @@ from utils.logging import get_logger
 logger = get_logger(__name__)
 
 # Max time to wait for ticks after subscribe
-TICK_TIMEOUT = 2.0
+TICK_TIMEOUT = 5.0
+
+# Kite personal API only supports streaming NSE equities reliably.
+# Indices use NSE on the Kite side (not NSE_INDEX).
+# F&O / BFO / CDS / BSE equities may not stream via personal WS.
+_KITE_EXCHANGE_MAP = {
+    "NSE_INDEX": "NSE",
+    "BSE_INDEX": "BSE",
+    "MCX_INDEX": "MCX",
+    "GLOBAL_INDEX": "GLOBAL",
+}
 
 
 def _get_ws_url():
@@ -35,8 +45,33 @@ def _get_api_key():
     return None
 
 
+def _resolve_kite_exchange(oa_exchange: str, symbol: str) -> tuple[str, str]:
+    """Resolve OA exchange/symbol to Kite broker exchange/symbol for WS subscribe.
+
+    Returns (kite_exchange, brsymbol) tuple.
+    The adapter's get_token(symbol, exchange) uses the OA exchange, so we keep
+    the OA-side symbol/exchange for the WS proxy subscribe message. This
+    mapping is only used for logging and fallback.
+    """
+    try:
+        from database.token_db import get_br_symbol, get_symbol_info
+        brsymbol = get_br_symbol(symbol, oa_exchange)
+        if brsymbol:
+            info = get_symbol_info(symbol, oa_exchange)
+            if info and info.brexchange:
+                return info.brexchange, brsymbol
+    except Exception as e:
+        logger.debug(f"Token lookup failed for {symbol}@{oa_exchange}: {e}")
+    # Fallback: use static exchange map, keep original symbol
+    kite_exchange = _KITE_EXCHANGE_MAP.get(oa_exchange, oa_exchange)
+    return kite_exchange, symbol
+
+
 def _ws_fetch_ticks(symbols: list[dict], mode: str = "Quote") -> dict:
     """Connect to WS proxy, subscribe, and collect ticks for symbols.
+
+    Resolves OA exchange/symbol to the correct token before subscribing,
+    matching the mapping used by the WS adapter.
 
     Args:
         symbols: List of {"exchange": "NSE", "symbol": "INFY"}
@@ -52,6 +87,21 @@ def _ws_fetch_ticks(symbols: list[dict], mode: str = "Quote") -> dict:
 
     ws_url = _get_ws_url()
 
+    resolved_symbols = []
+    for s in symbols:
+        oa_exchange = s["exchange"]
+        oa_symbol = s["symbol"]
+        kite_exchange, brsymbol = _resolve_kite_exchange(oa_exchange, oa_symbol)
+        logger.debug(
+            f"WS fetch resolve: {oa_symbol}@{oa_exchange} -> {brsymbol}@{kite_exchange}"
+        )
+        resolved_symbols.append({
+            "exchange": oa_exchange,
+            "symbol": oa_symbol,
+            "_kite_exchange": kite_exchange,
+            "_brsymbol": brsymbol,
+        })
+
     collected = {}
     lock = threading.Lock()
     auth_done = threading.Event()
@@ -64,11 +114,10 @@ def _ws_fetch_ticks(symbols: list[dict], mode: str = "Quote") -> dict:
 
         if msg_type == "auth" and data.get("status") == "success":
             auth_done.set()
-            # Subscribe immediately after auth
             ws.send(json.dumps({
                 "action": "subscribe",
                 "mode": mode,
-                "symbols": symbols,
+                "symbols": [{"exchange": s["exchange"], "symbol": s["symbol"]} for s in resolved_symbols],
             }))
 
         elif msg_type == "subscribe":
