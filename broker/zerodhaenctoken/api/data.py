@@ -174,6 +174,8 @@ class BrokerData:
 
         # Map common timeframe format to Zerodha intervals
         self.timeframe_map = {
+            # Seconds
+            "5s": "5second",
             # Minutes
             "1m": "minute",
             "3m": "3minute",
@@ -419,8 +421,14 @@ class BrokerData:
             # Initialize empty list to store DataFrames
             dfs = []
 
-            # Kite per-request limits: 2000 days for `day`, 60 days for everything else.
-            chunk_days = 2000 if resolution == "day" else 60
+            # Kite per-request limits: 2000 days for `day`, 60 days for intraday.
+            # 5second candles are heavy — limit to 5 days per request.
+            if resolution == "day":
+                chunk_days = 2000
+            elif resolution == "5second":
+                chunk_days = 5
+            else:
+                chunk_days = 60
             current_start = start_date
             while current_start <= end_date:
                 current_end = min(current_start + timedelta(days=chunk_days - 1), end_date)
