@@ -426,7 +426,7 @@ class BrokerData:
             if resolution == "day":
                 chunk_days = 2000
             elif resolution == "5second":
-                chunk_days = 5
+                chunk_days = 30
             else:
                 chunk_days = 60
             current_start = start_date
