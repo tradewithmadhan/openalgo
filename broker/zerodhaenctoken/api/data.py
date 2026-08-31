@@ -4,6 +4,7 @@ import time
 import urllib.parse
 from datetime import datetime, timedelta
 
+import httpx
 import pandas as pd
 
 from broker.zerodhaenctoken.database.master_contract_db import SymToken, db_session
@@ -104,22 +105,27 @@ def get_api_response(endpoint, auth, method="GET", payload=None):
         return {"status": "success", "data": {}}
 
     try:
-        # Log the complete request details for debugging
-        # logger.info("=== API Request Details ===")
-        # logger.info(f"URL: {url}")
-        # logger.info(f"Method: {method}")
-        # logger.info(f"Headers: {json.dumps(headers, indent=2)}")
         if payload:
             logger.debug(f"Payload: {json.dumps(payload, indent=2)}")
 
-        # Make the request using the shared client
-        if method.upper() == "GET":
-            response = client.get(url, headers=headers)
-        elif method.upper() == "POST":
-            headers["Content-Type"] = "application/json"
-            response = client.post(url, headers=headers, json=payload)
-        else:
-            raise ZerodhaAPIError(f"Unsupported HTTP method: {method}")
+        # Retry transient network errors (stale HTTP/2 connections)
+        for attempt in range(3):
+            try:
+                if method.upper() == "GET":
+                    response = client.get(url, headers=headers)
+                elif method.upper() == "POST":
+                    headers["Content-Type"] = "application/json"
+                    response = client.post(url, headers=headers, json=payload)
+                else:
+                    raise ZerodhaAPIError(f"Unsupported HTTP method: {method}")
+                break  # success
+            except (httpx.ReadError, httpx.ConnectError, httpx.RemoteProtocolError) as e:
+                logger.warning(f"Transient network error (attempt {attempt + 1}/3): {e}")
+                if attempt < 2:
+                    time.sleep(0.5)
+                    client = httpx.Client(timeout=30)
+                else:
+                    raise
 
         # Log the complete response
         # logger.info("=== API Response Details ===")
