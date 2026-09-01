@@ -276,6 +276,8 @@ function EzayChartInner() {
   const intervalRef = useRef('1m')
   const showSignalsRef = useRef(true)
   const showHCRef = useRef(false)
+  const showCERef = useRef(true)
+  const showPERef = useRef(true)
 
   const loadSetting = (key: string, fallback: any) => {
     try { const v = localStorage.getItem(`ezay_${key}`); return v !== null ? JSON.parse(v) : fallback } catch { return fallback }
@@ -444,12 +446,10 @@ function EzayChartInner() {
     const syms: Array<{ symbol: string; exchange: string }> = [
       { symbol: instrument, exchange: 'NSE_INDEX' },
     ]
-    if (fetcherRunning) {
-      if (ceSymbol) syms.push({ symbol: ceSymbol, exchange: 'NFO' })
-      if (peSymbol) syms.push({ symbol: peSymbol, exchange: 'NFO' })
-    }
+    if (ceSymbol) syms.push({ symbol: ceSymbol, exchange: 'NFO' })
+    if (peSymbol) syms.push({ symbol: peSymbol, exchange: 'NFO' })
     return syms
-  }, [ceSymbol, peSymbol, isBacktest, fetcherRunning])
+  }, [ceSymbol, peSymbol, isBacktest, instrument])
 
   const { data: wsData, isConnected } = useMarketData({ symbols: wsSymbols, mode: 'LTP' })
 
@@ -562,12 +562,12 @@ function EzayChartInner() {
     // CE/PE close-price line series — always visible for position/order primitives, line shows only when CE/PE toggle OFF
     ceLineRef.current = chart.addSeries(LineSeries, {
       color: 'rgba(41,98,255,0.5)', lineWidth: 1,
-      visible: !showCE,
+      visible: !showCERef.current,
       priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
     } as any)
     peLineRef.current = chart.addSeries(LineSeries, {
       color: 'rgba(224,64,251,0.5)', lineWidth: 1,
-      visible: !showPE,
+      visible: !showPERef.current,
       priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
     } as any)
 
@@ -1569,6 +1569,8 @@ function EzayChartInner() {
       if (combinedExtrinsicRef.current) combinedExtrinsicRef.current.applyOptions({ visible: showCombinedAll })
       if (ceSeriesRef.current) ceSeriesRef.current.applyOptions({ visible: showCE })
       if (peSeriesRef.current) peSeriesRef.current.applyOptions({ visible: showPE })
+      if (ceLineRef.current) ceLineRef.current.applyOptions({ visible: !showCE } as any)
+      if (peLineRef.current) peLineRef.current.applyOptions({ visible: !showPE } as any)
       if (showVPRef.current) {
         ceVpRef.current?.setVisible(showCE)
         peVpRef.current?.setVisible(showPE)
@@ -1591,6 +1593,8 @@ function EzayChartInner() {
       if (combinedExtrinsicRef.current) combinedExtrinsicRef.current.applyOptions({ visible: showCombinedAll })
       if (ceSeriesRef.current) ceSeriesRef.current.applyOptions({ visible: showCE })
       if (peSeriesRef.current) peSeriesRef.current.applyOptions({ visible: showPE })
+      if (ceLineRef.current) ceLineRef.current.applyOptions({ visible: !showCE } as any)
+      if (peLineRef.current) peLineRef.current.applyOptions({ visible: !showPE } as any)
       if (showVPRef.current) {
         ceVpRef.current?.setVisible(showCE)
         peVpRef.current?.setVisible(showPE)
@@ -1652,10 +1656,12 @@ function EzayChartInner() {
   }, [showCombinedAll])
 
   useEffect(() => {
+    showCERef.current = showCE
+    showPERef.current = showPE
     showSignalsRef.current = showSignals
     showHCRef.current = showHC
     applyData()
-  }, [showSignals, showHC, applyData])
+  }, [showCE, showPE, showSignals, showHC, applyData])
 
   // Signals + hx_lx_vol data consumed by Total Volume, TrustMe, and EzaySignals
   // Extracted as useCallback so the live polling can re-fetch every minute
@@ -1847,6 +1853,8 @@ function EzayChartInner() {
       if (combinedExtrinsicRef.current) combinedExtrinsicRef.current.applyOptions({ visible: showCombinedAll })
       if (ceSeriesRef.current) ceSeriesRef.current.applyOptions({ visible: showCE })
       if (peSeriesRef.current) peSeriesRef.current.applyOptions({ visible: showPE })
+      if (ceLineRef.current) ceLineRef.current.applyOptions({ visible: !showCE } as any)
+      if (peLineRef.current) peLineRef.current.applyOptions({ visible: !showPE } as any)
       // Restore volume mode visibility
       const isTotal = volumeMode === 'total'
       if (volumeRef.current) volumeRef.current.applyOptions({ visible: !isTotal })
@@ -2223,7 +2231,7 @@ function EzayChartInner() {
         }
       }
     }
-  }, [wsData, ceSymbol, peSymbol, volumeMode])
+  }, [wsData, ceSymbol, peSymbol, volumeMode, instrument])
 
   const loadStrikes = async () => {
     try {
