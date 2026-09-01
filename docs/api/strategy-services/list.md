@@ -70,7 +70,12 @@ curl -X POST http://127.0.0.1:5000/api/v1/strategy/list \
       "status": "running",
       "current_run_id": 42,
       "created_at": "2026-08-24T04:11:52.104883+00:00",
-      "updated_at": "2026-08-30T03:50:11.482913+00:00"
+      "updated_at": "2026-08-30T03:50:11.482913+00:00",
+      "last_finalized_run": {
+        "id": 41,
+        "pnl_realized": 1250.0,
+        "stopped_at": "2026-08-29T09:40:11.482913+00:00"
+      }
     },
     {
       "id": 4,
@@ -97,7 +102,12 @@ curl -X POST http://127.0.0.1:5000/api/v1/strategy/list \
       "status": "stopped",
       "current_run_id": null,
       "created_at": "2026-08-18T06:02:19.775410+00:00",
-      "updated_at": "2026-08-18T06:02:19.775410+00:00"
+      "updated_at": "2026-08-18T06:02:19.775410+00:00",
+      "last_finalized_run": {
+        "id": 16,
+        "pnl_realized": -52.0,
+        "stopped_at": "2026-08-18T06:02:19.775410+00:00"
+      }
     }
   ]
 }
@@ -142,6 +152,7 @@ Each object in `data`:
 | strategy_type | string | `intraday` or `positional` |
 | entry_time | string or null | IST entry time as `HH:MM` |
 | exit_time | string or null | IST square-off time as `HH:MM` |
+| risk_unit | string | `points` (default) or `percent`. Governs `sl_pts`, `target_pts` and `trail` together. A percentage is measured against the leg's own entry price, so 2 on a short filled at 2500 is a stop at 2550. Absent means points |
 | product | string | `CNC`, `NRML` or `MIS`, as configured. It is read as the intent rather than the literal when an order goes out: `MIS` is intraday everywhere, anything else means carry, which is sent as `NRML` on a derivatives venue and `CNC` on cash. See the `product` field on [`/orders`](./orders.md) for what was actually sent |
 | pricetype | string | `MARKET`. Neither the strategy nor a leg carries a price, so a LIMIT, SL or SL-M order would go out priced at zero; exits are MARKET on every path regardless |
 | overall_sl_mtm | number or null | Strategy-level stop loss in rupees of MTM |
@@ -157,6 +168,7 @@ Each object in `data`:
 | current_run_id | integer or null | The run this strategy is executing, if any |
 | created_at | string | ISO 8601 UTC |
 | updated_at | string | ISO 8601 UTC |
+| last_finalized_run | object or null | Most recently finalised run: `{id, pnl_realized, stopped_at}`. For a stopped strategy, `pnl_realized` is the durable final P&L and unrealised P&L is zero; do not infer final P&L from an earlier checkpoint |
 
 ## Notes
 
@@ -166,6 +178,7 @@ Each object in `data`:
 - No response here or anywhere else on this surface carries a webhook token. Only its SHA-256 digest is stored, so there is nothing to return.
 - An out-of-vocabulary `status` is a 400, not an empty list.
 - `status` and `q` may be sent as `null` explicitly; that is the same as omitting them.
+- A checkpoint is a live mark only. After a run stops, use `last_finalized_run.pnl_realized` as the final total; its unrealised P&L is `0.00` because the run has confirmed flatness.
 
 ## Use Cases
 
