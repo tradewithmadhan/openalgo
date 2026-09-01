@@ -433,7 +433,6 @@ function EzayChartInner() {
     setIrStrikes(signals.ir)
   }, [])
 
-  const [fetcherRunning, setFetcherRunning] = useState(false)
   const fetcherRunningRef = useRef(false)
   const [isPlacingOrder, setIsPlacingOrder] = useState(false)
   const isPlacingOrderRef = useRef(false)
@@ -1991,7 +1990,6 @@ function EzayChartInner() {
     }
     const handleStatusChanged = (data: { status: string; is_running: boolean }) => {
       if (fetcherRunningRef.current !== data.is_running) {
-        setFetcherRunning(data.is_running)
         fetcherRunningRef.current = data.is_running
       }
       if (!data.is_running && data.status.startsWith('Stopped')) {
