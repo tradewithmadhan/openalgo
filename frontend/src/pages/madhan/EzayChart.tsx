@@ -561,11 +561,13 @@ function EzayChartInner() {
 
     // CE/PE close-price line series — always visible for position/order primitives, line shows only when CE/PE toggle OFF
     ceLineRef.current = chart.addSeries(LineSeries, {
-      color: 'rgba(41,98,255,0.5)', lineWidth: showCE ? 0 : 1,
+      color: 'rgba(41,98,255,0.5)', lineWidth: 1,
+      visible: !showCE,
       priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
     } as any)
     peLineRef.current = chart.addSeries(LineSeries, {
-      color: 'rgba(224,64,251,0.5)', lineWidth: showPE ? 0 : 1,
+      color: 'rgba(224,64,251,0.5)', lineWidth: 1,
+      visible: !showPE,
       priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
     } as any)
 
@@ -1630,8 +1632,8 @@ function EzayChartInner() {
   useEffect(() => {
     if (ceSeriesRef.current) ceSeriesRef.current.applyOptions({ visible: showCE })
     if (peSeriesRef.current) peSeriesRef.current.applyOptions({ visible: showPE })
-    if (ceLineRef.current) ceLineRef.current.applyOptions({ lineWidth: showCE ? 0 : 1 } as any)
-    if (peLineRef.current) peLineRef.current.applyOptions({ lineWidth: showPE ? 0 : 1 } as any)
+    if (ceLineRef.current) ceLineRef.current.applyOptions({ visible: !showCE } as any)
+    if (peLineRef.current) peLineRef.current.applyOptions({ visible: !showPE } as any)
     if (ceIntrinsicRef.current) ceIntrinsicRef.current.applyOptions({ visible: showIntrinsic && showCE })
     if (peIntrinsicRef.current) peIntrinsicRef.current.applyOptions({ visible: showIntrinsic && showPE })
     if (ceExtrinsicRef.current) ceExtrinsicRef.current.applyOptions({ visible: showExtrinsic && showCE })
