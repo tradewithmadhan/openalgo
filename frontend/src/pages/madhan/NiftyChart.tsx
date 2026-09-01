@@ -162,6 +162,7 @@ function NiftyChartInner() {
   const oiPrimitiveRef = useRef<any>(null)
   const coiPrimitiveRef = useRef<any>(null)
   const priceDataRef = useRef<Candle[]>([])
+  const whitespaceDataRef = useRef<{ time: Time }[]>([])
   const updaterRef = useRef<number | null>(null)
   const timeoutRef = useRef<number | null>(null)
   const oiXRef = useRef(100)
@@ -582,6 +583,26 @@ function NiftyChartInner() {
     if (val.endsWith('m')) return Math.max(1, Number(val.slice(0, -1) || '1')) * 60
     if (val.endsWith('s')) return Math.max(1, Number(val.slice(0, -1) || '1'))
     return 60
+  }
+
+  const generateFutureTimestamps = (lastBarTime: number, intervalSec: number): number[] => {
+    const IST_OFFSET_MS = 5.5 * 3600 * 1000
+    const lastDate = new Date((lastBarTime * 1000) + IST_OFFSET_MS)
+
+    let nextTradingDay = new Date(lastDate)
+    nextTradingDay.setUTCDate(nextTradingDay.getUTCDate() + 1)
+    if (nextTradingDay.getUTCDay() === 0) nextTradingDay.setUTCDate(nextTradingDay.getUTCDate() + 1)
+    if (nextTradingDay.getUTCDay() === 6) nextTradingDay.setUTCDate(nextTradingDay.getUTCDate() + 2)
+
+    const tradingStartMin = 9 * 60 + 15
+    const tradingEndMin = 15 * 60 + 30
+    const nextDayMidnightUTC = Date.UTC(nextTradingDay.getUTCFullYear(), nextTradingDay.getUTCMonth(), nextTradingDay.getUTCDate()) - IST_OFFSET_MS
+    const timestamps: number[] = []
+    for (let min = tradingStartMin; min <= tradingEndMin; min += Math.max(1, Math.round(intervalSec / 60))) {
+      const ts = Math.floor((nextDayMidnightUTC + min * 60 * 1000) / 1000)
+      timestamps.push(ts)
+    }
+    return timestamps
   }
 
   // Aggregate 1-minute candles into the user-selected interval, bucketing on
@@ -1112,8 +1133,8 @@ function NiftyChartInner() {
           const pLow = Math.min(...prevDay.map((x) => x.low))
           const pClose = prevDay[prevDay.length - 1].close
           segments.push({ from: fromTime, to: toTime, price: pOpen, color: 'rgba(0,120,255,0.5)', dashed: true })
-          segments.push({ from: fromTime, to: toTime, price: pHigh, color: '#FF0000', dashed: false })
-          segments.push({ from: fromTime, to: toTime, price: pLow, color: '#0000FF', dashed: false })
+          segments.push({ from: fromTime, to: toTime, price: pHigh, color: 'rgba(255,0,0,0.3)', dashed: false })
+          segments.push({ from: fromTime, to: toTime, price: pLow, color: 'rgba(0,0,255,0.3)', dashed: false })
           segments.push({ from: fromTime, to: toTime, price: pClose, color: '#FFD700', dashed: true })
         }
       }
@@ -1988,10 +2009,20 @@ function NiftyChartInner() {
     const rawData: Candle[] = json?.data || []
     const data = aggregateCandlesByDay(rawData, interval)
     priceDataRef.current = data
-    candleRef.current.setData(data as any)
     ema34Ref.current.setData(calculateEMA(data, 34) as any)
     ema55Ref.current.setData(calculateEMA(data, 55) as any)
     updateIndicatorSeries(data)
+
+    // Inject future whitespace for next trading day so user can draw on empty range
+    const intervalSec = getIntervalSeconds(interval)
+    const futureTs = data.length > 0 ? generateFutureTimestamps(data[data.length - 1].time, intervalSec) : []
+    const whitespace = futureTs.map((t) => ({ time: t as Time }))
+    whitespaceDataRef.current = whitespace
+    candleRef.current.setData([...data as any, ...whitespace])
+    if (data.length > 0 && chartRef.current) {
+      chartRef.current.timeScale().applyOptions({ rightOffset: futureTs.length })
+    }
+
     addHorizontalLines(data)
     applySqrtLevels(data)
 
@@ -2027,10 +2058,9 @@ function NiftyChartInner() {
   refreshChartDataRef.current = refreshChartData
 
   const repaintOverlay = () => {
-    if (!candleRef.current || !priceDataRef.current.length) return
-    const last = priceDataRef.current[priceDataRef.current.length - 1]
-    // Force lightweight-charts to redraw attached primitives immediately.
-    candleRef.current.update(last as any)
+    try { dayOpenRef.current?.requestUpdate?.() } catch {}
+    try { prevOhlcRef.current?.requestUpdate?.() } catch {}
+    try { sqrtPrimitiveRef.current?.requestUpdate?.() } catch {}
   }
 
   const applyRealtimeLtp = useCallback((ltp: number, timestampMs: number) => {
@@ -2044,7 +2074,7 @@ function NiftyChartInner() {
       const firstCandle: Candle = { time: candleTime, open: ltp, high: ltp, low: ltp, close: ltp }
       data.push(firstCandle)
       priceDataRef.current = data
-      candleRef.current.update(firstCandle as any)
+      candleRef.current.setData([...data as any, ...whitespaceDataRef.current])
       ema34Ref.current.setData(calculateEMA(data, 34) as any)
       ema55Ref.current.setData(calculateEMA(data, 55) as any)
       updateIndicatorSeries(data)
@@ -2070,7 +2100,7 @@ function NiftyChartInner() {
     }
 
     priceDataRef.current = data
-    candleRef.current.update(updated as any)
+    candleRef.current.setData([...data as any, ...whitespaceDataRef.current])
     ema34Ref.current.setData(calculateEMA(data, 34) as any)
     ema55Ref.current.setData(calculateEMA(data, 55) as any)
     updateIndicatorSeries(data)
@@ -2079,7 +2109,7 @@ function NiftyChartInner() {
 
   useEffect(() => {
     void refreshChartData().then(() => {
-      if (chartRef.current) chartRef.current.timeScale().scrollToRealTime()
+      if (chartRef.current) chartRef.current.timeScale().scrollToPosition(-30, false)
     })
   }, [interval, instrument])
 
