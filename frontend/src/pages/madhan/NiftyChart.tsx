@@ -157,11 +157,8 @@ function NiftyChartInner() {
   const indicatorSeriesRef = useRef<Map<string, IndicatorSeriesBucket>>(new Map())
   const indicatorPaneRef = useRef<Map<string, any>>(new Map())
   const optionVolumeRef = useRef<ISeriesApi<'Histogram'> | null>(null)
-  const dayOpenRef = useRef<ISeriesApi<'Line'> | null>(null)
-  const prevOpenRef = useRef<ISeriesApi<'Line'> | null>(null)
-  const prevHighRef = useRef<ISeriesApi<'Line'> | null>(null)
-  const prevLowRef = useRef<ISeriesApi<'Line'> | null>(null)
-  const prevCloseRef = useRef<ISeriesApi<'Line'> | null>(null)
+  const dayOpenRef = useRef<any>(null)
+  const prevOhlcRef = useRef<any>(null)
   const oiPrimitiveRef = useRef<any>(null)
   const coiPrimitiveRef = useRef<any>(null)
   const priceDataRef = useRef<Candle[]>([])
@@ -385,22 +382,11 @@ function NiftyChartInner() {
     chart.priceScale('volume').applyOptions({
       scaleMargins: { top: 0.8, bottom: 0 },
     })
-    const dayOpen = chart.addSeries(LineSeries, { color: '#00FF00', lineWidth: 1, title: 'Day Open', visible: dayOpenActive })
-    const prevOpen = chart.addSeries(LineSeries, { color: '#FFA500', lineWidth: 1, title: 'Prev Open', visible: prevOhlcActive })
-    const prevHigh = chart.addSeries(LineSeries, { color: '#0000FF', lineWidth: 1, title: 'Prev High', visible: prevOhlcActive })
-    const prevLow = chart.addSeries(LineSeries, { color: '#FF69B4', lineWidth: 1, title: 'Prev Low', visible: prevOhlcActive })
-    const prevClose = chart.addSeries(LineSeries, { color: '#FF0000', lineWidth: 1, title: 'Prev Close', visible: prevOhlcActive })
-
     chartRef.current = chart
     candleRef.current = candle
     ema34Ref.current = ema34
     ema55Ref.current = ema55
     optionVolumeRef.current = optionVolumeSeries
-    dayOpenRef.current = dayOpen
-    prevOpenRef.current = prevOpen
-    prevHighRef.current = prevHigh
-    prevLowRef.current = prevLow
-    prevCloseRef.current = prevClose
     cePeMarkersRef.current = createSeriesMarkers(candle, [])
     cpMarkersRef.current = createSeriesMarkers(candle, [])
     const thAnchor = chart.addSeries(LineSeries, {
@@ -485,6 +471,14 @@ function NiftyChartInner() {
       chart.unsubscribeCrosshairMove(handleCrosshairOHLCV)
       indicatorSeriesRef.current.clear()
       sqrtPrimitiveRef.current = null
+      if (dayOpenRef.current && candleRef.current) {
+        try { (candleRef.current as any).detachPrimitive(dayOpenRef.current) } catch {}
+      }
+      dayOpenRef.current = null
+      if (prevOhlcRef.current && candleRef.current) {
+        try { (candleRef.current as any).detachPrimitive(prevOhlcRef.current) } catch {}
+      }
+      prevOhlcRef.current = null
       if (oiPrimitiveRef.current && candleRef.current) {
         try { (candleRef.current as any).detachPrimitive(oiPrimitiveRef.current) } catch {}
       }
@@ -971,7 +965,7 @@ function NiftyChartInner() {
   }, [activeIndicators, getIndicatorById, indicatorInputs])
 
   const addHorizontalLines = (data: Candle[]) => {
-    if (!data.length || !dayOpenRef.current || !prevOpenRef.current || !prevHighRef.current || !prevLowRef.current || !prevCloseRef.current) return
+    if (!data.length) return
     const dayGroups: Record<string, Candle[]> = {}
     data.forEach((c) => {
       const key = new Date(c.time * 1000).toDateString()
@@ -981,24 +975,151 @@ function NiftyChartInner() {
     const days = Object.keys(dayGroups).sort((a, b) => +new Date(a) - +new Date(b))
     if (!days.length) return
     Object.values(dayGroups).forEach((arr) => arr.sort((a, b) => a.time - b.time))
-    const currentDay = dayGroups[days[days.length - 1]]
-    const dayOpen = currentDay[0].open
-    let prevOpen = dayOpen
-    let prevHigh = dayOpen
-    let prevLow = dayOpen
-    let prevClose = dayOpen
-    if (days.length > 1) {
-      const prev = dayGroups[days[days.length - 2]]
-      prevOpen = prev[0].open
-      prevHigh = Math.max(...prev.map((x) => x.high))
-      prevLow = Math.min(...prev.map((x) => x.low))
-      prevClose = prev[prev.length - 1].close
+
+    const seriesAny = candleRef.current as any
+    const chartAny = chartRef.current as any
+
+    // Day Open primitive — per-day horizontal segments
+    if (seriesAny && chartAny && !dayOpenRef.current) {
+      const primitive = new (class {
+        _data: any[]
+        _series: any
+        _timeScale: any
+        _show: boolean
+        constructor(series: any, timeScale: any) {
+          this._data = []
+          this._series = series
+          this._timeScale = timeScale
+          this._show = false
+        }
+        paneViews() {
+          const self = this
+          return [{
+            zOrder() { return 'normal' as const },
+            renderer() {
+              return {
+                draw(target: any) {
+                  if (!self._show || !self._data?.length) return
+                  target.useBitmapCoordinateSpace((scope: any) => {
+                    const ctx = scope.context
+                    const hpr = scope.horizontalPixelRatio
+                    const vpr = scope.verticalPixelRatio
+                    for (const seg of self._data) {
+                      const x1 = self._timeScale.timeToCoordinate(seg.from)
+                      if (x1 == null) continue
+                      const x2 = seg.to != null ? self._timeScale.timeToCoordinate(seg.to) : null
+                      const rightX = x2 != null ? x2 * hpr : scope.bitmapSize.width
+                      const y = self._series.priceToCoordinate(seg.price)
+                      if (y == null) continue
+                      ctx.strokeStyle = seg.color
+                      ctx.lineWidth = 1 * vpr
+                      ctx.setLineDash([4 * vpr, 4 * vpr])
+                      ctx.beginPath()
+                      ctx.moveTo(x1 * hpr, y * vpr)
+                      ctx.lineTo(rightX, y * vpr)
+                      ctx.stroke()
+                    }
+                    ctx.setLineDash([])
+                  })
+                },
+              }
+            },
+          }]
+        }
+        setData(v: any[]) { this._data = v || [] }
+        toggle() { this._show = !this._show; return this._show }
+      })(seriesAny, chartAny.timeScale())
+      try { seriesAny.attachPrimitive(primitive) } catch {}
+      dayOpenRef.current = primitive
     }
-    dayOpenRef.current.setData(data.map((d) => ({ time: d.time as any, value: dayOpen })))
-    prevOpenRef.current.setData(data.map((d) => ({ time: d.time as any, value: prevOpen })))
-    prevHighRef.current.setData(data.map((d) => ({ time: d.time as any, value: prevHigh })))
-    prevLowRef.current.setData(data.map((d) => ({ time: d.time as any, value: prevLow })))
-    prevCloseRef.current.setData(data.map((d) => ({ time: d.time as any, value: prevClose })))
+    if (dayOpenRef.current) {
+      const segments: any[] = []
+      for (let d = 0; d < days.length; d++) {
+        const dayArr = dayGroups[days[d]]
+        const dayFirstOpen = dayArr[0]?.open
+        if (!Number.isFinite(dayFirstOpen) || dayFirstOpen <= 0) continue
+        const fromTime = dayArr[0].time
+        const toTime = d < days.length - 1 ? dayGroups[days[d + 1]][0].time : dayArr[dayArr.length - 1].time
+        segments.push({ from: fromTime, to: toTime, price: dayFirstOpen, color: 'rgba(0,120,255,0.5)' })
+      }
+      dayOpenRef.current.setData(segments)
+      repaintOverlay()
+    }
+
+    // Prev OHLC primitive — per-day segments for prev day's OHLC levels
+    if (seriesAny && chartAny && !prevOhlcRef.current) {
+      const primitive = new (class {
+        _data: any[]
+        _series: any
+        _timeScale: any
+        _show: boolean
+        constructor(series: any, timeScale: any) {
+          this._data = []
+          this._series = series
+          this._timeScale = timeScale
+          this._show = false
+        }
+        paneViews() {
+          const self = this
+          return [{
+            zOrder() { return 'normal' as const },
+            renderer() {
+              return {
+                draw(target: any) {
+                  if (!self._show || !self._data?.length) return
+                  target.useBitmapCoordinateSpace((scope: any) => {
+                    const ctx = scope.context
+                    const hpr = scope.horizontalPixelRatio
+                    const vpr = scope.verticalPixelRatio
+                    for (const seg of self._data) {
+                      const x1 = self._timeScale.timeToCoordinate(seg.from)
+                      if (x1 == null) continue
+                      const x2 = seg.to != null ? self._timeScale.timeToCoordinate(seg.to) : null
+                      const rightX = x2 != null ? x2 * hpr : scope.bitmapSize.width
+                      const y = self._series.priceToCoordinate(seg.price)
+                      if (y == null) continue
+                      ctx.strokeStyle = seg.color
+                      ctx.lineWidth = 1 * vpr
+                      ctx.setLineDash(seg.dashed ? [4 * vpr, 4 * vpr] : [])
+                      ctx.beginPath()
+                      ctx.moveTo(x1 * hpr, y * vpr)
+                      ctx.lineTo(rightX, y * vpr)
+                      ctx.stroke()
+                    }
+                    ctx.setLineDash([])
+                  })
+                },
+              }
+            },
+          }]
+        }
+        setData(v: any[]) { this._data = v || [] }
+        toggle() { this._show = !this._show; return this._show }
+      })(seriesAny, chartAny.timeScale())
+      try { seriesAny.attachPrimitive(primitive) } catch {}
+      prevOhlcRef.current = primitive
+    }
+    if (prevOhlcRef.current) {
+      const segments: any[] = []
+      for (let d = 0; d < days.length; d++) {
+        const dayArr = dayGroups[days[d]]
+        const fromTime = dayArr[0].time
+        const toTime = d < days.length - 1 ? dayGroups[days[d + 1]][0].time : dayArr[dayArr.length - 1].time
+        if (d > 0) {
+          const prevDay = dayGroups[days[d - 1]]
+          const pOpen = prevDay[0].open
+          const pHigh = Math.max(...prevDay.map((x) => x.high))
+          const pLow = Math.min(...prevDay.map((x) => x.low))
+          const pClose = prevDay[prevDay.length - 1].close
+          segments.push({ from: fromTime, to: toTime, price: pOpen, color: 'rgba(0,120,255,0.5)', dashed: true })
+          segments.push({ from: fromTime, to: toTime, price: pHigh, color: '#FF0000', dashed: false })
+          segments.push({ from: fromTime, to: toTime, price: pLow, color: '#0000FF', dashed: false })
+          segments.push({ from: fromTime, to: toTime, price: pClose, color: '#FFD700', dashed: true })
+        }
+      }
+      prevOhlcRef.current.setData(segments)
+      repaintOverlay()
+    }
   }
 
   const fetchOiProfiles = async () => {
@@ -1649,8 +1770,8 @@ function NiftyChartInner() {
     Object.values(dayGroups).forEach((arr) => arr.sort((a, b) => a.time - b.time))
 
     const LEVEL_FACTORS = [0.398, 0.5, 0.786, 0.888]
-    const LEVEL_COLORS = ['#fa031c', '#0df214', '#fa031c', '#0df214']
-    const MID_COLOR = '#071ff7'
+    const LEVEL_COLORS = ['rgba(250,3,28,0.7)', 'rgba(0,120,255,0.7)', 'rgba(250,3,28,0.7)', 'rgba(0,120,255,0.7)']
+    const MID_COLOR = 'rgba(7,31,247,0.7)'
 
     const segments: any[] = []
     for (let d = 0; d < days.length; d++) {
@@ -2469,14 +2590,17 @@ function NiftyChartInner() {
   }, [emaActive, chartReady])
 
   useEffect(() => {
-    if (dayOpenRef.current) dayOpenRef.current.applyOptions({ visible: dayOpenActive })
+    if (dayOpenRef.current) {
+      dayOpenRef.current._show = dayOpenActive
+      repaintOverlay()
+    }
   }, [dayOpenActive, chartReady])
 
   useEffect(() => {
-    if (prevOpenRef.current) prevOpenRef.current.applyOptions({ visible: prevOhlcActive })
-    if (prevHighRef.current) prevHighRef.current.applyOptions({ visible: prevOhlcActive })
-    if (prevLowRef.current) prevLowRef.current.applyOptions({ visible: prevOhlcActive })
-    if (prevCloseRef.current) prevCloseRef.current.applyOptions({ visible: prevOhlcActive })
+    if (prevOhlcRef.current) {
+      prevOhlcRef.current._show = prevOhlcActive
+      repaintOverlay()
+    }
   }, [prevOhlcActive, chartReady])
 
   useEffect(() => {
@@ -2839,7 +2963,7 @@ function NiftyChartInner() {
             </Select>
           </div>
           <Button variant={emaActive ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={() => setEmaActive((v) => !v)}>EMA</Button>
-          <Button variant={dayOpenActive ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={() => setDayOpenActive((v) => !v)}>Day Open</Button>
+          <Button variant={dayOpenActive ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={() => setDayOpenActive((v) => !v)}>Open</Button>
           <Button variant={prevOhlcActive ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={() => setPrevOhlcActive((v) => !v)}>Prev OHLC</Button>
           <Button variant={sqrtActive ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={() => setSqrtActive((v) => !v)}>SQRT</Button>
           <Button variant={showIndicatorPanel ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={() => setShowIndicatorPanel((v) => !v)}>Indicators</Button>
