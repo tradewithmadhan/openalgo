@@ -3,6 +3,7 @@ from utils.session import check_session_validity
 from utils.logging import get_logger
 from datetime import datetime, timedelta, time
 from collections import defaultdict
+import pandas as pd
 from services.history_service import get_history
 from services.madhan.nifty_fetch_service import nifty_fetcher
 from services.madhan.atp_signal import (
@@ -11,6 +12,7 @@ from services.madhan.atp_signal import (
 )
 from services.madhan.volume_signal import compute_spike_flags
 from services.madhan.hx_lx import compute_hx_lx_counts
+from services.madhan.madhan_signals import compute_test01a, compute_test01b
 from database.madhan_db import extract_strike, get_nifty_data, get_banknifty_data, get_option_data, get_consistent_current_option_data, get_nifty_data_count, get_banknifty_data_count, get_previous_day_oi, get_nth_candle_oi_for_all_symbols, get_current_day_historical_data, get_current_day_instrument_data, get_current_day_instrument_data_batch, get_instrument_data_for_date, get_previous_trading_day, get_coi_history, get_valid_trading_day, get_tracked_symbols
 from database.auth_db import get_api_key_for_tradingview
 from blueprints.react_app import serve_react_app
@@ -2585,3 +2587,76 @@ def api_fut_stocks():
 
     logger.info(f"api_fut_stocks: returning {len(results)} FUT underlyings")
     return jsonify({'status': 'success', 'data': results})
+
+
+@madhan_bp.route('/api/madhan_signals')
+@check_session_validity
+def madhan_signals():
+    """Compute Test01-A and Test01-B signals from spot OHLCV data in DB.
+
+    Args (query params):
+        instrument: NIFTY (default) or BANKNIFTY
+        timeframe: 1m, 5m, 15m, 30m, 1h (default 5m)
+
+    Returns:
+        { status, data: { test01a: { buys, sells }, test01b: { buys, sells } } }
+    """
+    try:
+        instrument = request.args.get('instrument', 'NIFTY')
+        timeframe = request.args.get('timeframe', '5m')
+
+        if instrument == 'BANKNIFTY':
+            raw_data = get_banknifty_data(limit=3000)
+        else:
+            raw_data = get_nifty_data(limit=3000)
+
+        if not raw_data:
+            return jsonify({'status': 'error', 'message': f'No {instrument} spot data in DB'}), 404
+
+        df = pd.DataFrame(raw_data)
+        df = df[['timestamp', 'open', 'high', 'low', 'close']].copy()
+        df['open'] = pd.to_numeric(df['open'], errors='coerce')
+        df['high'] = pd.to_numeric(df['high'], errors='coerce')
+        df['low'] = pd.to_numeric(df['low'], errors='coerce')
+        df['close'] = pd.to_numeric(df['close'], errors='coerce')
+        df.dropna(inplace=True)
+        df.sort_values('timestamp', inplace=True)
+        df.reset_index(drop=True, inplace=True)
+
+        if timeframe != '1m':
+            tf_map = {'5m': '5min', '15m': '15min', '30m': '30min', '1h': '1h'}
+            pd_freq = tf_map.get(timeframe)
+            if not pd_freq:
+                return jsonify({'status': 'error', 'message': f'Unsupported timeframe: {timeframe}'}), 400
+
+            df['dt'] = pd.to_datetime(df['timestamp'], unit='s')
+            df.set_index('dt', inplace=True)
+            df = df.resample(pd_freq).agg({
+                'timestamp': 'first',
+                'open': 'first',
+                'high': 'max',
+                'low': 'min',
+                'close': 'last',
+            }).dropna()
+            df.reset_index(drop=True, inplace=True)
+
+        if len(df) < 60:
+            return jsonify({'status': 'error', 'message': f'Not enough data ({len(df)} candles, need 60+)'}), 404
+
+        test01a = compute_test01a(df)
+        test01b = compute_test01b(df)
+
+        logger.info(f"madhan_signals: {instrument} {timeframe} → test01a: {len(test01a['buys'])} buys / {len(test01a['sells'])} sells, "
+                     f"test01b: {len(test01b['buys'])} buys / {len(test01b['sells'])} sells")
+
+        return jsonify({
+            'status': 'success',
+            'data': {
+                'test01a': test01a,
+                'test01b': test01b,
+            }
+        })
+
+    except Exception as e:
+        logger.error(f"madhan_signals error: {e}", exc_info=True)
+        return jsonify({'status': 'error', 'message': 'Internal server error'}), 500

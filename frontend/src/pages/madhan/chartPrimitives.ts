@@ -281,6 +281,9 @@ export class ExtendedMarkerPrimitive {
                     ctx.closePath()
                     ctx.fill()
                     break
+                  case 'square':
+                    ctx.fillRect(x - size, baseY - size, size * 2, size * 2)
+                    break
                 }
                 if (marker.text) {
                   ctx.fillStyle = marker.color
