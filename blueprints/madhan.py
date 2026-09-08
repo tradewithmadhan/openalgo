@@ -1510,7 +1510,7 @@ def ezay_chart_signals():
                                 extrinsic_signal = True
 
                     result.append({'time': ist_ts, 'open': item['open'], 'close': item['close'], 'low': item['low'], 'high': item['high'],
-                                   'extrinsic': round(extrinsic, 2), 'signal': extrinsic_signal})
+                                   'extrinsic': round(extrinsic, 2), 'signal': extrinsic_signal, 'oi': item.get('oi', 0) or 0})
                 return result
 
             ce_enhanced = compute_extrinsic(ce_data, 'CE')
@@ -1523,6 +1523,8 @@ def ezay_chart_signals():
             prev_cp_signal = False
             prev_cp_ce_sig = False
             th_prev_touch = False
+            prev_ce_oi = 0
+            prev_pe_oi = 0
 
             for i, ts in enumerate(common_ts):
                 ce_item = ce_dict[ts]
@@ -1589,7 +1591,21 @@ def ezay_chart_signals():
                         th_dir = 'PE'
                 th_prev_touch = is_touch
 
-                if ce_item['signal'] or pe_item['signal'] or cp_signal or cp_ce_signal or th_signal:
+                # OI Crossover signal
+                oi_cross = False
+                oi_cross_dir = False
+                ce_oi = ce_item.get('oi', 0)
+                pe_oi = pe_item.get('oi', 0)
+                if prev_ce_oi > 0 and prev_pe_oi > 0:
+                    was_ce_above = prev_ce_oi > prev_pe_oi
+                    is_ce_above = ce_oi > pe_oi
+                    if was_ce_above != is_ce_above and ce_oi != pe_oi:
+                        oi_cross = True
+                        oi_cross_dir = 'CE' if is_ce_above else 'PE'
+                prev_ce_oi = ce_oi
+                prev_pe_oi = pe_oi
+
+                if ce_item['signal'] or pe_item['signal'] or cp_signal or cp_ce_signal or th_signal or oi_cross:
                     all_signals.append({
                         'time': ts,
                         'strike': strike_price,
@@ -1601,6 +1617,8 @@ def ezay_chart_signals():
                         'th_dir': th_dir,
                         'ce_close': ce_item['close'],
                         'pe_close': pe_item['close'],
+                        'oi_cross': oi_cross,
+                        'oi_cross_dir': oi_cross_dir,
                     })
 
         all_signals.sort(key=lambda x: (x['time'], x['strike']))
@@ -1612,8 +1630,10 @@ def ezay_chart_signals():
             'cp': {'time': 0, 'strike': 0},
             'cp_open': {'time': 0, 'strike': 0},
             'th': {'time': 0, 'type': '', 'strike': 0},
+            'oi_cross': [],
             'ir': [],
         }
+        th_dot_count = {}
 
         # IR: all strikes where day's 1st candle open+close < combined_ext for both CE and PE
         for strike, fc in first_candle_per_strike.items():
@@ -1645,9 +1665,15 @@ def ezay_chart_signals():
                 if fc and (fc['ce_open'] < fc['combined_ext'] and fc['ce_close'] < fc['combined_ext'] and
                            fc['pe_open'] < fc['combined_ext'] and fc['pe_close'] < fc['combined_ext']):
                     signals['cp_open'] = {'time': row['time'], 'strike': row['strike']}
-            # th: first TH non-touch (CE/PE text, not dot)
-            if signals['th']['time'] == 0 and row.get('th_signal') and row['th_signal'] != 'dot':
-                signals['th'] = {'time': row['time'], 'type': row.get('th_dir', ''), 'strike': row['strike']}
+            # th: 2nd dot signal
+            if row.get('th_signal') and row['th_signal'] == 'dot':
+                strike_key = row['strike']
+                th_dot_count[strike_key] = th_dot_count.get(strike_key, 0) + 1
+                if th_dot_count[strike_key] == 2 and signals['th']['time'] == 0:
+                    signals['th'] = {'time': row['time'], 'type': row.get('th_dir', ''), 'strike': row['strike']}
+            # oi_cross: collect all OI crossovers
+            if row.get('oi_cross'):
+                signals['oi_cross'].append({'time': row['time'], 'strike': row['strike'], 'type': row['oi_cross_dir']})
 
         # ── Compute hx_lx_vol for the response ──────────────────────────
         hx_lx_vol_map = {}
