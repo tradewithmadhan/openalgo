@@ -2263,9 +2263,6 @@ function NiftyChartInner() {
     const whitespace = futureTs.map((t) => ({ time: t as Time }))
     whitespaceDataRef.current = whitespace
     candleRef.current.setData([...buildMpaCandleData(data) as any, ...whitespace])
-    if (data.length > 0 && chartRef.current) {
-      chartRef.current.timeScale().applyOptions({ rightOffset: futureTs.length })
-    }
 
     addHorizontalLines(data)
     applySqrtLevels(data)
