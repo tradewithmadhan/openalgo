@@ -2,7 +2,7 @@ import { useEffect, useState, useRef, useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { createChart, ColorType, CrosshairMode, type IChartApi, type ISeriesApi, type ISeriesMarkersPluginApi, type Time, type SeriesMarker, LineSeries, CandlestickSeries, HistogramSeries, LineStyle, createSeriesMarkers } from 'lightweight-charts';
+import { createChart, ColorType, CrosshairMode, type IChartApi, type ISeriesApi, type Time, LineSeries, CandlestickSeries, HistogramSeries, LineStyle } from 'lightweight-charts';
 import { useMadhanTheme } from '@/pages/madhan/useMadhanTheme';
 import { useMarketData } from '@/hooks/useMarketData';
 import { Switch } from '@/components/ui/switch';
@@ -235,8 +235,8 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
     const [showExtrinsicPE, setShowExtrinsicPE] = useState(true);
     const extrinsicSeriesRefs = useRef<Map<string, ISeriesApi<"Line">>>(new Map());
     const [showITMDots, setShowITMDots] = useState(false);
-    const itmDotsSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
-    const itmDotsMarkersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
+    const itmDotsAnchorRef = useRef<ISeriesApi<"Line"> | null>(null);
+    const itmDotsPrimitiveRef = useRef<any>(null);
     const [showMeet, setShowMeet] = useState(false);
     const meetSeriesRefs = useRef<Map<number, ISeriesApi<"Candlestick">>>(new Map());
     const meetLiveStateRef = useRef<Map<number, { time: number; open: number; high: number; low: number; close: number }>>(new Map());
@@ -463,8 +463,8 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
         });
         spotSeriesRef.current = spotSeries;
 
-        // ITM Dots Series (Left Scale) - transparent series for markers
-        const itmDotsSeries = chart.addSeries(LineSeries, {
+        // ITM Dots (Left Scale) - transparent series + IPanePrimitive for dashed lines
+        const itmDotsAnchor = chart.addSeries(LineSeries, {
             color: 'transparent',
             lineVisible: false,
             lastValueVisible: false,
@@ -472,8 +472,49 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
             crosshairMarkerVisible: false,
             priceScaleId: 'left',
         });
-        itmDotsSeriesRef.current = itmDotsSeries;
-        itmDotsMarkersRef.current = createSeriesMarkers(itmDotsSeries, []);
+        itmDotsAnchor.setData([]);
+        const itmDotsPrim = new (class {
+            _data: any[] = [];
+            _show = false;
+            _timeScale: any;
+            _series: any;
+            constructor(ts: any, s: any) { this._timeScale = ts; this._series = s; }
+            paneViews() {
+                const self = this;
+                return [{
+                    zOrder() { return 'bottom' as const; },
+                    renderer() {
+                        return {
+                            draw(target: any) {
+                                if (!self._show || !self._data.length) return;
+                                target.useBitmapCoordinateSpace((scope: any) => {
+                                    const ctx = scope.context;
+                                    const vpr = scope.verticalPixelRatio;
+                                    ctx.lineWidth = 1 * vpr;
+                                    ctx.setLineDash([4 * vpr, 3 * vpr]);
+                                    for (const line of self._data) {
+                                        const y = self._series.priceToCoordinate(line.price);
+                                        if (y == null) continue;
+                                        ctx.strokeStyle = line.color;
+                                        ctx.beginPath();
+                                        ctx.moveTo(0, y * vpr);
+                                        ctx.lineTo(scope.bitmapSize.width, y * vpr);
+                                        ctx.stroke();
+                                    }
+                                    ctx.setLineDash([]);
+                                });
+                            }
+                        };
+                    }
+                }];
+            }
+            setData(v: any[]) { this._data = v || []; }
+            toggle(show: boolean) { this._show = show; }
+            requestUpdate() {}
+        })(chart.timeScale(), itmDotsAnchor);
+        try { itmDotsAnchor.attachPrimitive(itmDotsPrim as any); } catch {}
+        itmDotsAnchorRef.current = itmDotsAnchor;
+        itmDotsPrimitiveRef.current = itmDotsPrim;
 
         // Initial Data load for Spot if available
         if (spotData) {
@@ -514,11 +555,11 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
                 try { chart.removeSeries(s); } catch {}
             });
             extrinsicSeriesRefs.current.clear();
-            if (itmDotsSeriesRef.current) {
-                try { chart.removeSeries(itmDotsSeriesRef.current); } catch {}
-                itmDotsSeriesRef.current = null;
+            if (itmDotsAnchorRef.current) {
+                try { chart.removeSeries(itmDotsAnchorRef.current); } catch {}
+                itmDotsAnchorRef.current = null;
             }
-            itmDotsMarkersRef.current = null;
+            itmDotsPrimitiveRef.current = null;
             meetSeriesRefs.current.forEach((s) => {
                 try { chart.removeSeries(s); } catch {}
             });
@@ -914,48 +955,45 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
             extrinsicSeriesRefs.current.clear();
         }
 
-        // ITM Dots - green for CE ITM (spot > strike), red for PE ITM (spot < strike)
-        if (showITMDots && spotData && itmDotsMarkersRef.current && itmDotsSeriesRef.current) {
+        // ITM Dashed Lines - green for CE ITM (spot > strike), red for PE ITM (spot < strike)
+        if (showITMDots && spotData && itmDotsPrimitiveRef.current && itmDotsAnchorRef.current) {
             const spotLookup = new Map<number, number>();
             spotData.timestamps.forEach((tsMs, i) => {
                 spotLookup.set(Math.floor(tsMs / 1000), spotData.prices[i]);
             });
-            // Set series data with spot prices so left scale auto-ranges correctly
             const seriesData = spotData.timestamps.map((tsMs, i) => ({
                 time: Math.floor(tsMs / 1000) as Time,
                 value: spotData.prices[i],
             }));
-            itmDotsSeriesRef.current.setData(seriesData);
-            const markers: SeriesMarker<Time>[] = [];
+            itmDotsAnchorRef.current.setData(seriesData);
+            const lines: Array<{ price: number; color: string }> = [];
             spotData.timestamps.forEach((tsMs) => {
                 const tsSec = Math.floor(tsMs / 1000);
                 const spotClose = spotLookup.get(tsSec) ?? 0;
                 if (!spotClose) return;
                 strikes.forEach(strike => {
                     if (spotClose > strike) {
-                        markers.push({
-                            time: tsSec as Time,
-                            position: 'atPriceMiddle',
-                            price: strike,
-                            shape: 'circle',
-                            color: '#22c55e',
-                            size: 1,
-                        });
+                        lines.push({ price: strike, color: 'rgba(34,197,94,0.5)' });
                     } else if (spotClose < strike) {
-                        markers.push({
-                            time: tsSec as Time,
-                            position: 'atPriceMiddle',
-                            price: strike,
-                            shape: 'circle',
-                            color: '#ef4444',
-                            size: 1,
-                        });
+                        lines.push({ price: strike, color: 'rgba(239,68,68,0.5)' });
                     }
                 });
             });
-            itmDotsMarkersRef.current.setMarkers(markers);
-        } else if (itmDotsMarkersRef.current) {
-            itmDotsMarkersRef.current.setMarkers([]);
+            // Dedupe: keep only unique price+color combos
+            const seen = new Set<string>();
+            const unique = lines.filter(l => {
+                const key = `${l.price}_${l.color}`;
+                if (seen.has(key)) return false;
+                seen.add(key);
+                return true;
+            });
+            itmDotsPrimitiveRef.current.setData(unique);
+            itmDotsPrimitiveRef.current.toggle(true);
+            try { itmDotsPrimitiveRef.current.requestUpdate(); } catch {}
+        } else if (itmDotsPrimitiveRef.current) {
+            itmDotsPrimitiveRef.current.setData([]);
+            itmDotsPrimitiveRef.current.toggle(false);
+            try { itmDotsPrimitiveRef.current.requestUpdate(); } catch {}
         }
 
         // Meet lines - spot where CE = PE for each strike
@@ -1479,9 +1517,9 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
                                 className="scale-75"
                             />
                             {showITMDots && (
-                                <div className="flex items-center space-x-0.5">
-                                    <div className="w-1.5 h-1.5 rounded-full bg-emerald-500" title="CE ITM" />
-                                    <div className="w-1.5 h-1.5 rounded-full bg-red-500" title="PE ITM" />
+                                <div className="flex items-center space-x-1">
+                                    <div className="w-3 h-0 border-t-2 border-dashed border-emerald-500" title="CE ITM" />
+                                    <div className="w-3 h-0 border-t-2 border-dashed border-red-500" title="PE ITM" />
                                 </div>
                             )}
                             <div className="w-px h-3 bg-border" />

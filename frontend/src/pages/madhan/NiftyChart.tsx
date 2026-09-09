@@ -53,7 +53,7 @@ import ChartLayout from './ChartLayout'
 import WidgetBar from './WidgetBar'
 import EzaySignals from './components/EzaySignals'
 import IndicatorPanel, { INDICATOR_CATEGORIES } from './IndicatorPanel'
-import { PlotFillPrimitive, LineBrPrimitive, ExtendedMarkerPrimitive, BgColorPrimitive, LabelPrimitive, BoxPrimitive, LineDrawingPrimitive, TablePrimitive, CrossPlotPrimitive, VolumeProfilePrimitive, applyTransparency, type MarkerDatum } from './chartPrimitives'
+import { PlotFillPrimitive, LineBrPrimitive, ExtendedMarkerPrimitive, BgColorPrimitive, LabelPrimitive, BoxPrimitive, LineDrawingPrimitive, TablePrimitive, CrossPlotPrimitive, VolumeProfilePrimitive, VertLinePrimitive, applyTransparency, type MarkerDatum } from './chartPrimitives'
 import { useInstrument, InstrumentProvider, type Instrument } from './InstrumentContext'
 
 type Candle = {
@@ -215,6 +215,11 @@ function NiftyChartInner() {
   const mpaDataRef = useRef<{ test01a: { buys: Array<{ time: number; dir: string }>; sells: Array<{ time: number; dir: string }> }; test01b: { buys: Array<{ time: number; dir: string }>; sells: Array<{ time: number; dir: string }> } } | null>(null)
   const mpaSignalTimesRef = useRef<Set<number>>(new Set())
   const rawSignalDataRef = useRef<SignalRow[]>([])
+  const [oiCrossActive, setOiCrossActive] = useState(false)
+  const oiCrossActiveRef = useRef(false)
+  const oiCrossPrimitiveRef = useRef<VertLinePrimitive | null>(null)
+  const oiCrossAnchorRef = useRef<ISeriesApi<'Line'> | null>(null)
+  const oiCrossDataRef = useRef<Array<{ time: any; color: string }>>([])
   const [oiX, setOiX] = useState(100)
   const [coiX, setCoiX] = useState(85)
   const [oiShowStrike, setOiShowStrike] = useState(false)
@@ -415,6 +420,15 @@ function NiftyChartInner() {
     try { mpaAnchor.attachPrimitive(mpaExtMarker as any) } catch {}
     mpaAnchorSeriesRef.current = mpaAnchor
     mpaExtMarkerRef.current = mpaExtMarker
+    const oiCrossAnchor = chart.addSeries(LineSeries, {
+      color: 'transparent', lineVisible: false, lastValueVisible: false,
+      priceLineVisible: false, crosshairMarkerVisible: false,
+    })
+    oiCrossAnchor.setData([])
+    const oiCrossPrim = new VertLinePrimitive(chart.timeScale())
+    try { oiCrossAnchor.attachPrimitive(oiCrossPrim as any) } catch {}
+    oiCrossAnchorRef.current = oiCrossAnchor
+    oiCrossPrimitiveRef.current = oiCrossPrim
     const volumeProfile = new VolumeProfilePrimitive(candle, chart.timeScale())
     try { candle.attachPrimitive(volumeProfile as any) } catch {}
     volumeProfileRef.current = volumeProfile
@@ -522,6 +536,12 @@ function NiftyChartInner() {
       }
       thExtMarkerRef.current = null
       thAnchorSeriesRef.current = null
+      if (oiCrossPrimitiveRef.current && oiCrossAnchorRef.current) {
+        try { oiCrossAnchorRef.current.detachPrimitive(oiCrossPrimitiveRef.current as any) } catch {}
+        try { chart.removeSeries(oiCrossAnchorRef.current) } catch {}
+      }
+      oiCrossPrimitiveRef.current = null
+      oiCrossAnchorRef.current = null
       if (volumeProfileRef.current && candleRef.current) {
         try { candleRef.current.detachPrimitive(volumeProfileRef.current as any) } catch {}
       }
@@ -2162,13 +2182,47 @@ function NiftyChartInner() {
           }
         }
         rawSignalDataRef.current = flat
+        if (json.signals?.oi_cross) {
+          const intervalSec = getIntervalSeconds(interval)
+          const IST_OFFSET_SEC = 5 * 3600 + 30 * 60
+          const istDateKey = (ts: number) => {
+            return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(ts * 1000))
+          }
+          const istMidnightTs = (ts: number) => {
+            const [y, m, d] = istDateKey(ts).split('-').map(Number)
+            return Math.floor(Date.UTC(y, m - 1, d) / 1000) - IST_OFFSET_SEC
+          }
+          const bucketed = new Map<number, { time: any; color: string }>()
+          for (const oc of json.signals.oi_cross) {
+            const ts = oc.time as number
+            const dayStart = istMidnightTs(ts)
+            const offset = ts - dayStart
+            const bucketOffset = Math.floor(offset / intervalSec) * intervalSec
+            const bucketTs = dayStart + bucketOffset
+            const existing = bucketed.get(bucketTs)
+            const entry = { time: bucketTs as any, color: oc.type === 'CE' ? 'rgba(255,0,0,0.6)' : 'rgba(0,128,0,0.6)' }
+            if (!existing || bucketTs > (existing.time as number)) {
+              bucketed.set(bucketTs, entry)
+            }
+          }
+          oiCrossDataRef.current = Array.from(bucketed.values())
+        } else {
+          oiCrossDataRef.current = []
+        }
       } else {
         rawSignalDataRef.current = []
+        oiCrossDataRef.current = []
       }
     } catch {
       rawSignalDataRef.current = []
+      oiCrossDataRef.current = []
     }
     updateSignalMarkers()
+    if (oiCrossPrimitiveRef.current) {
+      oiCrossPrimitiveRef.current.setData(oiCrossActiveRef.current ? oiCrossDataRef.current : [])
+      oiCrossPrimitiveRef.current.toggle(oiCrossActiveRef.current)
+      try { oiCrossPrimitiveRef.current.requestUpdate() } catch {}
+    }
   }
 
   const fetchMpaSignals = async () => {
@@ -2353,6 +2407,15 @@ function NiftyChartInner() {
       fetchMpaSignals()
     }
   }, [instrument, interval])
+
+  useEffect(() => {
+    oiCrossActiveRef.current = oiCrossActive
+    if (oiCrossPrimitiveRef.current) {
+      oiCrossPrimitiveRef.current.setData(oiCrossActive ? oiCrossDataRef.current : [])
+      oiCrossPrimitiveRef.current.toggle(oiCrossActive)
+      try { oiCrossPrimitiveRef.current.requestUpdate() } catch {}
+    }
+  }, [oiCrossActive])
 
   const fetchNiftyStatus = useCallback(async () => {
     try {
@@ -3260,6 +3323,7 @@ function NiftyChartInner() {
           <Button variant="outline" size="sm" className="h-7 px-2 text-[11px]" style={thSignalsActive ? { backgroundColor: madhanMode === 'dark' ? 'rgba(255,255,255,0.22)' : 'rgba(0,0,0,0.1)', borderColor: madhanMode === 'dark' ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.2)' } : undefined} onClick={() => setThSignalsActive((p) => !p)}>TH</Button>
           <Button variant="outline" size="sm" className="h-7 px-2 text-[11px]" style={volumeProfileActive ? { backgroundColor: madhanMode === 'dark' ? 'rgba(255,255,255,0.22)' : 'rgba(0,0,0,0.1)', borderColor: madhanMode === 'dark' ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.2)' } : undefined} onClick={toggleVolumeProfile}>VP</Button>
           <Button variant="outline" size="sm" className="h-7 px-2 text-[11px]" style={mpaActive ? { backgroundColor: madhanMode === 'dark' ? 'rgba(255,255,255,0.22)' : 'rgba(0,0,0,0.1)', borderColor: madhanMode === 'dark' ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.2)' } : undefined} onClick={() => setMpaActive((p) => !p)}>MPA</Button>
+          <Button variant="outline" size="sm" className="h-7 px-2 text-[11px]" style={oiCrossActive ? { backgroundColor: madhanMode === 'dark' ? 'rgba(255,255,255,0.22)' : 'rgba(0,0,0,0.1)', borderColor: madhanMode === 'dark' ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.2)' } : undefined} onClick={() => setOiCrossActive((p) => !p)}>OI-X</Button>
           <div className="flex items-center gap-1.5 ml-auto">
             {niftyStatus && (
               <div className="flex items-center gap-1" title={niftyStatus}>
