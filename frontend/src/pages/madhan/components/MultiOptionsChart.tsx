@@ -28,7 +28,10 @@ interface OptionOHLC {
 
 interface SpotData {
     timestamps: number[];
-    prices: number[];
+    open: number[];
+    high: number[];
+    low: number[];
+    close: number[];
 }
 
 const aggregateData = (data: OptionOHLC[], period: number): OptionOHLC[] => {
@@ -74,43 +77,45 @@ const aggregateData = (data: OptionOHLC[], period: number): OptionOHLC[] => {
     return aggregated;
 };
 
-const aggregateSpotData = (data: SpotData, period: number) => {
+const aggregateSpotData = (data: SpotData, period: number): { time: any; open: number; high: number; low: number; close: number }[] => {
     if (period === 1) {
         return data.timestamps.map((ts, i) => ({
-            time: ts / 1000 as any,
-            value: data.prices[i]
+            time: Math.floor(ts / 1000) as any,
+            open: data.open[i],
+            high: data.high[i],
+            low: data.low[i],
+            close: data.close[i]
         }));
     }
-    
-    const aggregated: { time: any, value: number }[] = [];
-    let currentBucket: { time: number, value: number } | null = null;
-    let bucketStartTime = 0;
-    const periodSeconds = period * 60;
+
+    const aggregated: { time: any; open: number; high: number; low: number; close: number }[] = [];
+    let bucketStart = 0;
+    let o = 0, h = 0, l = 0, c = 0;
+    let inBucket = false;
 
     data.timestamps.forEach((tsMs, i) => {
-        const tsSec = tsMs / 1000;
-        const bucketStart = Math.floor(tsSec / periodSeconds) * periodSeconds;
-        const price = data.prices[i];
+        const tsSec = Math.floor(tsMs / 1000);
+        const bStart = Math.floor(tsSec / (period * 60)) * (period * 60);
 
-        if (currentBucket && bucketStart !== bucketStartTime) {
-            aggregated.push(currentBucket);
-            currentBucket = null;
-        }
-
-        if (!currentBucket) {
-            bucketStartTime = bucketStart;
-            currentBucket = {
-                time: bucketStart,
-                value: price
-            };
+        if (!inBucket || bStart !== bucketStart) {
+            if (inBucket) {
+                aggregated.push({ time: bucketStart, open: o, high: h, low: l, close: c });
+            }
+            bucketStart = bStart;
+            o = data.open[i];
+            h = data.high[i];
+            l = data.low[i];
+            c = data.close[i];
+            inBucket = true;
         } else {
-            // For Area/Line, usually we want the Close of the bucket
-            currentBucket.value = price; 
+            h = Math.max(h, data.high[i]);
+            l = Math.min(l, data.low[i]);
+            c = data.close[i];
         }
     });
 
-    if (currentBucket) {
-        aggregated.push(currentBucket);
+    if (inBucket) {
+        aggregated.push({ time: bucketStart, open: o, high: h, low: l, close: c });
     }
     return aggregated;
 }
@@ -148,7 +153,7 @@ const computeExtrinsic = (
     if (!optionData.length || !spotData.timestamps.length) return [];
     const spotLookup = new Map<number, number>();
     spotData.timestamps.forEach((tsMs, i) => {
-        spotLookup.set(Math.floor(tsMs / 1000), spotData.prices[i]);
+        spotLookup.set(Math.floor(tsMs / 1000), spotData.close[i]);
     });
     return optionData.map(d => {
         const spotClose = spotLookup.get(d.timestamp) ?? 0;
@@ -209,7 +214,7 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
     };
     
     // Series refs
-    const spotSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+    const spotSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
     const optionSeriesRefs = useRef<Map<string, ISeriesApi<"Line" | "Candlestick">>>(new Map());
     const optionSeriesTypes = useRef<Map<string, "Line" | "Candlestick">>(new Map());
 
@@ -250,7 +255,7 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
             { symbol: instrument, exchange: 'NSE_INDEX' }
         ];
 
-        if (showOptions && expiryDate && strikes.length > 0) {
+        if ((showOptions || showMeet) && expiryDate && strikes.length > 0) {
             strikes.forEach(strike => {
                 const ce = getSymbol(strike, 'CE');
                 const pe = getSymbol(strike, 'PE');
@@ -259,7 +264,7 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
             });
         }
         return syms;
-    }, [instrument, strikes, expiryDate, showOptions]);
+    }, [instrument, strikes, expiryDate, showOptions, showMeet]);
 
     // WebSocket Hook
     const { data: wsData } = useMarketData({
@@ -270,6 +275,7 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
 
     // Refs to track current OHLC state for real-time candlestick updates
     const currentOHLCRef = useRef<Map<string, OptionOHLC>>(new Map());
+    const spotCurrentCandleRef = useRef<{ time: number; open: number; high: number; low: number; close: number } | null>(null);
     // Refs to track last updated time for each series to aggregate real-time updates
     const lastUpdateTimeRef = useRef<Map<string, number>>(new Map());
 
@@ -306,23 +312,7 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
         }
     }, [refreshTrigger, showHighCross, showLowCross, atmStrike, expiryDate, histogramMode, instrument]);
 
-    // Fetch Spot Data
-    useEffect(() => {
-        const fetchSpotData = async () => {
-            try {
-                const response = await fetch(`/madhan/api/nifty/spot-data?instrument=${instrument}&_=${Date.now()}`);
-                const json = await response.json();
-                if (json.status === 'success') {
-                    setSpotData(json.data);
-                }
-            } catch (error) {
-                console.error("Failed to fetch Spot data", error);
-            }
-        };
-        fetchSpotData();
-    }, [refreshTrigger, instrument]);
-
-    // Batch-fetch OHLC data for all strike symbols in one API call
+    // Batch-fetch OHLC data for all strike symbols + spot in one API call
     const fetchAllSymbolsData = async () => {
         if (!expiryDate || strikes.length === 0) return;
         try {
@@ -333,6 +323,8 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
                 if (ce) allSymbols.push(ce);
                 if (pe) allSymbols.push(pe);
             });
+            // Add spot symbol to batch
+            allSymbols.push(instrument);
             if (allSymbols.length === 0) return;
 
             const response = await fetch(`/madhan/api/nifty/option-ohlc-batch?symbols=${allSymbols.join(',')}&_=${Date.now()}`);
@@ -351,6 +343,18 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
                     }
                 }
                 setOptionsData(next);
+
+                // Parse spot OHLC from the same batch response
+                const spotOhlc = json.data[instrument] as { timestamps: number[]; open: number[]; high: number[]; low: number[]; close: number[] } | undefined;
+                if (spotOhlc && spotOhlc.timestamps?.length > 0) {
+                    setSpotData({
+                        timestamps: spotOhlc.timestamps.map((ts: number) => ts * 1000),
+                        open: spotOhlc.open,
+                        high: spotOhlc.high,
+                        low: spotOhlc.low,
+                        close: spotOhlc.close,
+                    });
+                }
             }
         } catch (error) {
             console.error("Failed to fetch batch option data", error);
@@ -453,13 +457,15 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
         histogramSeriesRef.current = histogramSeries;
 
         // Spot Series (Left Scale)
-        const spotColor = isDark ? '#94a3b8' : '#64748b'; // Slate gray
-
-        const spotSeries = chart.addSeries(LineSeries, {
-            color: spotColor,
-            lineWidth: 1,
+        const spotSeries = chart.addSeries(CandlestickSeries, {
             priceScaleId: 'left',
             title: `${instrument} Spot`,
+            upColor: '#d1d5db',
+            borderUpColor: '#000000',
+            wickUpColor: '#000000',
+            downColor: '#000000',
+            borderDownColor: '#000000',
+            wickDownColor: '#000000',
         });
         spotSeriesRef.current = spotSeries;
 
@@ -959,11 +965,11 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
         if (showITMDots && spotData && itmDotsPrimitiveRef.current && itmDotsAnchorRef.current) {
             const spotLookup = new Map<number, number>();
             spotData.timestamps.forEach((tsMs, i) => {
-                spotLookup.set(Math.floor(tsMs / 1000), spotData.prices[i]);
+                spotLookup.set(Math.floor(tsMs / 1000), spotData.close[i]);
             });
             const seriesData = spotData.timestamps.map((tsMs, i) => ({
                 time: Math.floor(tsMs / 1000) as Time,
-                value: spotData.prices[i],
+                value: spotData.close[i],
             }));
             itmDotsAnchorRef.current.setData(seriesData);
             const lines: Array<{ price: number; color: string }> = [];
@@ -997,37 +1003,46 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
         }
 
         // Meet lines - spot where CE = PE for each strike
-        // Formula: S_meet = spot + (PE LTP - CE LTP)
+        // Formula: S_meet = spot + (PE - CE)
+        // Open: spotOpen + (peOpen - ceOpen), Close: spotClose + (peClose - ceClose)
         // Aggregated to OHLC per timeframe bucket
         if (showMeet && chartRef.current && spotData) {
-            // Build sorted spot arrays for closest-match lookup
+            // Build sorted spot arrays for closest-match lookup (both open and close)
             const spotTimes: number[] = [];
-            const spotPrices: number[] = [];
+            const spotCloses: number[] = [];
+            const spotOpens: number[] = [];
             spotData.timestamps.forEach((tsMs, i) => {
                 spotTimes.push(Math.floor(tsMs / 1000));
-                spotPrices.push(spotData.prices[i]);
+                spotCloses.push(spotData.close[i]);
+                spotOpens.push(spotData.open[i]);
             });
 
-            const findClosestSpot = (targetTs: number): number => {
-                if (spotTimes.length === 0) return 0;
+            const findClosestSpot = (targetTs: number): { close: number; open: number } => {
+                if (spotTimes.length === 0) return { close: 0, open: 0 };
                 let lo = 0, hi = spotTimes.length - 1;
                 while (lo < hi) {
                     const mid = (lo + hi) >> 1;
                     if (spotTimes[mid] < targetTs) lo = mid + 1;
                     else hi = mid;
                 }
-                // Pick closest of lo and lo-1
                 if (lo > 0) {
                     const dLo = Math.abs(spotTimes[lo] - targetTs);
                     const dPrev = Math.abs(spotTimes[lo - 1] - targetTs);
-                    return dPrev < dLo ? spotPrices[lo - 1] : spotPrices[lo];
+                    const idx = dPrev < dLo ? lo - 1 : lo;
+                    return { close: spotCloses[idx], open: spotOpens[idx] };
                 }
-                return spotPrices[0];
+                return { close: spotCloses[0], open: spotOpens[0] };
             };
 
             const meetColors = ['#f59e0b', '#a78bfa', '#34d399', '#f472b6', '#60a5fa'];
             let colorIdx = 0;
             const periodSeconds = timeframe * 60;
+
+            // Clear all existing meet series first (fixes stale series on instrument toggle)
+            meetSeriesRefs.current.forEach((s) => {
+                try { chartRef.current!.removeSeries(s); } catch {}
+            });
+            meetSeriesRefs.current.clear();
 
             strikes.forEach(strike => {
                 const ceSymbol = getSymbol(strike, 'CE');
@@ -1038,16 +1053,18 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
                 const peRaw = optionsData.get(peSymbol);
                 if (!ceRaw || !ceRaw.length || !peRaw || !peRaw.length) return;
 
-                // Build sorted PE arrays for closest-match lookup
+                // Build sorted PE arrays for closest-match lookup (both open and close)
                 const peTimes: number[] = [];
                 const peCloses: number[] = [];
+                const peOpens: number[] = [];
                 peRaw.forEach(d => {
                     peTimes.push(d.timestamp);
                     peCloses.push(d.close);
+                    peOpens.push(d.open);
                 });
 
-                const findClosestPe = (targetTs: number): number => {
-                    if (peTimes.length === 0) return 0;
+                const findClosestPe = (targetTs: number): { close: number; open: number } => {
+                    if (peTimes.length === 0) return { close: 0, open: 0 };
                     let lo = 0, hi = peTimes.length - 1;
                     while (lo < hi) {
                         const mid = (lo + hi) >> 1;
@@ -1057,31 +1074,27 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
                     if (lo > 0) {
                         const dLo = Math.abs(peTimes[lo] - targetTs);
                         const dPrev = Math.abs(peTimes[lo - 1] - targetTs);
-                        return dPrev < dLo ? peCloses[lo - 1] : peCloses[lo];
+                        const idx = dPrev < dLo ? lo - 1 : lo;
+                        return { close: peCloses[idx], open: peOpens[idx] };
                     }
-                    return peCloses[0];
+                    return { close: peCloses[0], open: peOpens[0] };
                 };
-
-                let series = meetSeriesRefs.current.get(strike);
-                if (series) {
-                    chartRef.current!.removeSeries(series);
-                    meetSeriesRefs.current.delete(strike);
-                }
 
                 const baseColor = meetColors[colorIdx % meetColors.length];
                 colorIdx++;
 
-                // Compute 1-min meet values then aggregate to OHLC per timeframe
-                const rawMeetValues: { ts: number; value: number }[] = [];
-                let lastMeetValue = 0;
+                // Compute 1-min meet values (open and close) then aggregate to OHLC per timeframe
+                const rawMeetValues: { ts: number; openVal: number; closeVal: number }[] = [];
+                let lastMeetClose = 0;
                 ceRaw.forEach(ceCandle => {
                     const tsSec = ceCandle.timestamp;
-                    const spotClose = findClosestSpot(tsSec);
-                    const peClose = findClosestPe(tsSec);
-                    if (!spotClose || !peClose) return;
-                    const meetValue = spotClose + (peClose - ceCandle.close);
-                    lastMeetValue = meetValue;
-                    rawMeetValues.push({ ts: tsSec, value: meetValue });
+                    const spot = findClosestSpot(tsSec);
+                    const pe = findClosestPe(tsSec);
+                    if (!spot.close || !pe.close) return;
+                    const closeVal = spot.close + (pe.close - ceCandle.close);
+                    const openVal = spot.open + (pe.open - ceCandle.open);
+                    lastMeetClose = closeVal;
+                    rawMeetValues.push({ ts: tsSec, openVal, closeVal });
                 });
 
                 if (rawMeetValues.length === 0) return;
@@ -1092,22 +1105,22 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
                 let o = 0, h = 0, l = 0, c = 0;
                 let inBucket = false;
 
-                rawMeetValues.forEach(({ ts, value }) => {
+                rawMeetValues.forEach(({ ts, openVal, closeVal }) => {
                     const bStart = Math.floor(ts / periodSeconds) * periodSeconds;
                     if (!inBucket || bStart !== bucketStart) {
                         if (inBucket) {
                             meetOhlcData.push({ time: bucketStart, open: o, high: h, low: l, close: c });
                         }
                         bucketStart = bStart;
-                        o = value;
-                        h = value;
-                        l = value;
-                        c = value;
+                        o = openVal;
+                        c = closeVal;
+                        h = Math.max(openVal, closeVal);
+                        l = Math.min(openVal, closeVal);
                         inBucket = true;
                     } else {
-                        h = Math.max(h, value);
-                        l = Math.min(l, value);
-                        c = value;
+                        h = Math.max(h, openVal, closeVal);
+                        l = Math.min(l, openVal, closeVal);
+                        c = closeVal;
                     }
                 });
                 if (inBucket) {
@@ -1117,12 +1130,12 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
                 if (meetOhlcData.length === 0) return;
 
                 // Determine color based on last meeting spot vs current spot
-                const lastSpot = spotData.prices[spotData.prices.length - 1] ?? 0;
+                const lastSpot = spotData.close[spotData.close.length - 1] ?? 0;
                 const threshold = Math.max(5, lastSpot * 0.0002);
                 let bodyColor = baseColor;
-                if (lastMeetValue > lastSpot + threshold) {
+                if (lastMeetClose > lastSpot + threshold) {
                     bodyColor = '#ef4444'; // PE expensive - bearish
-                } else if (lastMeetValue < lastSpot - threshold) {
+                } else if (lastMeetClose < lastSpot - threshold) {
                     bodyColor = '#22c55e'; // CE expensive - bullish
                 }
 
@@ -1133,13 +1146,13 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
                     const b = parseInt(hex.slice(5, 7), 16);
                     return `rgba(${r},${g},${b},${alpha})`;
                 };
-                const transparentBody = hexToRgba(bodyColor, 0.5);
+                const transparentBody = hexToRgba(bodyColor, 0.2);
 
-                series = chartRef.current!.addSeries(CandlestickSeries, {
+                const series = chartRef.current!.addSeries(CandlestickSeries, {
                     upColor: transparentBody,
                     downColor: transparentBody,
-                    borderUpColor: bodyColor,
-                    borderDownColor: bodyColor,
+                    borderUpColor: transparentBody,
+                    borderDownColor: transparentBody,
                     wickUpColor: bodyColor,
                     wickDownColor: bodyColor,
                     priceScaleId: 'left',
@@ -1270,9 +1283,25 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
 
             const lastTime = lastUpdateTimeRef.current.get(instrument);
             if (lastTime === undefined || time >= lastTime) {
+                let spotCandle = spotCurrentCandleRef.current;
+
+                if (spotCandle && time === spotCandle.time) {
+                    // Update existing candle
+                    spotCandle.high = Math.max(spotCandle.high, ltp);
+                    spotCandle.low = Math.min(spotCandle.low, ltp);
+                    spotCandle.close = ltp;
+                } else {
+                    // New candle
+                    spotCandle = { time, open: ltp, high: ltp, low: ltp, close: ltp };
+                    spotCurrentCandleRef.current = spotCandle;
+                }
+
                 spotSeriesRef.current.update({
-                    time: time as any,
-                    value: ltp
+                    time: spotCandle.time as any,
+                    open: spotCandle.open,
+                    high: spotCandle.high,
+                    low: spotCandle.low,
+                    close: spotCandle.close
                 });
                 lastUpdateTimeRef.current.set(instrument, time);
             }
@@ -1448,13 +1477,13 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
                             } else if (meetValue < spotLtp - threshold) {
                                 bodyColor = '#22c55e';
                             }
-                            const transparentBody = hexToRgba(bodyColor, 0.5);
+                const transparentBody = hexToRgba(bodyColor, 0.2);
 
                             series.applyOptions({
                                 upColor: transparentBody,
                                 downColor: transparentBody,
-                                borderUpColor: bodyColor,
-                                borderDownColor: bodyColor,
+                                borderUpColor: transparentBody,
+                                borderDownColor: transparentBody,
                                 wickUpColor: bodyColor,
                                 wickDownColor: bodyColor,
                             });
@@ -1468,7 +1497,7 @@ export function MultiOptionsChart({ refreshTrigger, atmStrike, expiryDate }: Mul
 
     return (
         <div className="flex h-[calc(100vh-180px)] w-full gap-2">
-            <Card className="w-24 flex-shrink-0 flex flex-col">
+            <Card className="w-auto flex-shrink-0 flex flex-col">
                 <CardHeader className="p-1">
                     <CardTitle className="text-xs">Strikes</CardTitle>
                 </CardHeader>
