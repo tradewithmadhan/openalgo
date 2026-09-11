@@ -32,3 +32,25 @@ These rules override everything else. If you are unsure whether something counts
 - If the Docker build fails with "Cannot find module" errors, check git history for the original dependency list before adding/removing packages.
 - Always run `npm ci` (not `npm install`) to verify CI-compatible dependency resolution.
 - If adding a new dependency, ensure its version is compatible with existing peer dependency constraints.
+
+## Upstream Sync Workflow
+
+When merging upstream changes, follow this exact sequence:
+1. `git fetch upstream` — fetch latest upstream commits
+2. `git merge upstream/main` — merge into local main
+3. Resolve conflicts if any (check with `git status`)
+4. Run local build verification:
+   - `npx tsc -b` — TypeScript check (must pass with ZERO errors)
+   - `npx vite build` — Vite production build (must pass)
+   - If both pass, the code is ready
+5. Commit the merge
+6. Ask user "Push now?" before pushing
+7. `git push origin main`
+
+## Docker Build Verification
+
+Before any push, verify the Docker-equivalent build passes:
+- `npx tsc -b` — TypeScript check. Must exit with ZERO errors.
+- `npx vite build` — Vite production build. Must succeed.
+- These two commands together replicate what Docker's `npm run build` does (`tsc -b && vite build`).
+- If either fails, fix the errors before committing or pushing.
