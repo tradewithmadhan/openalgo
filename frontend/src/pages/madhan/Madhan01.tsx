@@ -72,6 +72,42 @@ interface PreviousDayOiRow {
   timestamp: number
 }
 
+interface PrevDayOiSummary {
+  call_oi: number
+  put_oi: number
+  call_coi: number
+  put_coi: number
+  unwind: {
+    call: {
+      total_strikes: number
+      unwound_strikes: number
+      built_strikes: number
+      unwind_value: number
+      build_value: number
+      unwind_pct: number
+      unwind_build_ratio: number | null
+    }
+    put: {
+      total_strikes: number
+      unwound_strikes: number
+      built_strikes: number
+      unwind_value: number
+      build_value: number
+      unwind_pct: number
+      unwind_build_ratio: number | null
+    }
+    total: {
+      total_strikes: number
+      unwound_strikes: number
+      built_strikes: number
+      unwind_value: number
+      build_value: number
+      unwind_pct: number
+      unwind_build_ratio: number | null
+    }
+  }
+}
+
 interface NiftyCandle {
   symbol: string
   close: number
@@ -118,6 +154,7 @@ function Madhan01Inner() {
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [prevDayOi, setPrevDayOi] = useState<PreviousDayOiRow[]>([])
+  const [prevDayOiSummary, setPrevDayOiSummary] = useState<PrevDayOiSummary | null>(null)
   const [liveRows, setLiveRows] = useState<Array<NiftyCandle | OptionCandle>>([])
   const [showLiveTable, setShowLiveTable] = useState(false)
   const [showPrevDayTable, setShowPrevDayTable] = useState(false)
@@ -248,6 +285,7 @@ function Madhan01Inner() {
       const data = await response.json()
       if (data.status === 'success' && Array.isArray(data.data)) {
         setPrevDayOi(data.data as PreviousDayOiRow[])
+        setPrevDayOiSummary(data.summary as PrevDayOiSummary | null)
       }
     } catch {
     }
@@ -715,6 +753,24 @@ function Madhan01Inner() {
                 <div className="flex items-center gap-2">
                     <BarChart3 className="h-4 w-4" />
                     <CardTitle className="text-base font-semibold">Unified OI Chain</CardTitle>
+                    {prevDayOiSummary && (
+                        <div className="flex items-center gap-3 ml-2 text-[10px]">
+                        <div className="flex items-center gap-1.5">
+                            <span className="text-muted-foreground">Open Interest:</span>
+                            <span className="font-mono font-medium">CE {formatCompactNumber(prevDayOiSummary.call_oi)}</span>
+                            <span className="font-mono font-medium">PE {formatCompactNumber(prevDayOiSummary.put_oi)}</span>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                            <span className="text-muted-foreground">Change in OI:</span>
+                            <span className="font-mono" style={prevDayOiSummary.call_coi > 0 ? { color: madhanMode === 'dark' ? '#34d399' : '#059669' } : prevDayOiSummary.call_coi < 0 ? { color: madhanMode === 'dark' ? '#f87171' : '#dc2626' } : {}}>
+                                CE {prevDayOiSummary.call_coi > 0 ? '+' : ''}{formatCompactNumber(prevDayOiSummary.call_coi)}
+                            </span>
+                            <span className="font-mono" style={prevDayOiSummary.put_coi > 0 ? { color: madhanMode === 'dark' ? '#34d399' : '#059669' } : prevDayOiSummary.put_coi < 0 ? { color: madhanMode === 'dark' ? '#f87171' : '#dc2626' } : {}}>
+                                PE {prevDayOiSummary.put_coi > 0 ? '+' : ''}{formatCompactNumber(prevDayOiSummary.put_coi)}
+                            </span>
+                        </div>
+                        </div>
+                    )}
                 </div>
                 <div className="flex flex-wrap items-center gap-4 text-xs">
                     <div className="flex items-center gap-2">
@@ -782,6 +838,96 @@ function Madhan01Inner() {
                 )}
                 {showOiChain && unifiedRows.length > 0 && (
                     <div className="space-y-1">
+                    {prevDayOiSummary && (() => {
+                        const callOi = prevDayOiSummary.call_oi
+                        const putOi = prevDayOiSummary.put_oi
+                        const maxOi = Math.max(Math.abs(callOi), Math.abs(putOi))
+                        const callCoi = prevDayOiSummary.call_coi
+                        const putCoi = prevDayOiSummary.put_coi
+                        const maxCoi = Math.max(Math.abs(callCoi), Math.abs(putCoi))
+                        return (
+                        <div className="grid grid-cols-3 gap-2 mb-2">
+                            <div className="relative rounded-md border px-3 pt-3 pb-2">
+                            <span className="absolute -top-2.5 left-2 bg-card px-1 text-[10px] text-muted-foreground font-medium">Unwind Details</span>
+                            <div className="text-[10px] space-y-0.5">
+                                <div className="grid grid-cols-5 gap-x-2">
+                                <div className="text-muted-foreground font-medium"></div>
+                                <div className="text-right text-muted-foreground font-medium">Strikes</div>
+                                <div className="text-right text-muted-foreground font-medium">Unwind</div>
+                                <div className="text-right text-muted-foreground font-medium">Build</div>
+                                <div className="text-right text-muted-foreground font-medium">Ratio</div>
+                                </div>
+                                {(['call', 'put', 'total'] as const).map((key) => {
+                                const u = prevDayOiSummary.unwind[key]
+                                const r = u.unwind_build_ratio
+                                const label = key === 'call' ? 'CE' : key === 'put' ? 'PE' : 'Total'
+                                const isHighest = key !== 'total' && u.unwind_value === Math.max(prevDayOiSummary.unwind.call.unwind_value, prevDayOiSummary.unwind.put.unwind_value)
+                                const hlClass = isHighest ? (key === 'call' ? 'bg-red-500/10' : 'bg-green-500/10') : ''
+                                return (
+                                    <div key={key} className={`grid grid-cols-5 gap-x-2 rounded ${hlClass}`}>
+                                    <div className="text-muted-foreground font-medium">{label}</div>
+                                    <div className="text-right font-mono">{u.unwound_strikes}/{u.total_strikes} <span className="text-muted-foreground">({u.unwind_pct}%)</span></div>
+                                    <div className="text-right font-mono text-red-500/80">{formatCompactNumber(u.unwind_value)}</div>
+                                    <div className="text-right font-mono text-green-500/80">{formatCompactNumber(u.build_value)}</div>
+                                    <div className="text-right font-mono font-semibold">{r !== null ? `${r}x` : '—'}</div>
+                                    </div>
+                                )
+                                })}
+                            </div>
+                            </div>
+                            <div className="relative rounded-md border px-3 pt-3 pb-2">
+                            <span className="absolute -top-2.5 left-2 bg-card px-1 text-[10px] text-muted-foreground font-medium">Open Interest</span>
+                            <div className="space-y-1.5 text-[10px]">
+                                <div>
+                                <div className="flex justify-between mb-0.5">
+                                    <span className="text-muted-foreground">CE</span>
+                                    <span className="font-mono">{formatCompactNumber(callOi)}</span>
+                                </div>
+                                <div className="h-2 rounded-full bg-muted overflow-hidden">
+                                    <div className="h-full rounded-full" style={{ width: `${maxOi > 0 ? (Math.abs(callOi) / maxOi) * 100 : 0}%`, backgroundColor: madhanMode === 'dark' ? 'rgba(248,113,113,0.5)' : 'rgba(220,38,38,0.5)' }} />
+                                </div>
+                                </div>
+                                <div>
+                                <div className="flex justify-between mb-0.5">
+                                    <span className="text-muted-foreground">PE</span>
+                                    <span className="font-mono">{formatCompactNumber(putOi)}</span>
+                                </div>
+                                <div className="h-2 rounded-full bg-muted overflow-hidden">
+                                    <div className="h-full rounded-full" style={{ width: `${maxOi > 0 ? (Math.abs(putOi) / maxOi) * 100 : 0}%`, backgroundColor: madhanMode === 'dark' ? 'rgba(52,211,153,0.5)' : 'rgba(5,150,105,0.5)' }} />
+                                </div>
+                                </div>
+                            </div>
+                            </div>
+                            <div className="relative rounded-md border px-3 pt-3 pb-2">
+                            <span className="absolute -top-2.5 left-2 bg-card px-1 text-[10px] text-muted-foreground font-medium">Change in OI</span>
+                            <div className="space-y-1.5 text-[10px]">
+                                <div>
+                                <div className="flex justify-between mb-0.5">
+                                    <span className="text-muted-foreground">CE</span>
+                                    <span className="font-mono" style={callCoi > 0 ? { color: madhanMode === 'dark' ? '#34d399' : '#059669' } : callCoi < 0 ? { color: madhanMode === 'dark' ? '#f87171' : '#dc2626' } : {}}>
+                                    {callCoi > 0 ? '+' : ''}{formatCompactNumber(callCoi)}
+                                    </span>
+                                </div>
+                                <div className="h-2 rounded-full bg-muted overflow-hidden">
+                                    <div className="h-full rounded-full" style={{ width: `${maxCoi > 0 ? (Math.abs(callCoi) / maxCoi) * 100 : 0}%`, backgroundColor: madhanMode === 'dark' ? 'rgba(248,113,113,0.5)' : 'rgba(220,38,38,0.5)' }} />
+                                </div>
+                                </div>
+                                <div>
+                                <div className="flex justify-between mb-0.5">
+                                    <span className="text-muted-foreground">PE</span>
+                                    <span className="font-mono" style={putCoi > 0 ? { color: madhanMode === 'dark' ? '#34d399' : '#059669' } : putCoi < 0 ? { color: madhanMode === 'dark' ? '#f87171' : '#dc2626' } : {}}>
+                                    {putCoi > 0 ? '+' : ''}{formatCompactNumber(putCoi)}
+                                    </span>
+                                </div>
+                                <div className="h-2 rounded-full bg-muted overflow-hidden">
+                                    <div className="h-full rounded-full" style={{ width: `${maxCoi > 0 ? (Math.abs(putCoi) / maxCoi) * 100 : 0}%`, backgroundColor: madhanMode === 'dark' ? 'rgba(52,211,153,0.5)' : 'rgba(5,150,105,0.5)' }} />
+                                </div>
+                                </div>
+                            </div>
+                            </div>
+                        </div>
+                        )
+                    })()}
                     <div
                         className="text-[11px] font-medium text-muted-foreground"
                         style={{

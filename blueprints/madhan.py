@@ -425,6 +425,23 @@ def nifty_previous_day_oi():
     oi_at_6min_map = get_nth_candle_oi_for_all_symbols(4, instrument=instrument) # 6th candle (e.g., 9:20 AM)
     
     combined_data = []
+    call_oi = 0
+    put_oi = 0
+    call_coi = 0
+    put_coi = 0
+
+    call_total_strikes = 0
+    call_unwound_strikes = 0
+    call_built_strikes = 0
+    call_unwind_value = 0
+    call_build_value = 0
+
+    put_total_strikes = 0
+    put_unwound_strikes = 0
+    put_built_strikes = 0
+    put_unwind_value = 0
+    put_build_value = 0
+
     for prev_item in prev_day_data:
         symbol = prev_item['symbol']
         prev_oi = prev_item.get('oi', 0)
@@ -433,11 +450,37 @@ def nifty_previous_day_oi():
         current_oi = current_oi_map.get(symbol, 0)
         change_in_oi = current_oi - prev_oi
 
+        # Accumulate CE/PE summary
+        if symbol.endswith('CE'):
+            call_oi += current_oi
+            call_coi += change_in_oi
+        elif symbol.endswith('PE'):
+            put_oi += current_oi
+            put_coi += change_in_oi
+
         # 3-Min Change
         oi_3min = oi_at_3min_map.get(symbol, 0)
         # The original logic was flawed. This new logic correctly calculates the change
         # only if a candle for the symbol exists for the current day.
         change_in_oi_3min = (oi_3min - prev_oi) if symbol in oi_at_3min_map else 0
+
+        # Unwind analysis based on 3-min OI change
+        if symbol.endswith('CE'):
+            call_total_strikes += 1
+            if change_in_oi_3min < 0:
+                call_unwound_strikes += 1
+                call_unwind_value += abs(change_in_oi_3min)
+            elif change_in_oi_3min > 0:
+                call_built_strikes += 1
+                call_build_value += change_in_oi_3min
+        elif symbol.endswith('PE'):
+            put_total_strikes += 1
+            if change_in_oi_3min < 0:
+                put_unwound_strikes += 1
+                put_unwind_value += abs(change_in_oi_3min)
+            elif change_in_oi_3min > 0:
+                put_built_strikes += 1
+                put_build_value += change_in_oi_3min
 
         # 6-Min Change
         oi_6min = oi_at_6min_map.get(symbol, 0)
@@ -453,7 +496,49 @@ def nifty_previous_day_oi():
         }
         combined_data.append(combined_item)
 
-    return jsonify({'status': 'success', 'data': combined_data})
+    summary = {
+        'call_oi': call_oi,
+        'put_oi': put_oi,
+        'call_coi': call_coi,
+        'put_coi': put_coi,
+        'unwind': {
+            'call': {
+                'total_strikes': call_total_strikes,
+                'unwound_strikes': call_unwound_strikes,
+                'built_strikes': call_built_strikes,
+                'unwind_value': call_unwind_value,
+                'build_value': call_build_value,
+                'unwind_pct': round(call_unwound_strikes / call_total_strikes * 100, 1) if call_total_strikes > 0 else 0,
+                'unwind_build_ratio': round(call_unwind_value / call_build_value, 2) if call_build_value > 0 else None,
+            },
+            'put': {
+                'total_strikes': put_total_strikes,
+                'unwound_strikes': put_unwound_strikes,
+                'built_strikes': put_built_strikes,
+                'unwind_value': put_unwind_value,
+                'build_value': put_build_value,
+                'unwind_pct': round(put_unwound_strikes / put_total_strikes * 100, 1) if put_total_strikes > 0 else 0,
+                'unwind_build_ratio': round(put_unwind_value / put_build_value, 2) if put_build_value > 0 else None,
+            },
+            'total': {
+                'total_strikes': call_total_strikes + put_total_strikes,
+                'unwound_strikes': call_unwound_strikes + put_unwound_strikes,
+                'built_strikes': call_built_strikes + put_built_strikes,
+                'unwind_value': call_unwind_value + put_unwind_value,
+                'build_value': call_build_value + put_build_value,
+                'unwind_pct': round(
+                    (call_unwound_strikes + put_unwound_strikes) /
+                    (call_total_strikes + put_total_strikes) * 100, 1
+                ) if (call_total_strikes + put_total_strikes) > 0 else 0,
+                'unwind_build_ratio': round(
+                    (call_unwind_value + put_unwind_value) /
+                    (call_build_value + put_build_value), 2
+                ) if (call_build_value + put_build_value) > 0 else None,
+            },
+        },
+    }
+
+    return jsonify({'status': 'success', 'data': combined_data, 'summary': summary})
 
 @madhan_bp.route('/api/nifty/coi-trend')
 @check_session_validity
