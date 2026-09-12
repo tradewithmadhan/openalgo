@@ -47,7 +47,7 @@ def get_or_compute_atm(instrument='NIFTY', kind='current'):
         spot_data = get_banknifty_data(limit=500) if instrument == 'BANKNIFTY' else get_nifty_data(limit=500)
         if spot_data:
             today = get_valid_trading_day(exchange="NSE").strftime('%Y-%m-%d')
-            today_candles = [d for d in spot_data if d.get('timestamp', '').startswith(today)]
+            today_candles = [d for d in spot_data if datetime.utcfromtimestamp(d.get('timestamp', 0)).strftime('%Y-%m-%d') == today]
             if today_candles:
                 open_price = today_candles[0].get('open', 0)
                 if open_price:
