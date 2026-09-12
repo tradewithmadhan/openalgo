@@ -2180,7 +2180,7 @@ def nifty_dash_time_analysis():
             end_ts = None
     
     # 1. Get all tracked symbols
-    tracked_symbols = config.option_symbols
+    tracked_symbols = [s for s in get_tracked_symbols() if s.startswith(instrument)]
     if not tracked_symbols:
         return jsonify({'status': 'success', 'data': []})
 
