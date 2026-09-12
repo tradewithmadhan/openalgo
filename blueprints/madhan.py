@@ -31,6 +31,40 @@ def get_instrument_config(instrument='NIFTY'):
         return nifty_fetcher.banknifty, 100, 'BANKNIFTY'
     return nifty_fetcher.nifty, 50, 'NIFTY'
 
+
+def get_or_compute_atm(instrument='NIFTY', kind='current'):
+    """Returns ATM strike for the instrument.
+    kind='current' → current_atm_strike (from last spot close)
+    kind='open'    → open_atm_strike (from today's first spot open)
+    Tries fetcher config first, falls back to spot data in DB.
+    """
+    config, strike_step, spot_symbol = get_instrument_config(instrument)
+
+    if kind == 'open':
+        atm = config.open_atm_strike
+        if atm:
+            return atm
+        spot_data = get_banknifty_data(limit=500) if instrument == 'BANKNIFTY' else get_nifty_data(limit=500)
+        if spot_data:
+            today = get_valid_trading_day(exchange="NSE").strftime('%Y-%m-%d')
+            today_candles = [d for d in spot_data if d.get('timestamp', '').startswith(today)]
+            if today_candles:
+                open_price = today_candles[0].get('open', 0)
+                if open_price:
+                    return round(open_price / strike_step) * strike_step
+        return 0
+    else:
+        atm = config.current_atm_strike
+        if atm:
+            return atm
+        spot_data = get_banknifty_data(limit=1) if instrument == 'BANKNIFTY' else get_nifty_data(limit=1)
+        if spot_data:
+            current_spot = spot_data[0].get('close', 0)
+            if current_spot:
+                return round(current_spot / strike_step) * strike_step
+        return 0
+
+
 @madhan_bp.route('/madhan01')
 @check_session_validity
 def madhan01_page():
@@ -65,10 +99,8 @@ def get_atp_ltp_data():
         latest_spot = spot_data[0]
         current_spot = latest_spot.get('close', 0)
         
-        # Get current ATM strike from fetcher
-        current_atm_strike = config.current_atm_strike
-        if not current_atm_strike:
-            current_atm_strike = round(current_spot / strike_step) * strike_step
+        # Get current ATM strike (falls back to spot data if fetcher hasn't set it)
+        current_atm_strike = get_or_compute_atm(instrument, 'current')
         
         # Get historical intraday data for ATP calculation
         # Get current day's instrument data for volume-weighted ATP calculation
@@ -544,9 +576,7 @@ def nifty_coi_trend():
     instrument = request.args.get('instrument', 'NIFTY')
     config, strike_step, spot_symbol = get_instrument_config(instrument)
 
-    open_atm = config.open_atm_strike
-    if not open_atm or open_atm == 0:
-        return jsonify({'status': 'success', 'data': {'timestamps': [], 'coi_percent': [], 'oi_trend_percent': []}, 'message': 'ATM strike not calculated yet.'})
+    open_atm = get_or_compute_atm(instrument, 'open')
 
     # Get strike selection parameters
     strike_selection_mode = request.args.get('strike_selection_mode', 'option2')
@@ -701,9 +731,7 @@ def nifty_ce_pe_changes():
     instrument = request.args.get('instrument', 'NIFTY')
     config, strike_step, spot_symbol = get_instrument_config(instrument)
 
-    open_atm = config.open_atm_strike
-    if not open_atm or open_atm == 0:
-        return jsonify({'status': 'success', 'data': {'timestamps': [], 'ce_changes': [], 'pe_changes': []}, 'message': 'ATM strike not calculated yet.'})
+    open_atm = get_or_compute_atm(instrument, 'open')
 
     # Get strike selection parameters
     strike_selection_mode = request.args.get('strike_selection_mode', 'option1')
@@ -886,9 +914,7 @@ def nifty_ce_pe_volume_changes():
     instrument = request.args.get('instrument', 'NIFTY')
     config, strike_step, spot_symbol = get_instrument_config(instrument)
 
-    open_atm = config.open_atm_strike
-    if not open_atm or open_atm == 0:
-        return jsonify({'status': 'success', 'data': {'timestamps': [], 'ce_changes': [], 'pe_changes': []}, 'message': 'ATM strike not calculated yet.'})
+    open_atm = get_or_compute_atm(instrument, 'open')
 
     strike_selection_mode = request.args.get('strike_selection_mode', 'option1')  # option1: all strikes, option2: selective
     upside_strikes = int(request.args.get('upside_strikes', '10'))
@@ -1760,7 +1786,7 @@ def ezay_chart_signals():
         # ── Compute hx_lx_vol for the response ──────────────────────────
         hx_lx_vol_map = {}
         try:
-            atm_strike = config.open_atm_strike or config.current_atm_strike
+            atm_strike = get_or_compute_atm(instrument, 'open') or get_or_compute_atm(instrument, 'current')
             expiry_date = config.expiry_date
             if atm_strike and expiry_date:
                 hx_lx_strikes = [atm_strike + (i * strike_step) for i in range(-10, 11)]
@@ -2014,7 +2040,7 @@ def nifty_dash_data():
     prev_day_data = get_previous_day_oi(instrument=instrument)
     prev_oi_map = {item['symbol']: item.get('oi', 0) for item in prev_day_data}
     
-    open_atm = config.open_atm_strike
+    open_atm = get_or_compute_atm(instrument, 'open')
     
     # In replay mode, current_atm should be based on the data at end_ts
     if end_ts:
@@ -2023,9 +2049,9 @@ def nifty_dash_data():
             spot_price = latest_spot_data[0]['close']
             current_atm = round(spot_price / strike_step) * strike_step
         else:
-            current_atm = config.current_atm_strike or open_atm
+            current_atm = get_or_compute_atm(instrument, 'current') or open_atm
     else:
-        current_atm = config.current_atm_strike or open_atm
+        current_atm = get_or_compute_atm(instrument, 'current') or open_atm
     
     def is_included(sym, strike):
         if mode == 'total': return True
@@ -2179,7 +2205,7 @@ def nifty_dash_time_analysis():
         if not sorted_ts:
             return jsonify({'status': 'success', 'data': []})
 
-    open_atm = config.open_atm_strike
+    open_atm = get_or_compute_atm(instrument, 'open')
     
     # Calculate current ATM based on latest spot in the window
     latest_spot = spot_by_ts.get(sorted_ts[-1], 0)
@@ -2187,7 +2213,7 @@ def nifty_dash_time_analysis():
         latest_spot_data = get_banknifty_data(limit=1, end_ts=end_ts) if instrument == 'BANKNIFTY' else get_nifty_data(limit=1, end_ts=end_ts)
         latest_spot = latest_spot_data[0]['close'] if latest_spot_data else 0
     
-    current_atm = round(latest_spot / strike_step) * strike_step if latest_spot > 0 else (config.current_atm_strike or open_atm)
+    current_atm = round(latest_spot / strike_step) * strike_step if latest_spot > 0 else (get_or_compute_atm(instrument, 'current') or open_atm)
     
     def is_included(sym, strike, bucket_atm):
         if mode == 'total': return True
@@ -2367,8 +2393,8 @@ def nifty_hx_lx_vol():
     instrument = request.args.get('instrument', 'NIFTY')
     config, strike_step, spot_symbol = get_instrument_config(instrument)
 
-    # 1. Get ATM and Expiry from fetcher
-    atm_strike = config.open_atm_strike or config.current_atm_strike
+    # 1. Get ATM and Expiry
+    atm_strike = get_or_compute_atm(instrument, 'open') or get_or_compute_atm(instrument, 'current')
     expiry_date = config.expiry_date
 
     if not atm_strike or not expiry_date:
@@ -2413,21 +2439,7 @@ def nifty_support_resistance():
     instrument = request.args.get('instrument', 'NIFTY')
     config, strike_step, spot_symbol = get_instrument_config(instrument)
 
-    open_atm = config.open_atm_strike
-    if not open_atm or open_atm == 0:
-        return jsonify({
-            'status': 'success', 
-            'data': {
-                'timestamps': [], 
-                'oi_support': [], 
-                'oi_resistance': [],
-                'coi_support': [],
-                'coi_resistance': [],
-                'oi_sr': None,
-                'coi_sr': None
-            }, 
-            'message': 'ATM strike not calculated yet.'
-        })
+    open_atm = get_or_compute_atm(instrument, 'open')
 
     # Always use all strikes (option1)
 
