@@ -68,10 +68,7 @@ def get_atp_ltp_data():
         # Get current ATM strike from fetcher
         current_atm_strike = config.current_atm_strike
         if not current_atm_strike:
-            return jsonify({
-                'status': 'error', 
-                'message': 'ATM strike not calculated yet'
-            }), 404
+            current_atm_strike = round(current_spot / strike_step) * strike_step
         
         # Get historical intraday data for ATP calculation
         # Get current day's instrument data for volume-weighted ATP calculation
