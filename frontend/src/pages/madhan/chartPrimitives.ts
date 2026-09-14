@@ -281,6 +281,9 @@ export class ExtendedMarkerPrimitive {
                     ctx.closePath()
                     ctx.fill()
                     break
+                  case 'square':
+                    ctx.fillRect(x - size, baseY - size, size * 2, size * 2)
+                    break
                 }
                 if (marker.text) {
                   ctx.fillStyle = marker.color
@@ -1597,4 +1600,52 @@ export class VolumeProfilePrimitive {
 
   setVisible(v: boolean) { this._show = v }
   toggle() { this._show = !this._show; return this._show }
+}
+
+export class VertLinePrimitive {
+  _timeScale: any
+  _lines: Array<{ time: any; color: string }> = []
+  _show = false
+
+  constructor(timeScale: any) {
+    this._timeScale = timeScale
+  }
+
+  paneViews() {
+    const self = this
+    return [{
+      zOrder() { return 'bottom' as const },
+      renderer() {
+        return {
+          draw(target: any) {
+            if (!self._show || !self._lines.length) return
+            target.useBitmapCoordinateSpace((scope: any) => {
+              const ctx = scope.context
+              const hpr = scope.horizontalPixelRatio
+              const vpr = scope.verticalPixelRatio
+              ctx.lineWidth = 1 * vpr
+              ctx.setLineDash([6 * vpr, 4 * vpr])
+              for (const line of self._lines) {
+                const x = self._timeScale.timeToCoordinate(line.time)
+                if (x == null) continue
+                ctx.strokeStyle = line.color
+                ctx.beginPath()
+                ctx.moveTo(x * hpr, 0)
+                ctx.lineTo(x * hpr, scope.bitmapSize.height)
+                ctx.stroke()
+              }
+              ctx.setLineDash([])
+            })
+          }
+        }
+      }
+    }]
+  }
+
+  setData(lines: Array<{ time: any; color: string }>) {
+    this._lines = lines || []
+  }
+
+  toggle(show: boolean) { this._show = show }
+  requestUpdate() {}
 }

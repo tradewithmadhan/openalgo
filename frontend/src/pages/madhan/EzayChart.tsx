@@ -35,7 +35,7 @@ import { useProfileMenuItems } from '@/hooks/useProfileMenuItems'
 import { useMadhanTheme } from './useMadhanTheme'
 import { cn } from '@/lib/utils'
 import { tradingApi } from '@/api/trading'
-import { setTimeOffset, getTimeOffset } from '@/utils/timeSync'
+
 import { chartTheme } from './chartTheme'
 import DrawingToolbar from './DrawingToolbar'
 import FloatingDrawingToolbar from './FloatingDrawingToolbar'
@@ -45,6 +45,8 @@ import WidgetBar from './WidgetBar'
 import { PositionLinePrimitive, type PositionDatum, OrderLinePrimitive, type OrderLineDatum, VolumeProfilePrimitive } from './chartPrimitives'
 import { useOrderEventRefresh } from '@/hooks/useOrderEventRefresh'
 import { useInstrument, InstrumentProvider, type Instrument } from './InstrumentContext'
+import { useSocketContext } from '@/components/socket/SocketProvider'
+import { showToast } from '@/utils/toast'
 
 import EzaySignals, { type SignalRow, type FirstSignalInfo, type BackendSignals } from './components/EzaySignals'
 import QuickTradePanel from './components/QuickTradePanel'
@@ -215,6 +217,7 @@ export default function EzayChart() {
 
 function EzayChartInner() {
   const { instrument, strikeStep, setInstrument } = useInstrument();
+  const { socket } = useSocketContext()
   const instrumentRef = useRef(instrument)
   useEffect(() => { instrumentRef.current = instrument }, [instrument])
   const chartContainerRef = useRef<HTMLDivElement | null>(null)
@@ -273,6 +276,8 @@ function EzayChartInner() {
   const intervalRef = useRef('1m')
   const showSignalsRef = useRef(true)
   const showHCRef = useRef(false)
+  const showCERef = useRef(true)
+  const showPERef = useRef(true)
 
   const loadSetting = (key: string, fallback: any) => {
     try { const v = localStorage.getItem(`ezay_${key}`); return v !== null ? JSON.parse(v) : fallback } catch { return fallback }
@@ -393,7 +398,7 @@ function EzayChartInner() {
     return 1
   }
 
-  const todayStr = () => new Date(Date.now() + getTimeOffset()).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' })
+  const todayStr = () => new Date(Date.now() + timeOffsetRef.current).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' })
 
   const shiftBacktestDate = (days: number) => {
     const cur = backtestDateRef.current || todayStr()
@@ -428,7 +433,6 @@ function EzayChartInner() {
     setIrStrikes(signals.ir)
   }, [])
 
-  const [fetcherRunning, setFetcherRunning] = useState(false)
   const fetcherRunningRef = useRef(false)
   const [isPlacingOrder, setIsPlacingOrder] = useState(false)
   const isPlacingOrderRef = useRef(false)
@@ -441,12 +445,10 @@ function EzayChartInner() {
     const syms: Array<{ symbol: string; exchange: string }> = [
       { symbol: instrument, exchange: 'NSE_INDEX' },
     ]
-    if (fetcherRunning) {
-      if (ceSymbol) syms.push({ symbol: ceSymbol, exchange: 'NFO' })
-      if (peSymbol) syms.push({ symbol: peSymbol, exchange: 'NFO' })
-    }
+    if (ceSymbol) syms.push({ symbol: ceSymbol, exchange: 'NFO' })
+    if (peSymbol) syms.push({ symbol: peSymbol, exchange: 'NFO' })
     return syms
-  }, [ceSymbol, peSymbol, isBacktest, fetcherRunning])
+  }, [ceSymbol, peSymbol, isBacktest, instrument])
 
   const { data: wsData, isConnected } = useMarketData({ symbols: wsSymbols, mode: 'LTP' })
 
@@ -558,11 +560,13 @@ function EzayChartInner() {
 
     // CE/PE close-price line series — always visible for position/order primitives, line shows only when CE/PE toggle OFF
     ceLineRef.current = chart.addSeries(LineSeries, {
-      color: 'rgba(41,98,255,0.5)', lineWidth: showCE ? 0 : 1,
+      color: 'rgba(41,98,255,0.5)', lineWidth: 1,
+      visible: !showCERef.current,
       priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
     } as any)
     peLineRef.current = chart.addSeries(LineSeries, {
-      color: 'rgba(224,64,251,0.5)', lineWidth: showPE ? 0 : 1,
+      color: 'rgba(224,64,251,0.5)', lineWidth: 1,
+      visible: !showPERef.current,
       priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
     } as any)
 
@@ -791,7 +795,7 @@ function EzayChartInner() {
     // In live mode, include ALL API data (including current bucket) so aggregated
     // candles load correctly when switching timeframes. Seed currentOhlcRef so
     // WS update() continues from the API's OHLC instead of starting fresh.
-    const liveBucket = !isBacktestRef.current ? Math.floor((Date.now() + getTimeOffset()) / 1000 / (intervalMin * 60)) * (intervalMin * 60) : 0
+    const liveBucket = !isBacktestRef.current ? Math.floor((Date.now() + timeOffsetRef.current) / 1000 / (intervalMin * 60)) * (intervalMin * 60) : 0
 
     if (ceSeriesRef.current) {
       if (ct === 'candlestick') {
@@ -1514,6 +1518,18 @@ function EzayChartInner() {
     // Start data fetcher on page open
     fetch(`/madhan/api/nifty/start?instrument=${instrument}`, { method: 'POST' }).catch(() => {})
 
+    // Sync server time offset
+    fetch(`/madhan/api/nifty/status?instrument=${instrument}&_=${Date.now()}`)
+      .then((r) => r.json())
+      .then((json) => {
+        if (json?.status === 'success' && json.server_time) {
+          const serverMs = new Date(json.server_time).getTime()
+          const offset = serverMs - Date.now()
+          timeOffsetRef.current = offset
+        }
+      })
+      .catch(() => {})
+
     return () => {
       if (updaterRef.current) window.clearTimeout(updaterRef.current)
       resizeObserver.disconnect()
@@ -1552,6 +1568,8 @@ function EzayChartInner() {
       if (combinedExtrinsicRef.current) combinedExtrinsicRef.current.applyOptions({ visible: showCombinedAll })
       if (ceSeriesRef.current) ceSeriesRef.current.applyOptions({ visible: showCE })
       if (peSeriesRef.current) peSeriesRef.current.applyOptions({ visible: showPE })
+      if (ceLineRef.current) ceLineRef.current.applyOptions({ visible: !showCE } as any)
+      if (peLineRef.current) peLineRef.current.applyOptions({ visible: !showPE } as any)
       if (showVPRef.current) {
         ceVpRef.current?.setVisible(showCE)
         peVpRef.current?.setVisible(showPE)
@@ -1574,6 +1592,8 @@ function EzayChartInner() {
       if (combinedExtrinsicRef.current) combinedExtrinsicRef.current.applyOptions({ visible: showCombinedAll })
       if (ceSeriesRef.current) ceSeriesRef.current.applyOptions({ visible: showCE })
       if (peSeriesRef.current) peSeriesRef.current.applyOptions({ visible: showPE })
+      if (ceLineRef.current) ceLineRef.current.applyOptions({ visible: !showCE } as any)
+      if (peLineRef.current) peLineRef.current.applyOptions({ visible: !showPE } as any)
       if (showVPRef.current) {
         ceVpRef.current?.setVisible(showCE)
         peVpRef.current?.setVisible(showPE)
@@ -1615,8 +1635,8 @@ function EzayChartInner() {
   useEffect(() => {
     if (ceSeriesRef.current) ceSeriesRef.current.applyOptions({ visible: showCE })
     if (peSeriesRef.current) peSeriesRef.current.applyOptions({ visible: showPE })
-    if (ceLineRef.current) ceLineRef.current.applyOptions({ lineWidth: showCE ? 0 : 1 } as any)
-    if (peLineRef.current) peLineRef.current.applyOptions({ lineWidth: showPE ? 0 : 1 } as any)
+    if (ceLineRef.current) ceLineRef.current.applyOptions({ visible: !showCE } as any)
+    if (peLineRef.current) peLineRef.current.applyOptions({ visible: !showPE } as any)
     if (ceIntrinsicRef.current) ceIntrinsicRef.current.applyOptions({ visible: showIntrinsic && showCE })
     if (peIntrinsicRef.current) peIntrinsicRef.current.applyOptions({ visible: showIntrinsic && showPE })
     if (ceExtrinsicRef.current) ceExtrinsicRef.current.applyOptions({ visible: showExtrinsic && showCE })
@@ -1635,10 +1655,12 @@ function EzayChartInner() {
   }, [showCombinedAll])
 
   useEffect(() => {
+    showCERef.current = showCE
+    showPERef.current = showPE
     showSignalsRef.current = showSignals
     showHCRef.current = showHC
     applyData()
-  }, [showSignals, showHC, applyData])
+  }, [showCE, showPE, showSignals, showHC, applyData])
 
   // Signals + hx_lx_vol data consumed by Total Volume, TrustMe, and EzaySignals
   // Extracted as useCallback so the live polling can re-fetch every minute
@@ -1830,6 +1852,8 @@ function EzayChartInner() {
       if (combinedExtrinsicRef.current) combinedExtrinsicRef.current.applyOptions({ visible: showCombinedAll })
       if (ceSeriesRef.current) ceSeriesRef.current.applyOptions({ visible: showCE })
       if (peSeriesRef.current) peSeriesRef.current.applyOptions({ visible: showPE })
+      if (ceLineRef.current) ceLineRef.current.applyOptions({ visible: !showCE } as any)
+      if (peLineRef.current) peLineRef.current.applyOptions({ visible: !showPE } as any)
       // Restore volume mode visibility
       const isTotal = volumeMode === 'total'
       if (volumeRef.current) volumeRef.current.applyOptions({ visible: !isTotal })
@@ -1917,7 +1941,7 @@ function EzayChartInner() {
     const update = () => {
       const intervalMin = getIntervalMinutes(intervalRef.current)
       const bucketSec = intervalMin * 60
-      const now = Math.floor((Date.now() + getTimeOffset()) / 1000)
+      const now = Math.floor((Date.now() + timeOffsetRef.current) / 1000)
       const nextBucket = Math.floor(now / bucketSec) * bucketSec + bucketSec
       const remaining = nextBucket - now
       if (intervalMin >= 60) {
@@ -1946,61 +1970,43 @@ function EzayChartInner() {
   useEffect(() => {
     if (updaterRef.current) window.clearTimeout(updaterRef.current)
     if (isBacktest) return
+    // Initial data fetch on mount
+    if (selectedStrike) {
+      updateLiveData()
+      refetchSignals()
+    }
+  }, [selectedStrike, updateLiveData, isBacktest, instrument, refetchSignals])
 
-    let timer = 0
-    let pollInterval = 0
-    let isFetching = false
-    const getServerNow = () => new Date(Date.now() + timeOffsetRef.current)
+  // SocketIO: event-based refresh instead of polling
+  useEffect(() => {
+    if (!socket || isBacktest) return
 
-    const fetchStatusAndCheck = async () => {
-      if (isFetching) return
-      isFetching = true
-      try {
-        const res = await fetch(`/madhan/api/nifty/status?instrument=${instrument}&_=${Date.now()}`)
-        const json = await res.json()
-        if (json?.status === 'success' && json?.server_time) {
-          const serverMs = new Date(json.server_time).getTime()
-          timeOffsetRef.current = serverMs - Date.now()
-          setTimeOffset(timeOffsetRef.current)
-        }
-        if (!json?.is_running) {
-          if (fetcherRunningRef.current) setFetcherRunning(false)
-          fetcherRunningRef.current = false
-          window.clearInterval(pollInterval)
-          return
-        }
-        if (json?.status === 'success' && json?.is_running && json?.last_update) {
-          if (!fetcherRunningRef.current) setFetcherRunning(true)
-          fetcherRunningRef.current = true
-          const lastUpdate = new Date(json.last_update)
-          const serverNow = getServerNow()
-            if (lastUpdate.getMinutes() === serverNow.getMinutes()) {
-              await updateLiveData()
-              await refetchSignals()
-              window.clearInterval(pollInterval)
-              scheduleNextMinute()
-            }
-        }
-      } catch {} finally {
-        isFetching = false
+    const handleDataUpdate = (data: { instrument: string }) => {
+      if (data.instrument === instrument && selectedStrike) {
+        updateLiveData()
+        refetchSignals()
+        showToast.success(`${instrument} data updated`, 'system', { duration: 1000 })
+      }
+    }
+    const handleStatusChanged = (data: { status: string; is_running: boolean }) => {
+      if (fetcherRunningRef.current !== data.is_running) {
+        fetcherRunningRef.current = data.is_running
+      }
+      if (!data.is_running && data.status.startsWith('Stopped')) {
+        showToast.info(`Fetcher: ${data.status}`, 'system', { duration: 1000 })
       }
     }
 
-    const scheduleNextMinute = () => {
-      window.clearTimeout(timer)
-      const now = getServerNow()
-      const msToNextMinute = (60 - now.getSeconds()) * 1000 - now.getMilliseconds()
-      timer = window.setTimeout(() => {
-        pollInterval = window.setInterval(fetchStatusAndCheck, 1000)
-      }, Math.max(0, msToNextMinute))
-    }
+    socket.on('nifty_data_updated', handleDataUpdate)
+    socket.on('banknifty_data_updated', handleDataUpdate)
+    socket.on('fetcher_status_changed', handleStatusChanged)
 
-    if (selectedStrike) {
-      fetchStatusAndCheck()
-      scheduleNextMinute()
+    return () => {
+      socket.off('nifty_data_updated', handleDataUpdate)
+      socket.off('banknifty_data_updated', handleDataUpdate)
+      socket.off('fetcher_status_changed', handleStatusChanged)
     }
-    return () => { window.clearTimeout(timer); window.clearInterval(pollInterval) }
-  }, [selectedStrike, updateLiveData, isBacktest, instrument])
+  }, [socket, instrument, selectedStrike, updateLiveData, refetchSignals, isBacktest])
 
   useEffect(() => {
     if (!strikeListRef.current || !selectedStrike) return
@@ -2223,7 +2229,7 @@ function EzayChartInner() {
         }
       }
     }
-  }, [wsData, ceSymbol, peSymbol, volumeMode])
+  }, [wsData, ceSymbol, peSymbol, volumeMode, instrument])
 
   const loadStrikes = async () => {
     try {
@@ -2291,6 +2297,9 @@ function EzayChartInner() {
           <Button variant="ghost" size="sm" className="h-7 text-xs hidden sm:flex" asChild>
             <Link to="/madhan/realtime-table"><BarChart3 className="h-3.5 w-3.5 mr-1.5" />EzayOptionsTable</Link>
           </Button>
+          <Button variant="ghost" size="sm" className="h-7 text-xs hidden sm:flex" asChild>
+            <Link to="/madhan/sk-work"><BarChart3 className="h-3.5 w-3.5 mr-1.5" />SK Work</Link>
+          </Button>
         </div>
         <div className="flex items-center gap-2">
           <Badge variant={appMode === 'live' ? 'default' : 'secondary'}
@@ -2354,7 +2363,6 @@ function EzayChartInner() {
         </div>
         <div className="h-4 w-px bg-border" />
         <div className="flex items-center gap-1.5">
-          <Label className="text-[11px]" style={{ color: t.textSecondary }}>Time:</Label>
           <Select value={interval} onValueChange={(v) => { setInterval(v); saveSetting('interval', v) }}>
             <SelectTrigger className="h-7 w-16 text-[11px]"><SelectValue /></SelectTrigger>
             <SelectContent>
@@ -2365,7 +2373,6 @@ function EzayChartInner() {
           </Select>
         </div>
         <div className="flex items-center gap-1.5">
-          <Label className="text-[11px]" style={{ color: t.textSecondary }}>Chart:</Label>
           <Select value={chartType} onValueChange={(v) => { setChartType(v as 'candlestick' | 'line'); saveSetting('chartType', v) }}>
             <SelectTrigger className="h-7 w-20 text-[11px]"><SelectValue /></SelectTrigger>
             <SelectContent>
@@ -2373,6 +2380,10 @@ function EzayChartInner() {
               <SelectItem value="line">Line</SelectItem>
             </SelectContent>
           </Select>
+          <div className="flex items-center gap-1">
+            <Checkbox checked={semiTransparent} onCheckedChange={(v) => { setSemiTransparent(!!v); saveSetting('semiTransparent', !!v) }} />
+            <Label className="text-[11px]" style={{ color: t.textSecondary }}>50%</Label>
+          </div>
         </div>
         <div className="flex items-center gap-2">
           <div className="flex items-center gap-1">
@@ -2404,10 +2415,6 @@ function EzayChartInner() {
           <div className="flex items-center gap-1">
             <Checkbox checked={showHC} onCheckedChange={(v) => { setShowHC(!!v); saveSetting('showHC', !!v) }} />
             <Label className="text-[11px]" style={{ color: t.textSecondary }}>HC</Label>
-          </div>
-          <div className="flex items-center gap-1">
-            <Checkbox checked={semiTransparent} onCheckedChange={(v) => { setSemiTransparent(!!v); saveSetting('semiTransparent', !!v) }} />
-            <Label className="text-[11px]" style={{ color: t.textSecondary }}>50% Candles</Label>
           </div>
           <div className="flex items-center rounded border overflow-hidden" style={{ borderColor: t.border }}>
             <Button size="sm" variant="ghost" className="h-6 px-2 text-[10px] rounded-none" style={{ backgroundColor: volumeMode === 'strike' ? (madhanMode === 'dark' ? 'rgba(41,98,255,0.25)' : 'rgba(37,99,235,0.2)') : undefined, color: volumeMode === 'strike' ? (madhanMode === 'dark' ? '#60a5fa' : '#2563eb') : t.textSecondary }} onClick={() => { setVolumeMode('strike'); saveSetting('volumeMode', 'strike') }}>Strike Vol</Button>

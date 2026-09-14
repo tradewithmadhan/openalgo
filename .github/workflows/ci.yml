@@ -82,7 +82,6 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
       - run: npm run lint
-        continue-on-error: true  # Pre-existing warnings in madhan chart components
 
   # The chart-indicator skill documents the openalgo-charts build that /trading
   # actually pins, so a version bump that leaves the skill behind fails here.
@@ -232,7 +231,6 @@ jobs:
           git add -f frontend/dist/ ':(exclude)frontend/dist/*.gz' ':(exclude)frontend/dist/*.br'
           git diff --staged --quiet || git commit -m "chore: auto-build frontend dist [skip ci]"
           git push
-
 
   # Docker build, scan, and push to Docker Hub (main branch only).
   #

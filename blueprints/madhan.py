@@ -3,6 +3,7 @@ from utils.session import check_session_validity
 from utils.logging import get_logger
 from datetime import datetime, timedelta, time
 from collections import defaultdict
+import pandas as pd
 from services.history_service import get_history
 from services.madhan.nifty_fetch_service import nifty_fetcher
 from services.madhan.atp_signal import (
@@ -11,6 +12,7 @@ from services.madhan.atp_signal import (
 )
 from services.madhan.volume_signal import compute_spike_flags
 from services.madhan.hx_lx import compute_hx_lx_counts
+from services.madhan.madhan_signals import compute_test01a, compute_test01b
 from database.madhan_db import extract_strike, get_nifty_data, get_banknifty_data, get_option_data, get_consistent_current_option_data, get_nifty_data_count, get_banknifty_data_count, get_previous_day_oi, get_nth_candle_oi_for_all_symbols, get_current_day_historical_data, get_current_day_instrument_data, get_current_day_instrument_data_batch, get_instrument_data_for_date, get_previous_trading_day, get_coi_history, get_valid_trading_day, get_tracked_symbols
 from database.auth_db import get_api_key_for_tradingview
 from blueprints.react_app import serve_react_app
@@ -28,6 +30,40 @@ def get_instrument_config(instrument='NIFTY'):
     if instrument == 'BANKNIFTY':
         return nifty_fetcher.banknifty, 100, 'BANKNIFTY'
     return nifty_fetcher.nifty, 50, 'NIFTY'
+
+
+def get_or_compute_atm(instrument='NIFTY', kind='current'):
+    """Returns ATM strike for the instrument.
+    kind='current' → current_atm_strike (from last spot close)
+    kind='open'    → open_atm_strike (from today's first spot open)
+    Tries fetcher config first, falls back to spot data in DB.
+    """
+    config, strike_step, spot_symbol = get_instrument_config(instrument)
+
+    if kind == 'open':
+        atm = config.open_atm_strike
+        if atm:
+            return atm
+        spot_data = get_banknifty_data(limit=500) if instrument == 'BANKNIFTY' else get_nifty_data(limit=500)
+        if spot_data:
+            today = get_valid_trading_day(exchange="NSE").strftime('%Y-%m-%d')
+            today_candles = [d for d in spot_data if datetime.utcfromtimestamp(d.get('timestamp', 0)).strftime('%Y-%m-%d') == today]
+            if today_candles:
+                open_price = today_candles[0].get('open', 0)
+                if open_price:
+                    return round(open_price / strike_step) * strike_step
+        return 0
+    else:
+        atm = config.current_atm_strike
+        if atm:
+            return atm
+        spot_data = get_banknifty_data(limit=1) if instrument == 'BANKNIFTY' else get_nifty_data(limit=1)
+        if spot_data:
+            current_spot = spot_data[0].get('close', 0)
+            if current_spot:
+                return round(current_spot / strike_step) * strike_step
+        return 0
+
 
 @madhan_bp.route('/madhan01')
 @check_session_validity
@@ -63,13 +99,8 @@ def get_atp_ltp_data():
         latest_spot = spot_data[0]
         current_spot = latest_spot.get('close', 0)
         
-        # Get current ATM strike from fetcher
-        current_atm_strike = config.current_atm_strike
-        if not current_atm_strike:
-            return jsonify({
-                'status': 'error', 
-                'message': 'ATM strike not calculated yet'
-            }), 404
+        # Get current ATM strike (falls back to spot data if fetcher hasn't set it)
+        current_atm_strike = get_or_compute_atm(instrument, 'current')
         
         # Get historical intraday data for ATP calculation
         # Get current day's instrument data for volume-weighted ATP calculation
@@ -423,6 +454,23 @@ def nifty_previous_day_oi():
     oi_at_6min_map = get_nth_candle_oi_for_all_symbols(4, instrument=instrument) # 6th candle (e.g., 9:20 AM)
     
     combined_data = []
+    call_oi = 0
+    put_oi = 0
+    call_coi = 0
+    put_coi = 0
+
+    call_total_strikes = 0
+    call_unwound_strikes = 0
+    call_built_strikes = 0
+    call_unwind_value = 0
+    call_build_value = 0
+
+    put_total_strikes = 0
+    put_unwound_strikes = 0
+    put_built_strikes = 0
+    put_unwind_value = 0
+    put_build_value = 0
+
     for prev_item in prev_day_data:
         symbol = prev_item['symbol']
         prev_oi = prev_item.get('oi', 0)
@@ -431,11 +479,37 @@ def nifty_previous_day_oi():
         current_oi = current_oi_map.get(symbol, 0)
         change_in_oi = current_oi - prev_oi
 
+        # Accumulate CE/PE summary
+        if symbol.endswith('CE'):
+            call_oi += current_oi
+            call_coi += change_in_oi
+        elif symbol.endswith('PE'):
+            put_oi += current_oi
+            put_coi += change_in_oi
+
         # 3-Min Change
         oi_3min = oi_at_3min_map.get(symbol, 0)
         # The original logic was flawed. This new logic correctly calculates the change
         # only if a candle for the symbol exists for the current day.
         change_in_oi_3min = (oi_3min - prev_oi) if symbol in oi_at_3min_map else 0
+
+        # Unwind analysis based on 3-min OI change
+        if symbol.endswith('CE'):
+            call_total_strikes += 1
+            if change_in_oi_3min < 0:
+                call_unwound_strikes += 1
+                call_unwind_value += abs(change_in_oi_3min)
+            elif change_in_oi_3min > 0:
+                call_built_strikes += 1
+                call_build_value += change_in_oi_3min
+        elif symbol.endswith('PE'):
+            put_total_strikes += 1
+            if change_in_oi_3min < 0:
+                put_unwound_strikes += 1
+                put_unwind_value += abs(change_in_oi_3min)
+            elif change_in_oi_3min > 0:
+                put_built_strikes += 1
+                put_build_value += change_in_oi_3min
 
         # 6-Min Change
         oi_6min = oi_at_6min_map.get(symbol, 0)
@@ -451,7 +525,49 @@ def nifty_previous_day_oi():
         }
         combined_data.append(combined_item)
 
-    return jsonify({'status': 'success', 'data': combined_data})
+    summary = {
+        'call_oi': call_oi,
+        'put_oi': put_oi,
+        'call_coi': call_coi,
+        'put_coi': put_coi,
+        'unwind': {
+            'call': {
+                'total_strikes': call_total_strikes,
+                'unwound_strikes': call_unwound_strikes,
+                'built_strikes': call_built_strikes,
+                'unwind_value': call_unwind_value,
+                'build_value': call_build_value,
+                'unwind_pct': round(call_unwound_strikes / call_total_strikes * 100, 1) if call_total_strikes > 0 else 0,
+                'unwind_build_ratio': round(call_unwind_value / call_build_value, 2) if call_build_value > 0 else None,
+            },
+            'put': {
+                'total_strikes': put_total_strikes,
+                'unwound_strikes': put_unwound_strikes,
+                'built_strikes': put_built_strikes,
+                'unwind_value': put_unwind_value,
+                'build_value': put_build_value,
+                'unwind_pct': round(put_unwound_strikes / put_total_strikes * 100, 1) if put_total_strikes > 0 else 0,
+                'unwind_build_ratio': round(put_unwind_value / put_build_value, 2) if put_build_value > 0 else None,
+            },
+            'total': {
+                'total_strikes': call_total_strikes + put_total_strikes,
+                'unwound_strikes': call_unwound_strikes + put_unwound_strikes,
+                'built_strikes': call_built_strikes + put_built_strikes,
+                'unwind_value': call_unwind_value + put_unwind_value,
+                'build_value': call_build_value + put_build_value,
+                'unwind_pct': round(
+                    (call_unwound_strikes + put_unwound_strikes) /
+                    (call_total_strikes + put_total_strikes) * 100, 1
+                ) if (call_total_strikes + put_total_strikes) > 0 else 0,
+                'unwind_build_ratio': round(
+                    (call_unwind_value + put_unwind_value) /
+                    (call_build_value + put_build_value), 2
+                ) if (call_build_value + put_build_value) > 0 else None,
+            },
+        },
+    }
+
+    return jsonify({'status': 'success', 'data': combined_data, 'summary': summary})
 
 @madhan_bp.route('/api/nifty/coi-trend')
 @check_session_validity
@@ -460,9 +576,7 @@ def nifty_coi_trend():
     instrument = request.args.get('instrument', 'NIFTY')
     config, strike_step, spot_symbol = get_instrument_config(instrument)
 
-    open_atm = config.open_atm_strike
-    if not open_atm or open_atm == 0:
-        return jsonify({'status': 'success', 'data': {'timestamps': [], 'coi_percent': [], 'oi_trend_percent': []}, 'message': 'ATM strike not calculated yet.'})
+    open_atm = get_or_compute_atm(instrument, 'open')
 
     # Get strike selection parameters
     strike_selection_mode = request.args.get('strike_selection_mode', 'option2')
@@ -617,9 +731,7 @@ def nifty_ce_pe_changes():
     instrument = request.args.get('instrument', 'NIFTY')
     config, strike_step, spot_symbol = get_instrument_config(instrument)
 
-    open_atm = config.open_atm_strike
-    if not open_atm or open_atm == 0:
-        return jsonify({'status': 'success', 'data': {'timestamps': [], 'ce_changes': [], 'pe_changes': []}, 'message': 'ATM strike not calculated yet.'})
+    open_atm = get_or_compute_atm(instrument, 'open')
 
     # Get strike selection parameters
     strike_selection_mode = request.args.get('strike_selection_mode', 'option1')
@@ -802,9 +914,7 @@ def nifty_ce_pe_volume_changes():
     instrument = request.args.get('instrument', 'NIFTY')
     config, strike_step, spot_symbol = get_instrument_config(instrument)
 
-    open_atm = config.open_atm_strike
-    if not open_atm or open_atm == 0:
-        return jsonify({'status': 'success', 'data': {'timestamps': [], 'ce_changes': [], 'pe_changes': []}, 'message': 'ATM strike not calculated yet.'})
+    open_atm = get_or_compute_atm(instrument, 'open')
 
     strike_selection_mode = request.args.get('strike_selection_mode', 'option1')  # option1: all strikes, option2: selective
     upside_strikes = int(request.args.get('upside_strikes', '10'))
@@ -1508,7 +1618,7 @@ def ezay_chart_signals():
                                 extrinsic_signal = True
 
                     result.append({'time': ist_ts, 'open': item['open'], 'close': item['close'], 'low': item['low'], 'high': item['high'],
-                                   'extrinsic': round(extrinsic, 2), 'signal': extrinsic_signal})
+                                   'extrinsic': round(extrinsic, 2), 'signal': extrinsic_signal, 'oi': item.get('oi', 0) or 0})
                 return result
 
             ce_enhanced = compute_extrinsic(ce_data, 'CE')
@@ -1521,6 +1631,8 @@ def ezay_chart_signals():
             prev_cp_signal = False
             prev_cp_ce_sig = False
             th_prev_touch = False
+            prev_ce_oi = 0
+            prev_pe_oi = 0
 
             for i, ts in enumerate(common_ts):
                 ce_item = ce_dict[ts]
@@ -1587,7 +1699,21 @@ def ezay_chart_signals():
                         th_dir = 'PE'
                 th_prev_touch = is_touch
 
-                if ce_item['signal'] or pe_item['signal'] or cp_signal or cp_ce_signal or th_signal:
+                # OI Crossover signal
+                oi_cross = False
+                oi_cross_dir = False
+                ce_oi = ce_item.get('oi', 0)
+                pe_oi = pe_item.get('oi', 0)
+                if prev_ce_oi > 0 and prev_pe_oi > 0:
+                    was_ce_above = prev_ce_oi > prev_pe_oi
+                    is_ce_above = ce_oi > pe_oi
+                    if was_ce_above != is_ce_above and ce_oi != pe_oi:
+                        oi_cross = True
+                        oi_cross_dir = 'CE' if is_ce_above else 'PE'
+                prev_ce_oi = ce_oi
+                prev_pe_oi = pe_oi
+
+                if ce_item['signal'] or pe_item['signal'] or cp_signal or cp_ce_signal or th_signal or oi_cross:
                     all_signals.append({
                         'time': ts,
                         'strike': strike_price,
@@ -1599,6 +1725,8 @@ def ezay_chart_signals():
                         'th_dir': th_dir,
                         'ce_close': ce_item['close'],
                         'pe_close': pe_item['close'],
+                        'oi_cross': oi_cross,
+                        'oi_cross_dir': oi_cross_dir,
                     })
 
         all_signals.sort(key=lambda x: (x['time'], x['strike']))
@@ -1610,8 +1738,10 @@ def ezay_chart_signals():
             'cp': {'time': 0, 'strike': 0},
             'cp_open': {'time': 0, 'strike': 0},
             'th': {'time': 0, 'type': '', 'strike': 0},
+            'oi_cross': [],
             'ir': [],
         }
+        th_dot_count = {}
 
         # IR: all strikes where day's 1st candle open+close < combined_ext for both CE and PE
         for strike, fc in first_candle_per_strike.items():
@@ -1643,14 +1773,20 @@ def ezay_chart_signals():
                 if fc and (fc['ce_open'] < fc['combined_ext'] and fc['ce_close'] < fc['combined_ext'] and
                            fc['pe_open'] < fc['combined_ext'] and fc['pe_close'] < fc['combined_ext']):
                     signals['cp_open'] = {'time': row['time'], 'strike': row['strike']}
-            # th: first TH non-touch (CE/PE text, not dot)
-            if signals['th']['time'] == 0 and row.get('th_signal') and row['th_signal'] != 'dot':
-                signals['th'] = {'time': row['time'], 'type': row.get('th_dir', ''), 'strike': row['strike']}
+            # th: 2nd dot signal
+            if row.get('th_signal') and row['th_signal'] == 'dot':
+                strike_key = row['strike']
+                th_dot_count[strike_key] = th_dot_count.get(strike_key, 0) + 1
+                if th_dot_count[strike_key] == 2 and signals['th']['time'] == 0:
+                    signals['th'] = {'time': row['time'], 'type': row.get('th_dir', ''), 'strike': row['strike']}
+            # oi_cross: collect all OI crossovers
+            if row.get('oi_cross'):
+                signals['oi_cross'].append({'time': row['time'], 'strike': row['strike'], 'type': row['oi_cross_dir']})
 
         # ── Compute hx_lx_vol for the response ──────────────────────────
         hx_lx_vol_map = {}
         try:
-            atm_strike = config.open_atm_strike or config.current_atm_strike
+            atm_strike = get_or_compute_atm(instrument, 'open') or get_or_compute_atm(instrument, 'current')
             expiry_date = config.expiry_date
             if atm_strike and expiry_date:
                 hx_lx_strikes = [atm_strike + (i * strike_step) for i in range(-10, 11)]
@@ -1904,7 +2040,7 @@ def nifty_dash_data():
     prev_day_data = get_previous_day_oi(instrument=instrument)
     prev_oi_map = {item['symbol']: item.get('oi', 0) for item in prev_day_data}
     
-    open_atm = config.open_atm_strike
+    open_atm = get_or_compute_atm(instrument, 'open')
     
     # In replay mode, current_atm should be based on the data at end_ts
     if end_ts:
@@ -1913,9 +2049,9 @@ def nifty_dash_data():
             spot_price = latest_spot_data[0]['close']
             current_atm = round(spot_price / strike_step) * strike_step
         else:
-            current_atm = config.current_atm_strike or open_atm
+            current_atm = get_or_compute_atm(instrument, 'current') or open_atm
     else:
-        current_atm = config.current_atm_strike or open_atm
+        current_atm = get_or_compute_atm(instrument, 'current') or open_atm
     
     def is_included(sym, strike):
         if mode == 'total': return True
@@ -2044,7 +2180,7 @@ def nifty_dash_time_analysis():
             end_ts = None
     
     # 1. Get all tracked symbols
-    tracked_symbols = config.option_symbols
+    tracked_symbols = [s for s in get_tracked_symbols() if s.startswith(instrument)]
     if not tracked_symbols:
         return jsonify({'status': 'success', 'data': []})
 
@@ -2069,7 +2205,7 @@ def nifty_dash_time_analysis():
         if not sorted_ts:
             return jsonify({'status': 'success', 'data': []})
 
-    open_atm = config.open_atm_strike
+    open_atm = get_or_compute_atm(instrument, 'open')
     
     # Calculate current ATM based on latest spot in the window
     latest_spot = spot_by_ts.get(sorted_ts[-1], 0)
@@ -2077,7 +2213,7 @@ def nifty_dash_time_analysis():
         latest_spot_data = get_banknifty_data(limit=1, end_ts=end_ts) if instrument == 'BANKNIFTY' else get_nifty_data(limit=1, end_ts=end_ts)
         latest_spot = latest_spot_data[0]['close'] if latest_spot_data else 0
     
-    current_atm = round(latest_spot / strike_step) * strike_step if latest_spot > 0 else (config.current_atm_strike or open_atm)
+    current_atm = round(latest_spot / strike_step) * strike_step if latest_spot > 0 else (get_or_compute_atm(instrument, 'current') or open_atm)
     
     def is_included(sym, strike, bucket_atm):
         if mode == 'total': return True
@@ -2257,8 +2393,8 @@ def nifty_hx_lx_vol():
     instrument = request.args.get('instrument', 'NIFTY')
     config, strike_step, spot_symbol = get_instrument_config(instrument)
 
-    # 1. Get ATM and Expiry from fetcher
-    atm_strike = config.open_atm_strike or config.current_atm_strike
+    # 1. Get ATM and Expiry
+    atm_strike = get_or_compute_atm(instrument, 'open') or get_or_compute_atm(instrument, 'current')
     expiry_date = config.expiry_date
 
     if not atm_strike or not expiry_date:
@@ -2303,21 +2439,7 @@ def nifty_support_resistance():
     instrument = request.args.get('instrument', 'NIFTY')
     config, strike_step, spot_symbol = get_instrument_config(instrument)
 
-    open_atm = config.open_atm_strike
-    if not open_atm or open_atm == 0:
-        return jsonify({
-            'status': 'success', 
-            'data': {
-                'timestamps': [], 
-                'oi_support': [], 
-                'oi_resistance': [],
-                'coi_support': [],
-                'coi_resistance': [],
-                'oi_sr': None,
-                'coi_sr': None
-            }, 
-            'message': 'ATM strike not calculated yet.'
-        })
+    open_atm = get_or_compute_atm(instrument, 'open')
 
     # Always use all strikes (option1)
 
@@ -2585,3 +2707,76 @@ def api_fut_stocks():
 
     logger.info(f"api_fut_stocks: returning {len(results)} FUT underlyings")
     return jsonify({'status': 'success', 'data': results})
+
+
+@madhan_bp.route('/api/madhan_signals')
+@check_session_validity
+def madhan_signals():
+    """Compute Test01-A and Test01-B signals from spot OHLCV data in DB.
+
+    Args (query params):
+        instrument: NIFTY (default) or BANKNIFTY
+        timeframe: 1m, 5m, 15m, 30m, 1h (default 5m)
+
+    Returns:
+        { status, data: { test01a: { buys, sells }, test01b: { buys, sells } } }
+    """
+    try:
+        instrument = request.args.get('instrument', 'NIFTY')
+        timeframe = request.args.get('timeframe', '5m')
+
+        if instrument == 'BANKNIFTY':
+            raw_data = get_banknifty_data(limit=3000)
+        else:
+            raw_data = get_nifty_data(limit=3000)
+
+        if not raw_data:
+            return jsonify({'status': 'error', 'message': f'No {instrument} spot data in DB'}), 404
+
+        df = pd.DataFrame(raw_data)
+        df = df[['timestamp', 'open', 'high', 'low', 'close']].copy()
+        df['open'] = pd.to_numeric(df['open'], errors='coerce')
+        df['high'] = pd.to_numeric(df['high'], errors='coerce')
+        df['low'] = pd.to_numeric(df['low'], errors='coerce')
+        df['close'] = pd.to_numeric(df['close'], errors='coerce')
+        df.dropna(inplace=True)
+        df.sort_values('timestamp', inplace=True)
+        df.reset_index(drop=True, inplace=True)
+
+        if timeframe != '1m':
+            tf_map = {'5m': '5min', '15m': '15min', '30m': '30min', '1h': '1h'}
+            pd_freq = tf_map.get(timeframe)
+            if not pd_freq:
+                return jsonify({'status': 'error', 'message': f'Unsupported timeframe: {timeframe}'}), 400
+
+            df['dt'] = pd.to_datetime(df['timestamp'], unit='s')
+            df.set_index('dt', inplace=True)
+            df = df.resample(pd_freq).agg({
+                'timestamp': 'first',
+                'open': 'first',
+                'high': 'max',
+                'low': 'min',
+                'close': 'last',
+            }).dropna()
+            df.reset_index(drop=True, inplace=True)
+
+        if len(df) < 60:
+            return jsonify({'status': 'error', 'message': f'Not enough data ({len(df)} candles, need 60+)'}), 404
+
+        test01a = compute_test01a(df)
+        test01b = compute_test01b(df)
+
+        logger.info(f"madhan_signals: {instrument} {timeframe} → test01a: {len(test01a['buys'])} buys / {len(test01a['sells'])} sells, "
+                     f"test01b: {len(test01b['buys'])} buys / {len(test01b['sells'])} sells")
+
+        return jsonify({
+            'status': 'success',
+            'data': {
+                'test01a': test01a,
+                'test01b': test01b,
+            }
+        })
+
+    except Exception as e:
+        logger.error(f"madhan_signals error: {e}", exc_info=True)
+        return jsonify({'status': 'error', 'message': 'Internal server error'}), 500

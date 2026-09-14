@@ -41,7 +41,9 @@ import { useAuthStore } from '@/stores/authStore'
 import { useProfileMenuItems } from '@/hooks/useProfileMenuItems'
 import { useMadhanTheme } from './useMadhanTheme'
 import { cn } from '@/lib/utils'
-import { setTimeOffset, getTimeOffset } from '@/utils/timeSync'
+
+import { useSocketContext } from '@/components/socket/SocketProvider'
+import { showToast } from '@/utils/toast'
 import { chartTheme } from './chartTheme'
 import DrawingToolbar from './DrawingToolbar'
 import FloatingDrawingToolbar from './FloatingDrawingToolbar'
@@ -51,7 +53,7 @@ import ChartLayout from './ChartLayout'
 import WidgetBar from './WidgetBar'
 import EzaySignals from './components/EzaySignals'
 import IndicatorPanel, { INDICATOR_CATEGORIES } from './IndicatorPanel'
-import { PlotFillPrimitive, LineBrPrimitive, ExtendedMarkerPrimitive, BgColorPrimitive, LabelPrimitive, BoxPrimitive, LineDrawingPrimitive, TablePrimitive, CrossPlotPrimitive, VolumeProfilePrimitive, applyTransparency } from './chartPrimitives'
+import { PlotFillPrimitive, LineBrPrimitive, ExtendedMarkerPrimitive, BgColorPrimitive, LabelPrimitive, BoxPrimitive, LineDrawingPrimitive, TablePrimitive, CrossPlotPrimitive, VolumeProfilePrimitive, VertLinePrimitive, applyTransparency, type MarkerDatum } from './chartPrimitives'
 import { useInstrument, InstrumentProvider, type Instrument } from './InstrumentContext'
 
 type Candle = {
@@ -145,6 +147,7 @@ export default function NiftyChart() {
 
 function NiftyChartInner() {
   const { instrument, setInstrument } = useInstrument();
+  const { socket } = useSocketContext()
   const prevInstrumentRef = useRef(instrument)
   const chartContainerRef = useRef<HTMLDivElement | null>(null)
   const chartRef = useRef<IChartApi | null>(null)
@@ -154,18 +157,16 @@ function NiftyChartInner() {
   const indicatorSeriesRef = useRef<Map<string, IndicatorSeriesBucket>>(new Map())
   const indicatorPaneRef = useRef<Map<string, any>>(new Map())
   const optionVolumeRef = useRef<ISeriesApi<'Histogram'> | null>(null)
-  const dayOpenRef = useRef<ISeriesApi<'Line'> | null>(null)
-  const prevOpenRef = useRef<ISeriesApi<'Line'> | null>(null)
-  const prevHighRef = useRef<ISeriesApi<'Line'> | null>(null)
-  const prevLowRef = useRef<ISeriesApi<'Line'> | null>(null)
-  const prevCloseRef = useRef<ISeriesApi<'Line'> | null>(null)
+  const dayOpenRef = useRef<any>(null)
+  const prevOhlcRef = useRef<any>(null)
   const oiPrimitiveRef = useRef<any>(null)
   const coiPrimitiveRef = useRef<any>(null)
   const priceDataRef = useRef<Candle[]>([])
+  const whitespaceDataRef = useRef<{ time: Time }[]>([])
   const updaterRef = useRef<number | null>(null)
   const timeoutRef = useRef<number | null>(null)
   const oiXRef = useRef(100)
-  const coiXRef = useRef(80)
+  const coiXRef = useRef(85)
   const oiShowStrikeRef = useRef(true)
   const oiShowValuesRef = useRef(true)
   const coiShowStrikeRef = useRef(true)
@@ -207,9 +208,20 @@ function NiftyChartInner() {
   const cpMarkersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null)
   const thExtMarkerRef = useRef<ExtendedMarkerPrimitive | null>(null)
   const thAnchorSeriesRef = useRef<ISeriesApi<'Line'> | null>(null)
+  const [mpaActive, setMpaActive] = useState(false)
+  const mpaActiveRef = useRef(false)
+  const mpaExtMarkerRef = useRef<ExtendedMarkerPrimitive | null>(null)
+  const mpaAnchorSeriesRef = useRef<ISeriesApi<'Line'> | null>(null)
+  const mpaDataRef = useRef<{ test01a: { buys: Array<{ time: number; dir: string }>; sells: Array<{ time: number; dir: string }> }; test01b: { buys: Array<{ time: number; dir: string }>; sells: Array<{ time: number; dir: string }> } } | null>(null)
+  const mpaSignalTimesRef = useRef<Set<number>>(new Set())
   const rawSignalDataRef = useRef<SignalRow[]>([])
+  const [oiCrossActive, setOiCrossActive] = useState(false)
+  const oiCrossActiveRef = useRef(false)
+  const oiCrossPrimitiveRef = useRef<VertLinePrimitive | null>(null)
+  const oiCrossAnchorRef = useRef<ISeriesApi<'Line'> | null>(null)
+  const oiCrossDataRef = useRef<Array<{ time: any; color: string }>>([])
   const [oiX, setOiX] = useState(100)
-  const [coiX, setCoiX] = useState(80)
+  const [coiX, setCoiX] = useState(85)
   const [oiShowStrike, setOiShowStrike] = useState(false)
   const [oiShowValues, setOiShowValues] = useState(false)
   const [coiShowStrike, setCoiShowStrike] = useState(false)
@@ -219,6 +231,8 @@ function NiftyChartInner() {
   ])
   const [indicatorInputs, setIndicatorInputs] = useState<Record<string, Record<string, unknown>>>({})
   const [expandedIndicatorKey, setExpandedIndicatorKey] = useState<string | null>(null)
+  const [oiExpanded, setOiExpanded] = useState(false)
+  const [coiExpanded, setCoiExpanded] = useState(false)
   const [showIndicatorPanel, setShowIndicatorPanel] = useState(false)
   const [indicatorPanelPos, setIndicatorPanelPos] = useState({ x: 80, y: 40 })
   const [indicatorPanelWidth, setIndicatorPanelWidth] = useState(320)
@@ -348,11 +362,12 @@ function NiftyChartInner() {
     })
 
     const candle = chart.addSeries(CandlestickSeries, {
-      upColor: '#26a69a',
-      downColor: '#ef5350',
-      borderVisible: false,
-      wickUpColor: '#26a69a',
-      wickDownColor: '#ef5350',
+      upColor: '#e0dcdc',
+      downColor: '#000000',
+      borderVisible: true,
+      borderColor: '#000000',
+      wickUpColor: '#000000',
+      wickDownColor: '#000000',
     })
     const ema34 = chart.addSeries(LineSeries, {
       color: 'blue',
@@ -380,22 +395,11 @@ function NiftyChartInner() {
     chart.priceScale('volume').applyOptions({
       scaleMargins: { top: 0.8, bottom: 0 },
     })
-    const dayOpen = chart.addSeries(LineSeries, { color: '#00FF00', lineWidth: 1, title: 'Day Open', visible: dayOpenActive })
-    const prevOpen = chart.addSeries(LineSeries, { color: '#FFA500', lineWidth: 1, title: 'Prev Open', visible: prevOhlcActive })
-    const prevHigh = chart.addSeries(LineSeries, { color: '#0000FF', lineWidth: 1, title: 'Prev High', visible: prevOhlcActive })
-    const prevLow = chart.addSeries(LineSeries, { color: '#FF69B4', lineWidth: 1, title: 'Prev Low', visible: prevOhlcActive })
-    const prevClose = chart.addSeries(LineSeries, { color: '#FF0000', lineWidth: 1, title: 'Prev Close', visible: prevOhlcActive })
-
     chartRef.current = chart
     candleRef.current = candle
     ema34Ref.current = ema34
     ema55Ref.current = ema55
     optionVolumeRef.current = optionVolumeSeries
-    dayOpenRef.current = dayOpen
-    prevOpenRef.current = prevOpen
-    prevHighRef.current = prevHigh
-    prevLowRef.current = prevLow
-    prevCloseRef.current = prevClose
     cePeMarkersRef.current = createSeriesMarkers(candle, [])
     cpMarkersRef.current = createSeriesMarkers(candle, [])
     const thAnchor = chart.addSeries(LineSeries, {
@@ -407,6 +411,24 @@ function NiftyChartInner() {
     try { thAnchor.attachPrimitive(thExtMarker as any) } catch {}
     thAnchorSeriesRef.current = thAnchor
     thExtMarkerRef.current = thExtMarker
+    const mpaAnchor = chart.addSeries(LineSeries, {
+      color: 'transparent', lineVisible: false, lastValueVisible: false,
+      priceLineVisible: false, crosshairMarkerVisible: false,
+    })
+    mpaAnchor.setData([])
+    const mpaExtMarker = new ExtendedMarkerPrimitive(mpaAnchor, chart.timeScale())
+    try { mpaAnchor.attachPrimitive(mpaExtMarker as any) } catch {}
+    mpaAnchorSeriesRef.current = mpaAnchor
+    mpaExtMarkerRef.current = mpaExtMarker
+    const oiCrossAnchor = chart.addSeries(LineSeries, {
+      color: 'transparent', lineVisible: false, lastValueVisible: false,
+      priceLineVisible: false, crosshairMarkerVisible: false,
+    })
+    oiCrossAnchor.setData([])
+    const oiCrossPrim = new VertLinePrimitive(chart.timeScale())
+    try { oiCrossAnchor.attachPrimitive(oiCrossPrim as any) } catch {}
+    oiCrossAnchorRef.current = oiCrossAnchor
+    oiCrossPrimitiveRef.current = oiCrossPrim
     const volumeProfile = new VolumeProfilePrimitive(candle, chart.timeScale())
     try { candle.attachPrimitive(volumeProfile as any) } catch {}
     volumeProfileRef.current = volumeProfile
@@ -480,6 +502,14 @@ function NiftyChartInner() {
       chart.unsubscribeCrosshairMove(handleCrosshairOHLCV)
       indicatorSeriesRef.current.clear()
       sqrtPrimitiveRef.current = null
+      if (dayOpenRef.current && candleRef.current) {
+        try { (candleRef.current as any).detachPrimitive(dayOpenRef.current) } catch {}
+      }
+      dayOpenRef.current = null
+      if (prevOhlcRef.current && candleRef.current) {
+        try { (candleRef.current as any).detachPrimitive(prevOhlcRef.current) } catch {}
+      }
+      prevOhlcRef.current = null
       if (oiPrimitiveRef.current && candleRef.current) {
         try { (candleRef.current as any).detachPrimitive(oiPrimitiveRef.current) } catch {}
       }
@@ -506,6 +536,12 @@ function NiftyChartInner() {
       }
       thExtMarkerRef.current = null
       thAnchorSeriesRef.current = null
+      if (oiCrossPrimitiveRef.current && oiCrossAnchorRef.current) {
+        try { oiCrossAnchorRef.current.detachPrimitive(oiCrossPrimitiveRef.current as any) } catch {}
+        try { chart.removeSeries(oiCrossAnchorRef.current) } catch {}
+      }
+      oiCrossPrimitiveRef.current = null
+      oiCrossAnchorRef.current = null
       if (volumeProfileRef.current && candleRef.current) {
         try { candleRef.current.detachPrimitive(volumeProfileRef.current as any) } catch {}
       }
@@ -532,6 +568,27 @@ function NiftyChartInner() {
         borderColor: isDark ? 'rgba(166,173,187,0.2)' : 'rgba(0,0,0,0.2)',
       },
     })
+    // Update candle colors for theme
+    if (candleRef.current) {
+      if (isDark) {
+        candleRef.current.applyOptions({
+          upColor: '#26a69a',
+          downColor: '#ef5350',
+          borderVisible: true,
+          wickUpColor: '#26a69a',
+          wickDownColor: '#ef5350',
+        })
+      } else {
+        candleRef.current.applyOptions({
+          upColor: '#e0dcdc',
+          downColor: '#000000',
+          borderVisible: true,
+          borderColor: '#000000',
+          wickUpColor: '#000000',
+          wickDownColor: '#000000',
+        })
+      }
+    }
     // Update watermark color on theme change
     if (instrumentWatermarkRef.current) {
       try { instrumentWatermarkRef.current.detach() } catch {}
@@ -549,6 +606,10 @@ function NiftyChartInner() {
           fontStyle: 'bold',
         }],
       })
+    }
+    // Re-render candles with theme-appropriate colors (including MPA if active)
+    if (priceDataRef.current.length && candleRef.current) {
+      candleRef.current.setData([...buildMpaCandleData(priceDataRef.current) as any, ...whitespaceDataRef.current])
     }
   }, [madhanMode])
 
@@ -583,6 +644,41 @@ function NiftyChartInner() {
     if (val.endsWith('m')) return Math.max(1, Number(val.slice(0, -1) || '1')) * 60
     if (val.endsWith('s')) return Math.max(1, Number(val.slice(0, -1) || '1'))
     return 60
+  }
+
+  const generateFutureTimestamps = (lastBarTime: number, intervalSec: number): number[] => {
+    const IST_OFFSET_SEC = 5 * 3600 + 30 * 60
+    const openMin = 9 * 60 + 15
+    const closeMin = 15 * 60 + 30
+
+    // Midnight IST as UTC epoch (keeps all math in UTC)
+    const shifted = lastBarTime + IST_OFFSET_SEC
+    const currentDayMidnightUTC = lastBarTime - (shifted % 86400)
+    const lastBarMinOfDay = Math.floor((lastBarTime - currentDayMidnightUTC) / 60)
+
+    let dayStart = currentDayMidnightUTC
+    if (lastBarMinOfDay >= closeMin) {
+      // After market close — advance to next trading day
+      let nextMidnight = currentDayMidnightUTC + 86400
+      const dow = new Date((nextMidnight + IST_OFFSET_SEC) * 1000).getUTCDay()
+      if (dow === 0) nextMidnight += 86400
+      if (dow === 6) nextMidnight += 2 * 86400
+      const dow2 = new Date((nextMidnight + IST_OFFSET_SEC) * 1000).getUTCDay()
+      if (dow2 === 0) nextMidnight += 86400
+      dayStart = nextMidnight
+    }
+
+    const timestamps: number[] = []
+    let nextTs = lastBarTime + intervalSec
+    const endTs = dayStart + closeMin * 60
+    while (nextTs <= endTs) {
+      const minOfDay = Math.floor((nextTs - dayStart) / 60)
+      if (minOfDay >= openMin && minOfDay <= closeMin) {
+        timestamps.push(nextTs)
+      }
+      nextTs += intervalSec
+    }
+    return timestamps
   }
 
   // Aggregate 1-minute candles into the user-selected interval, bucketing on
@@ -966,7 +1062,7 @@ function NiftyChartInner() {
   }, [activeIndicators, getIndicatorById, indicatorInputs])
 
   const addHorizontalLines = (data: Candle[]) => {
-    if (!data.length || !dayOpenRef.current || !prevOpenRef.current || !prevHighRef.current || !prevLowRef.current || !prevCloseRef.current) return
+    if (!data.length) return
     const dayGroups: Record<string, Candle[]> = {}
     data.forEach((c) => {
       const key = new Date(c.time * 1000).toDateString()
@@ -976,24 +1072,151 @@ function NiftyChartInner() {
     const days = Object.keys(dayGroups).sort((a, b) => +new Date(a) - +new Date(b))
     if (!days.length) return
     Object.values(dayGroups).forEach((arr) => arr.sort((a, b) => a.time - b.time))
-    const currentDay = dayGroups[days[days.length - 1]]
-    const dayOpen = currentDay[0].open
-    let prevOpen = dayOpen
-    let prevHigh = dayOpen
-    let prevLow = dayOpen
-    let prevClose = dayOpen
-    if (days.length > 1) {
-      const prev = dayGroups[days[days.length - 2]]
-      prevOpen = prev[0].open
-      prevHigh = Math.max(...prev.map((x) => x.high))
-      prevLow = Math.min(...prev.map((x) => x.low))
-      prevClose = prev[prev.length - 1].close
+
+    const seriesAny = candleRef.current as any
+    const chartAny = chartRef.current as any
+
+    // Day Open primitive — per-day horizontal segments
+    if (seriesAny && chartAny && !dayOpenRef.current) {
+      const primitive = new (class {
+        _data: any[]
+        _series: any
+        _timeScale: any
+        _show: boolean
+        constructor(series: any, timeScale: any) {
+          this._data = []
+          this._series = series
+          this._timeScale = timeScale
+          this._show = false
+        }
+        paneViews() {
+          const self = this
+          return [{
+            zOrder() { return 'normal' as const },
+            renderer() {
+              return {
+                draw(target: any) {
+                  if (!self._show || !self._data?.length) return
+                  target.useBitmapCoordinateSpace((scope: any) => {
+                    const ctx = scope.context
+                    const hpr = scope.horizontalPixelRatio
+                    const vpr = scope.verticalPixelRatio
+                    for (const seg of self._data) {
+                      const x1 = self._timeScale.timeToCoordinate(seg.from)
+                      if (x1 == null) continue
+                      const x2 = seg.to != null ? self._timeScale.timeToCoordinate(seg.to) : null
+                      const rightX = x2 != null ? x2 * hpr : scope.bitmapSize.width
+                      const y = self._series.priceToCoordinate(seg.price)
+                      if (y == null) continue
+                      ctx.strokeStyle = seg.color
+                      ctx.lineWidth = 1 * vpr
+                      ctx.setLineDash([4 * vpr, 4 * vpr])
+                      ctx.beginPath()
+                      ctx.moveTo(x1 * hpr, y * vpr)
+                      ctx.lineTo(rightX, y * vpr)
+                      ctx.stroke()
+                    }
+                    ctx.setLineDash([])
+                  })
+                },
+              }
+            },
+          }]
+        }
+        setData(v: any[]) { this._data = v || [] }
+        toggle() { this._show = !this._show; return this._show }
+      })(seriesAny, chartAny.timeScale())
+      try { seriesAny.attachPrimitive(primitive) } catch {}
+      dayOpenRef.current = primitive
     }
-    dayOpenRef.current.setData(data.map((d) => ({ time: d.time as any, value: dayOpen })))
-    prevOpenRef.current.setData(data.map((d) => ({ time: d.time as any, value: prevOpen })))
-    prevHighRef.current.setData(data.map((d) => ({ time: d.time as any, value: prevHigh })))
-    prevLowRef.current.setData(data.map((d) => ({ time: d.time as any, value: prevLow })))
-    prevCloseRef.current.setData(data.map((d) => ({ time: d.time as any, value: prevClose })))
+    if (dayOpenRef.current) {
+      const segments: any[] = []
+      for (let d = 0; d < days.length; d++) {
+        const dayArr = dayGroups[days[d]]
+        const dayFirstOpen = dayArr[0]?.open
+        if (!Number.isFinite(dayFirstOpen) || dayFirstOpen <= 0) continue
+        const fromTime = dayArr[0].time
+        const toTime = d < days.length - 1 ? dayGroups[days[d + 1]][0].time : dayArr[dayArr.length - 1].time
+        segments.push({ from: fromTime, to: toTime, price: dayFirstOpen, color: 'rgba(0,120,255,0.5)' })
+      }
+      dayOpenRef.current.setData(segments)
+      repaintOverlay()
+    }
+
+    // Prev OHLC primitive — per-day segments for prev day's OHLC levels
+    if (seriesAny && chartAny && !prevOhlcRef.current) {
+      const primitive = new (class {
+        _data: any[]
+        _series: any
+        _timeScale: any
+        _show: boolean
+        constructor(series: any, timeScale: any) {
+          this._data = []
+          this._series = series
+          this._timeScale = timeScale
+          this._show = false
+        }
+        paneViews() {
+          const self = this
+          return [{
+            zOrder() { return 'normal' as const },
+            renderer() {
+              return {
+                draw(target: any) {
+                  if (!self._show || !self._data?.length) return
+                  target.useBitmapCoordinateSpace((scope: any) => {
+                    const ctx = scope.context
+                    const hpr = scope.horizontalPixelRatio
+                    const vpr = scope.verticalPixelRatio
+                    for (const seg of self._data) {
+                      const x1 = self._timeScale.timeToCoordinate(seg.from)
+                      if (x1 == null) continue
+                      const x2 = seg.to != null ? self._timeScale.timeToCoordinate(seg.to) : null
+                      const rightX = x2 != null ? x2 * hpr : scope.bitmapSize.width
+                      const y = self._series.priceToCoordinate(seg.price)
+                      if (y == null) continue
+                      ctx.strokeStyle = seg.color
+                      ctx.lineWidth = 1 * vpr
+                      ctx.setLineDash(seg.dashed ? [4 * vpr, 4 * vpr] : [])
+                      ctx.beginPath()
+                      ctx.moveTo(x1 * hpr, y * vpr)
+                      ctx.lineTo(rightX, y * vpr)
+                      ctx.stroke()
+                    }
+                    ctx.setLineDash([])
+                  })
+                },
+              }
+            },
+          }]
+        }
+        setData(v: any[]) { this._data = v || [] }
+        toggle() { this._show = !this._show; return this._show }
+      })(seriesAny, chartAny.timeScale())
+      try { seriesAny.attachPrimitive(primitive) } catch {}
+      prevOhlcRef.current = primitive
+    }
+    if (prevOhlcRef.current) {
+      const segments: any[] = []
+      for (let d = 0; d < days.length; d++) {
+        const dayArr = dayGroups[days[d]]
+        const fromTime = dayArr[0].time
+        const toTime = d < days.length - 1 ? dayGroups[days[d + 1]][0].time : dayArr[dayArr.length - 1].time
+        if (d > 0) {
+          const prevDay = dayGroups[days[d - 1]]
+          const pOpen = prevDay[0].open
+          const pHigh = Math.max(...prevDay.map((x) => x.high))
+          const pLow = Math.min(...prevDay.map((x) => x.low))
+          const pClose = prevDay[prevDay.length - 1].close
+          segments.push({ from: fromTime, to: toTime, price: pOpen, color: 'rgba(0,120,255,0.5)', dashed: true })
+          segments.push({ from: fromTime, to: toTime, price: pHigh, color: 'rgba(255,0,0,0.3)', dashed: false })
+          segments.push({ from: fromTime, to: toTime, price: pLow, color: 'rgba(0,0,255,0.3)', dashed: false })
+          segments.push({ from: fromTime, to: toTime, price: pClose, color: '#FFD700', dashed: true })
+        }
+      }
+      prevOhlcRef.current.setData(segments)
+      repaintOverlay()
+    }
   }
 
   const fetchOiProfiles = async () => {
@@ -1644,8 +1867,8 @@ function NiftyChartInner() {
     Object.values(dayGroups).forEach((arr) => arr.sort((a, b) => a.time - b.time))
 
     const LEVEL_FACTORS = [0.398, 0.5, 0.786, 0.888]
-    const LEVEL_COLORS = ['#fa031c', '#0df214', '#fa031c', '#0df214']
-    const MID_COLOR = '#071ff7'
+    const LEVEL_COLORS = ['rgba(250,3,28,0.7)', 'rgba(0,120,255,0.7)', 'rgba(250,3,28,0.7)', 'rgba(0,120,255,0.7)']
+    const MID_COLOR = 'rgba(7,31,247,0.7)'
 
     const segments: any[] = []
     for (let d = 0; d < days.length; d++) {
@@ -1823,9 +2046,124 @@ function NiftyChartInner() {
     }
   }
 
+  const updateMpaMarkers = () => {
+    if (!mpaExtMarkerRef.current || !mpaAnchorSeriesRef.current) return
+    if (!mpaActiveRef.current || !mpaDataRef.current) {
+      mpaExtMarkerRef.current.setMarkers([])
+      return
+    }
+    const candles = priceDataRef.current
+    if (!candles.length) { mpaExtMarkerRef.current.setMarkers([]); return }
+
+    const candleTimes = new Set(candles.map((c) => c.time))
+    const snapToCandle = (sigTime: number): number | null => {
+      if (candleTimes.has(sigTime)) return sigTime
+      const intervalSec = getIntervalSeconds(interval)
+      const bucket = Math.floor(sigTime / intervalSec) * intervalSec
+      if (candleTimes.has(bucket)) return bucket
+      for (let offset = -intervalSec; offset <= intervalSec; offset += 60) {
+        if (candleTimes.has(bucket + offset)) return bucket + offset
+      }
+      return null
+    }
+
+    const { test01a, test01b } = mpaDataRef.current
+    const markers: MarkerDatum[] = []
+
+    // Test01-A: squares (up=green, down=red)
+    for (const sig of test01a.buys) {
+      const snapped = snapToCandle(sig.time)
+      if (snapped === null) continue
+      const candle = candles.find((c) => c.time === snapped)
+      markers.push({
+        time: snapped,
+        position: 'belowBar',
+        price: candle?.low ?? 0,
+        shape: 'square',
+        color: '#000000',
+        size: 0.6,
+      })
+    }
+    for (const sig of test01a.sells) {
+      const snapped = snapToCandle(sig.time)
+      if (snapped === null) continue
+      const candle = candles.find((c) => c.time === snapped)
+      markers.push({
+        time: snapped,
+        position: 'aboveBar',
+        price: candle?.high ?? 0,
+        shape: 'square',
+        color: '#000000',
+        size: 0.6,
+      })
+    }
+
+    // Test01-B: triangles (up=triangleUp green, down=triangleDown red)
+    for (const sig of test01b.buys) {
+      const snapped = snapToCandle(sig.time)
+      if (snapped === null) continue
+      const candle = candles.find((c) => c.time === snapped)
+      markers.push({
+        time: snapped,
+        position: 'belowBar',
+        price: candle?.low ?? 0,
+        shape: 'triangleUp',
+        color: '#000000',
+        size: 0.6,
+      })
+    }
+    for (const sig of test01b.sells) {
+      const snapped = snapToCandle(sig.time)
+      if (snapped === null) continue
+      const candle = candles.find((c) => c.time === snapped)
+      markers.push({
+        time: snapped,
+        position: 'aboveBar',
+        price: candle?.high ?? 0,
+        shape: 'triangleDown',
+        color: '#000000',
+        size: 0.6,
+      })
+    }
+
+    markers.sort((a, b) => (a.time as number) - (b.time as number))
+    mpaAnchorSeriesRef.current.setData(candles.map((c) => ({ time: c.time as any, value: c.close })))
+    mpaExtMarkerRef.current.setMarkers(markers as any)
+
+    // Build set of timestamps that have any MPA signal for candle coloring
+    const signalTimes = new Set<number>()
+    for (const sig of test01a.buys) signalTimes.add(sig.time)
+    for (const sig of test01a.sells) signalTimes.add(sig.time)
+    for (const sig of test01b.buys) signalTimes.add(sig.time)
+    for (const sig of test01b.sells) signalTimes.add(sig.time)
+    mpaSignalTimesRef.current = signalTimes
+  }
+
+  const buildMpaCandleData = (data: Candle[]) => {
+    const isDark = madhanMode === 'dark'
+    if (!isDark && (!mpaActiveRef.current || mpaSignalTimesRef.current.size === 0)) return data as any[]
+    return data.map((c) => {
+      const hasSignal = mpaActiveRef.current && mpaSignalTimesRef.current.has(c.time)
+      const isUp = c.close >= c.open
+      if (isDark) {
+        const bodyColor = isUp ? '#26a69a' : '#ef5350'
+        if (hasSignal) {
+          const wickColor = isUp ? 'rgba(38,166,154,0.9)' : 'rgba(239,83,80,0.9)'
+          return { ...c, color: bodyColor, borderColor: bodyColor, wickColor }
+        }
+        return { ...c, color: bodyColor, borderColor: bodyColor, wickColor: bodyColor }
+      }
+      const bodyAlpha = hasSignal ? 0.9 : 0.2
+      const wickAlpha = hasSignal ? 0.9 : 0.5
+      const bodyColor = isUp ? `rgba(224,220,220,${bodyAlpha})` : `rgba(0,0,0,${bodyAlpha})`
+      const wickColor = `rgba(0,0,0,${wickAlpha})`
+      return { ...c, color: bodyColor, borderColor: `rgba(0,0,0,${hasSignal ? 0.9 : 0.3})`, wickColor }
+    })
+  }
+
   const fetchSignalData = async () => {
     try {
-      const today = new Date(Date.now() + getTimeOffset()).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' })
+      const today = new Date(Date.now() + timeOffsetRef.current).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' })
       let res = await fetch(`/madhan/api/ezayChart_signals?instrument=${instrument}&_=${Date.now()}`)
       let json = await res.json()
       if (json?.status !== 'success' || !Array.isArray(json.data)) {
@@ -1844,13 +2182,66 @@ function NiftyChartInner() {
           }
         }
         rawSignalDataRef.current = flat
+        if (json.signals?.oi_cross) {
+          const intervalSec = getIntervalSeconds(interval)
+          const IST_OFFSET_SEC = 5 * 3600 + 30 * 60
+          const istDateKey = (ts: number) => {
+            return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(ts * 1000))
+          }
+          const istMidnightTs = (ts: number) => {
+            const [y, m, d] = istDateKey(ts).split('-').map(Number)
+            return Math.floor(Date.UTC(y, m - 1, d) / 1000) - IST_OFFSET_SEC
+          }
+          const bucketed = new Map<number, { time: any; color: string }>()
+          for (const oc of json.signals.oi_cross) {
+            const ts = oc.time as number
+            const dayStart = istMidnightTs(ts)
+            const offset = ts - dayStart
+            const bucketOffset = Math.floor(offset / intervalSec) * intervalSec
+            const bucketTs = dayStart + bucketOffset
+            const existing = bucketed.get(bucketTs)
+            const entry = { time: bucketTs as any, color: oc.type === 'CE' ? 'rgba(255,0,0,0.6)' : 'rgba(0,128,0,0.6)' }
+            if (!existing || bucketTs > (existing.time as number)) {
+              bucketed.set(bucketTs, entry)
+            }
+          }
+          oiCrossDataRef.current = Array.from(bucketed.values())
+        } else {
+          oiCrossDataRef.current = []
+        }
       } else {
         rawSignalDataRef.current = []
+        oiCrossDataRef.current = []
       }
     } catch {
       rawSignalDataRef.current = []
+      oiCrossDataRef.current = []
     }
     updateSignalMarkers()
+    if (oiCrossPrimitiveRef.current) {
+      oiCrossPrimitiveRef.current.setData(oiCrossActiveRef.current ? oiCrossDataRef.current : [])
+      oiCrossPrimitiveRef.current.toggle(oiCrossActiveRef.current)
+      try { oiCrossPrimitiveRef.current.requestUpdate() } catch {}
+    }
+  }
+
+  const fetchMpaSignals = async () => {
+    try {
+      const res = await fetch(`/madhan/api/madhan_signals?instrument=${instrument}&timeframe=${interval}&_=${Date.now()}`)
+      const json = await res.json()
+      if (json?.status === 'success' && json?.data) {
+        mpaDataRef.current = json.data
+      } else {
+        mpaDataRef.current = null
+      }
+    } catch {
+      mpaDataRef.current = null
+    }
+    updateMpaMarkers()
+    // Re-render candles with MPA colors applied
+    if (candleRef.current && priceDataRef.current.length) {
+      candleRef.current.setData([...buildMpaCandleData(priceDataRef.current) as any, ...whitespaceDataRef.current])
+    }
   }
 
   const refreshChartData = async () => {
@@ -1862,10 +2253,17 @@ function NiftyChartInner() {
     const rawData: Candle[] = json?.data || []
     const data = aggregateCandlesByDay(rawData, interval)
     priceDataRef.current = data
-    candleRef.current.setData(data as any)
     ema34Ref.current.setData(calculateEMA(data, 34) as any)
     ema55Ref.current.setData(calculateEMA(data, 55) as any)
     updateIndicatorSeries(data)
+
+    // Inject future whitespace for next trading day so user can draw on empty range
+    const intervalSec = getIntervalSeconds(interval)
+    const futureTs = data.length > 0 ? generateFutureTimestamps(data[data.length - 1].time, intervalSec) : []
+    const whitespace = futureTs.map((t) => ({ time: t as Time }))
+    whitespaceDataRef.current = whitespace
+    candleRef.current.setData([...buildMpaCandleData(data) as any, ...whitespace])
+
     addHorizontalLines(data)
     applySqrtLevels(data)
 
@@ -1895,16 +2293,16 @@ function NiftyChartInner() {
     fetchCoiHistory()
     fetchCoiTrend()
     fetchSignalData()
+    if (mpaActiveRef.current) fetchMpaSignals()
   }
 
   const refreshChartDataRef = useRef(refreshChartData)
   refreshChartDataRef.current = refreshChartData
 
   const repaintOverlay = () => {
-    if (!candleRef.current || !priceDataRef.current.length) return
-    const last = priceDataRef.current[priceDataRef.current.length - 1]
-    // Force lightweight-charts to redraw attached primitives immediately.
-    candleRef.current.update(last as any)
+    try { dayOpenRef.current?.requestUpdate?.() } catch {}
+    try { prevOhlcRef.current?.requestUpdate?.() } catch {}
+    try { sqrtPrimitiveRef.current?.requestUpdate?.() } catch {}
   }
 
   const applyRealtimeLtp = useCallback((ltp: number, timestampMs: number) => {
@@ -1918,7 +2316,7 @@ function NiftyChartInner() {
       const firstCandle: Candle = { time: candleTime, open: ltp, high: ltp, low: ltp, close: ltp }
       data.push(firstCandle)
       priceDataRef.current = data
-      candleRef.current.update(firstCandle as any)
+      candleRef.current.setData([...buildMpaCandleData(data) as any, ...whitespaceDataRef.current])
       ema34Ref.current.setData(calculateEMA(data, 34) as any)
       ema55Ref.current.setData(calculateEMA(data, 55) as any)
       updateIndicatorSeries(data)
@@ -1944,7 +2342,7 @@ function NiftyChartInner() {
     }
 
     priceDataRef.current = data
-    candleRef.current.update(updated as any)
+    candleRef.current.setData([...buildMpaCandleData(data) as any, ...whitespaceDataRef.current])
     ema34Ref.current.setData(calculateEMA(data, 34) as any)
     ema55Ref.current.setData(calculateEMA(data, 55) as any)
     updateIndicatorSeries(data)
@@ -1953,7 +2351,7 @@ function NiftyChartInner() {
 
   useEffect(() => {
     void refreshChartData().then(() => {
-      if (chartRef.current) chartRef.current.timeScale().scrollToRealTime()
+      if (chartRef.current) chartRef.current.timeScale().scrollToPosition(-30, false)
     })
   }, [interval, instrument])
 
@@ -1986,6 +2384,36 @@ function NiftyChartInner() {
     updateSignalMarkers()
   }, [cePeSignalsActive, cpSignalsActive, thSignalsActive])
 
+  useEffect(() => {
+    mpaActiveRef.current = mpaActive
+    if (mpaActive) {
+      fetchMpaSignals()
+    } else {
+      mpaDataRef.current = null
+      mpaSignalTimesRef.current = new Set()
+      mpaExtMarkerRef.current?.setMarkers([])
+      // Re-render candles without MPA colors
+      if (candleRef.current && priceDataRef.current.length) {
+        candleRef.current.setData([...priceDataRef.current as any, ...whitespaceDataRef.current])
+      }
+    }
+  }, [mpaActive])
+
+  useEffect(() => {
+    if (mpaActiveRef.current) {
+      fetchMpaSignals()
+    }
+  }, [instrument, interval])
+
+  useEffect(() => {
+    oiCrossActiveRef.current = oiCrossActive
+    if (oiCrossPrimitiveRef.current) {
+      oiCrossPrimitiveRef.current.setData(oiCrossActive ? oiCrossDataRef.current : [])
+      oiCrossPrimitiveRef.current.toggle(oiCrossActive)
+      try { oiCrossPrimitiveRef.current.requestUpdate() } catch {}
+    }
+  }, [oiCrossActive])
+
   const fetchNiftyStatus = useCallback(async () => {
     try {
       const res = await fetch(`/madhan/api/nifty/status?instrument=${instrument}&_=${Date.now()}`)
@@ -1998,7 +2426,6 @@ function NiftyChartInner() {
         if (json.server_time) {
           const serverMs = new Date(json.server_time).getTime()
           timeOffsetRef.current = serverMs - Date.now()
-          setTimeOffset(timeOffsetRef.current)
         }
         return json
       }
@@ -2007,48 +2434,39 @@ function NiftyChartInner() {
   }, [instrument])
 
   useEffect(() => {
-    let timer: ReturnType<typeof setTimeout>
-    let pollInterval: ReturnType<typeof setInterval>
-    let isFetching = false
-    const getServerNow = () => new Date(Date.now() + timeOffsetRef.current)
+    // Initial status fetch on mount
+    fetchNiftyStatus()
+  }, [fetchNiftyStatus])
 
-    const checkAndRefresh = async () => {
-      if (isFetching) return
-      isFetching = true
-      try {
-        const statusData = await fetchNiftyStatus()
-        if (!statusData?.is_running) {
-          clearInterval(pollInterval)
-          return
-        }
-        if (statusData.last_update) {
-          const lastUpdate = new Date(statusData.last_update)
-          const serverNow = getServerNow()
-          if (lastUpdate.getMinutes() === serverNow.getMinutes()) {
-            await refreshChartDataRef.current()
-            setRefreshTrigger((t) => t + 1)
-            clearInterval(pollInterval)
-            scheduleNextMinute()
-          }
-        }
-      } finally {
-        isFetching = false
+  // SocketIO: event-based refresh instead of polling
+  useEffect(() => {
+    if (!socket) return
+
+    const handleDataUpdate = (data: { instrument: string }) => {
+      if (data.instrument === instrument) {
+        fetchNiftyStatus()
+        refreshChartDataRef.current()
+        setRefreshTrigger((t) => t + 1)
+        showToast.success(`${instrument} data updated`, 'system', { duration: 1000 })
+      }
+    }
+    const handleStatusChanged = (data: { status: string; is_running: boolean }) => {
+      fetchNiftyStatus()
+      if (!data.is_running && data.status.startsWith('Stopped')) {
+        showToast.info(`Fetcher: ${data.status}`, 'system', { duration: 1000 })
       }
     }
 
-    const scheduleNextMinute = () => {
-      clearTimeout(timer)
-      const now = getServerNow()
-      const msToNextMinute = (60 - now.getSeconds()) * 1000 - now.getMilliseconds()
-      timer = setTimeout(() => {
-        pollInterval = setInterval(checkAndRefresh, 1000)
-      }, Math.max(0, msToNextMinute))
-    }
+    socket.on('nifty_data_updated', handleDataUpdate)
+    socket.on('banknifty_data_updated', handleDataUpdate)
+    socket.on('fetcher_status_changed', handleStatusChanged)
 
-    checkAndRefresh()
-    scheduleNextMinute()
-    return () => { clearTimeout(timer); clearInterval(pollInterval) }
-  }, [fetchNiftyStatus, instrument])
+    return () => {
+      socket.off('nifty_data_updated', handleDataUpdate)
+      socket.off('banknifty_data_updated', handleDataUpdate)
+      socket.off('fetcher_status_changed', handleStatusChanged)
+    }
+  }, [socket, instrument, fetchNiftyStatus])
 
   useEffect(() => {
     const live = wsData.get(`NSE_INDEX:${instrument}`)
@@ -2474,14 +2892,17 @@ function NiftyChartInner() {
   }, [emaActive, chartReady])
 
   useEffect(() => {
-    if (dayOpenRef.current) dayOpenRef.current.applyOptions({ visible: dayOpenActive })
+    if (dayOpenRef.current) {
+      dayOpenRef.current._show = dayOpenActive
+      repaintOverlay()
+    }
   }, [dayOpenActive, chartReady])
 
   useEffect(() => {
-    if (prevOpenRef.current) prevOpenRef.current.applyOptions({ visible: prevOhlcActive })
-    if (prevHighRef.current) prevHighRef.current.applyOptions({ visible: prevOhlcActive })
-    if (prevLowRef.current) prevLowRef.current.applyOptions({ visible: prevOhlcActive })
-    if (prevCloseRef.current) prevCloseRef.current.applyOptions({ visible: prevOhlcActive })
+    if (prevOhlcRef.current) {
+      prevOhlcRef.current._show = prevOhlcActive
+      repaintOverlay()
+    }
   }, [prevOhlcActive, chartReady])
 
   useEffect(() => {
@@ -2710,6 +3131,13 @@ function NiftyChartInner() {
                 EzayOptionsTable
                 </Link>
             </Button>
+
+             <Button variant="ghost" size="sm" className="h-7 text-xs hidden sm:flex" asChild>
+                <Link to="/madhan/sk-work">
+                <BarChart3 className="h-3.5 w-3.5 mr-1.5" />
+                SK Work
+                </Link>
+            </Button>
           </div>
 
           <div className="flex items-center gap-2">
@@ -2836,10 +3264,10 @@ function NiftyChartInner() {
               </SelectContent>
             </Select>
           </div>
-          <Button variant={emaActive ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={() => setEmaActive((v) => !v)}>EMA</Button>
-          <Button variant={dayOpenActive ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={() => setDayOpenActive((v) => !v)}>Day Open</Button>
-          <Button variant={prevOhlcActive ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={() => setPrevOhlcActive((v) => !v)}>Prev OHLC</Button>
-          <Button variant={sqrtActive ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={() => setSqrtActive((v) => !v)}>SQRT</Button>
+          <Button variant="outline" size="sm" className="h-7 px-2 text-[11px]" style={emaActive ? { backgroundColor: madhanMode === 'dark' ? 'rgba(255,255,255,0.22)' : 'rgba(0,0,0,0.1)', borderColor: madhanMode === 'dark' ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.2)' } : undefined} onClick={() => setEmaActive((v) => !v)}>EMA</Button>
+          <Button variant="outline" size="sm" className="h-7 px-2 text-[11px]" style={dayOpenActive ? { backgroundColor: madhanMode === 'dark' ? 'rgba(255,255,255,0.22)' : 'rgba(0,0,0,0.1)', borderColor: madhanMode === 'dark' ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.2)' } : undefined} onClick={() => setDayOpenActive((v) => !v)}>Open</Button>
+          <Button variant="outline" size="sm" className="h-7 px-2 text-[11px]" style={prevOhlcActive ? { backgroundColor: madhanMode === 'dark' ? 'rgba(255,255,255,0.22)' : 'rgba(0,0,0,0.1)', borderColor: madhanMode === 'dark' ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.2)' } : undefined} onClick={() => setPrevOhlcActive((v) => !v)}>Prev OHLC</Button>
+          <Button variant="outline" size="sm" className="h-7 px-2 text-[11px]" style={sqrtActive ? { backgroundColor: madhanMode === 'dark' ? 'rgba(255,255,255,0.22)' : 'rgba(0,0,0,0.1)', borderColor: madhanMode === 'dark' ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.2)' } : undefined} onClick={() => setSqrtActive((v) => !v)}>SQRT</Button>
           <Button variant={showIndicatorPanel ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={() => setShowIndicatorPanel((v) => !v)}>Indicators</Button>
           <Button variant={drawing.showDrawingPanel ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={() => {
             if (drawing.showDrawingPanel) {
@@ -2850,37 +3278,49 @@ function NiftyChartInner() {
             }
           }}>Drawings</Button>
           <div className="flex items-center gap-1.5 rounded border px-1.5 py-0.5">
-            <Button variant={oiActive ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={toggleOi}>OI</Button>
-            <Label className="text-[11px]">X%</Label>
-            <Input type="number" min={0} max={100} className="h-7 w-14 px-1 text-[11px]" value={oiX} onChange={(e) => setOiX(Number(e.target.value || 0))} />
-            <div className="flex items-center gap-1">
-              <Checkbox checked={oiShowStrike} onCheckedChange={(v) => setOiShowStrike(!!v)} />
-              <Label className="text-[11px]">Labels</Label>
-            </div>
-            <div className="flex items-center gap-1">
-              <Checkbox checked={oiShowValues} onCheckedChange={(v) => setOiShowValues(!!v)} />
-              <Label className="text-[11px]">Values</Label>
-            </div>
+            <Button variant="outline" size="sm" className="h-7 px-2 text-[11px]" style={oiActive ? { backgroundColor: madhanMode === 'dark' ? 'rgba(255,255,255,0.22)' : 'rgba(0,0,0,0.1)', borderColor: madhanMode === 'dark' ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.2)' } : undefined} onClick={toggleOi}>OI</Button>
+            <button className="text-sm text-muted-foreground hover:text-foreground leading-none" onClick={() => setOiExpanded((v) => !v)}>{oiExpanded ? '\u25C2' : '\u25B8'}</button>
+            {oiExpanded && (
+              <>
+                <Label className="text-[11px]">X%</Label>
+                <Input type="number" min={0} max={100} className="h-7 w-14 px-1 text-[11px]" value={oiX} onChange={(e) => setOiX(Number(e.target.value || 0))} />
+                <div className="flex items-center gap-1">
+                  <Checkbox checked={oiShowStrike} onCheckedChange={(v) => setOiShowStrike(!!v)} />
+                  <Label className="text-[11px]">Labels</Label>
+                </div>
+                <div className="flex items-center gap-1">
+                  <Checkbox checked={oiShowValues} onCheckedChange={(v) => setOiShowValues(!!v)} />
+                  <Label className="text-[11px]">Values</Label>
+                </div>
+              </>
+            )}
           </div>
           <div className="flex items-center gap-1.5 rounded border px-1.5 py-0.5">
-            <Button variant={coiActive ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={toggleCoi}>COI</Button>
-            <Label className="text-[11px]">X%</Label>
-            <Input type="number" min={0} max={100} className="h-7 w-14 px-1 text-[11px]" value={coiX} onChange={(e) => setCoiX(Number(e.target.value || 0))} />
-            <div className="flex items-center gap-1">
-              <Checkbox checked={coiShowStrike} onCheckedChange={(v) => setCoiShowStrike(!!v)} />
-              <Label className="text-[11px]">Labels</Label>
-            </div>
-            <div className="flex items-center gap-1">
-              <Checkbox checked={coiShowValues} onCheckedChange={(v) => setCoiShowValues(!!v)} />
-              <Label className="text-[11px]">Values</Label>
-            </div>
+            <Button variant="outline" size="sm" className="h-7 px-2 text-[11px]" style={coiActive ? { backgroundColor: madhanMode === 'dark' ? 'rgba(255,255,255,0.22)' : 'rgba(0,0,0,0.1)', borderColor: madhanMode === 'dark' ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.2)' } : undefined} onClick={toggleCoi}>COI</Button>
+            <button className="text-sm text-muted-foreground hover:text-foreground leading-none" onClick={() => setCoiExpanded((v) => !v)}>{coiExpanded ? '\u25C2' : '\u25B8'}</button>
+            {coiExpanded && (
+              <>
+                <Label className="text-[11px]">X%</Label>
+                <Input type="number" min={0} max={100} className="h-7 w-14 px-1 text-[11px]" value={coiX} onChange={(e) => setCoiX(Number(e.target.value || 0))} />
+                <div className="flex items-center gap-1">
+                  <Checkbox checked={coiShowStrike} onCheckedChange={(v) => setCoiShowStrike(!!v)} />
+                  <Label className="text-[11px]">Labels</Label>
+                </div>
+                <div className="flex items-center gap-1">
+                  <Checkbox checked={coiShowValues} onCheckedChange={(v) => setCoiShowValues(!!v)} />
+                  <Label className="text-[11px]">Values</Label>
+                </div>
+              </>
+            )}
           </div>
-          <Button variant={coiHistoryActive ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={toggleCoiHistory}>COI Hist</Button>
-          <Button variant={writersViewActive ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={toggleWritersView}>Writers View</Button>
-          <Button variant={cePeSignalsActive ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={() => setCePeSignalsActive((p) => !p)}>CE/PE</Button>
-          <Button variant={cpSignalsActive ? 'default' : 'outline'} size="sm" className="h-7 px-2 text-[11px]" onClick={() => setCpSignalsActive((p) => !p)}>CP</Button>
-          <Button variant={thSignalsActive ? 'default' : 'outline'} size="sm" className={cn('h-7 px-2 text-[11px]', thSignalsActive && 'bg-purple-600 text-white hover:bg-purple-700')} onClick={() => setThSignalsActive((p) => !p)}>TH</Button>
-          <Button variant={volumeProfileActive ? 'default' : 'outline'} size="sm" className={cn('h-7 px-2 text-[11px]', volumeProfileActive && 'bg-amber-600 text-white hover:bg-amber-700')} onClick={toggleVolumeProfile}>VP</Button>
+          <Button variant="outline" size="sm" className="h-7 px-2 text-[11px]" style={coiHistoryActive ? { backgroundColor: madhanMode === 'dark' ? 'rgba(255,255,255,0.22)' : 'rgba(0,0,0,0.1)', borderColor: madhanMode === 'dark' ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.2)' } : undefined} onClick={toggleCoiHistory}>COI Hist</Button>
+          <Button variant="outline" size="sm" className="h-7 px-2 text-[11px]" style={writersViewActive ? { backgroundColor: madhanMode === 'dark' ? 'rgba(255,255,255,0.22)' : 'rgba(0,0,0,0.1)', borderColor: madhanMode === 'dark' ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.2)' } : undefined} onClick={toggleWritersView}>Writers View</Button>
+          <Button variant="outline" size="sm" className="h-7 px-2 text-[11px]" style={cePeSignalsActive ? { backgroundColor: madhanMode === 'dark' ? 'rgba(255,255,255,0.22)' : 'rgba(0,0,0,0.1)', borderColor: madhanMode === 'dark' ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.2)' } : undefined} onClick={() => setCePeSignalsActive((p) => !p)}>CE/PE</Button>
+          <Button variant="outline" size="sm" className="h-7 px-2 text-[11px]" style={cpSignalsActive ? { backgroundColor: madhanMode === 'dark' ? 'rgba(255,255,255,0.22)' : 'rgba(0,0,0,0.1)', borderColor: madhanMode === 'dark' ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.2)' } : undefined} onClick={() => setCpSignalsActive((p) => !p)}>CP</Button>
+          <Button variant="outline" size="sm" className="h-7 px-2 text-[11px]" style={thSignalsActive ? { backgroundColor: madhanMode === 'dark' ? 'rgba(255,255,255,0.22)' : 'rgba(0,0,0,0.1)', borderColor: madhanMode === 'dark' ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.2)' } : undefined} onClick={() => setThSignalsActive((p) => !p)}>TH</Button>
+          <Button variant="outline" size="sm" className="h-7 px-2 text-[11px]" style={volumeProfileActive ? { backgroundColor: madhanMode === 'dark' ? 'rgba(255,255,255,0.22)' : 'rgba(0,0,0,0.1)', borderColor: madhanMode === 'dark' ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.2)' } : undefined} onClick={toggleVolumeProfile}>VP</Button>
+          <Button variant="outline" size="sm" className="h-7 px-2 text-[11px]" style={mpaActive ? { backgroundColor: madhanMode === 'dark' ? 'rgba(255,255,255,0.22)' : 'rgba(0,0,0,0.1)', borderColor: madhanMode === 'dark' ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.2)' } : undefined} onClick={() => setMpaActive((p) => !p)}>MPA</Button>
+          <Button variant="outline" size="sm" className="h-7 px-2 text-[11px]" style={oiCrossActive ? { backgroundColor: madhanMode === 'dark' ? 'rgba(255,255,255,0.22)' : 'rgba(0,0,0,0.1)', borderColor: madhanMode === 'dark' ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.2)' } : undefined} onClick={() => setOiCrossActive((p) => !p)}>OI-X</Button>
           <div className="flex items-center gap-1.5 ml-auto">
             {niftyStatus && (
               <div className="flex items-center gap-1" title={niftyStatus}>

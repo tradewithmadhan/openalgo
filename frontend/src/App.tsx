@@ -135,6 +135,7 @@ const NiftyChart = lazy(() => import('@/pages/madhan/NiftyChart'))
 const ATPLTPStrategy = lazy(() => import('@/pages/madhan/ATPLTPStrategy'))
 const EzayChart = lazy(() => import('@/pages/madhan/EzayChart'))
 const RealtimeTablePage = lazy(() => import('@/pages/madhan/RealtimeTable'))
+const SKWork = lazy(() => import('@/pages/madhan/SKWork'))
 
 // Admin pages
 const AdminIndex = lazy(() => import('@/pages/admin/AdminIndex'))
@@ -320,6 +321,7 @@ function App() {
                 <Route path="/madhan/ATP-LTPStrategy" element={<ATPLTPStrategy />} />
                 <Route path="/madhan/ezay-chart" element={<EzayChart />} />
                 <Route path="/madhan/realtime-table" element={<InstrumentProvider><RealtimeTablePage standalone /></InstrumentProvider>} />
+                <Route path="/madhan/sk-work" element={<SKWork />} />
                 <Route path="/playground" element={<Playground />} />
                 <Route path="/trading" element={<Trading />} />
                 {/* The agent is an application surface, not a document: the
