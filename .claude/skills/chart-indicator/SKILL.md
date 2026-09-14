@@ -53,6 +53,79 @@ fix connectivity, or install without the pre-flight check and rely on the
 chart's own validation, which reports the same structural problems as toasts
 when the indicator loads. Do not silently skip validation.
 
+## Recent changes worth knowing
+
+The descriptor contract has not changed since this skill was written, so an
+existing indicator keeps working on the pinned build. What changed around it,
+newest first:
+
+- **2.2.0: hosts can offer 85 drawing tools.** The draw tier adds channels,
+  pitchforks, Fibonacci and Gann geometry, wavefronts and manual patterns.
+  `ADVANCED_LINE_TOOLS`, `ADVANCED_GEOMETRY_TOOLS` and `PATTERN_DRAWING_TOOLS`
+  belong to `openalgo-charts/draw`; they are not part of the custom indicator's
+  API object. The indicator descriptor contract and its 102 built-ins are
+  unchanged. Drawing documents retain version 2 and existing tool IDs.
+- **2.1.9: chart hosts gain built-in branding and
+  an optional text watermark.** `ChartOptions.branding` defaults to the
+  OpenAlgo mark, while `ChartOptions.watermark` defaults off. Hosts can update
+  them with `setBranding` and `setWatermarkOptions`, inspect them with
+  `brandingOptions` and `watermarkOptions`, and follow branding changes through
+  `branding:changed`. Blank watermark text follows the symbol and interval from
+  `setDataContext`. The public types are `LogoWatermarkOptions`,
+  `ChartWatermarkOptions`, and `BrandingChangedEvent`. These are host APIs and
+  do not change or belong inside an indicator descriptor.
+- **2.1.8: navigation can ease automatic price ranges as it reveals new
+  extrema.** `animAutoscale` follows `animZoom` by default, while a manual scale
+  and a descriptor's fixed `range()` remain authoritative. Normalized wheel and
+  trackpad gestures and the packaged widget's responsive controls are host
+  features; they do not change a descriptor. OpenAlgo `/trading` constructs a
+  bare `Chart`, so it receives the engine gestures but keeps its own toolbar,
+  rails and panels rather than receiving `WidgetOptions.mobile` controls.
+- **2.1.7: hidden indicators remain hidden through layout restoration and style
+  edits.** Reference levels now follow the instance's visibility along with its
+  plots and other visuals. The new `ChartObjects` inventory also exposes an
+  indicator's visibility and Tier-2 data status to host and widget object
+  panels, but it does not change the descriptor contract or add work to a
+  custom indicator.
+- **2.1.6: Tier-2 studies follow the chart's data context and loaded source
+  range.** `createTier2Indicator` receives `dataContext` with the host's symbol,
+  exchange and interval, cancels obsolete fetches, extends history when older
+  bars arrive and refreshes when the host changes instrument. A descriptor can
+  use `supports(ctx)` to report that its provider cannot serve a context. The
+  managed lifecycle publishes loading, ready, empty, unsupported and error
+  states with an explicit retry action, so provider failure is visible without
+  putting network state into `calc`. Existing Tier-2 descriptors get the range,
+  cancellation and status behavior through the wrapper without changing shape.
+- **2.1.2: a Tier-2 study's data requests are keyed by data setting.** Changing
+  the symbol or any other data input clears the previous values immediately, and
+  a response that arrives for the setting you just left cannot land on the new
+  one. A style-only change reuses the history already in flight instead of
+  refetching, and a live observation wins over a historical point for the same
+  time. An `attach` that used to guard against its own stale responses no longer
+  has to.
+- **1.8.9: precision is keyed on the pane, not the descriptor.** An `onchart`
+  plot prints at the instrument's tick; a plot on its own pane prints at that
+  pane's span with a floor of two decimals. A study pane is no longer formatted
+  in the instrument's tick, which is why an RSI reads `70.00` rather than `70.0`.
+  Custom descriptors get this with nothing to declare, and a precision input is
+  still the wrong answer. See **Do not**, below.
+- **1.8.4: `calc` runs once per animation frame, not once per tick.** A data
+  update marks the indicators stale and the flush happens before the paint, so a
+  burst of ticks collapses into one call. `calc` must therefore be a pure
+  function of `(bars, settings)`. It always had to be, but running per tick used
+  to hide an indicator that counted its own calls or accumulated into `store`.
+  Reading `chart.indicators()` or an instance's `values()` flushes first, so a
+  read-after-update in the same turn still sees fresh numbers.
+- **1.8.4: `calcTail` is rarely worth it now.** The tick-rate problem it existed
+  to solve is gone. It only pays when one pass over the loaded history is itself
+  slow, which means deep history, not a fast feed.
+- **1.8.3: the catalogue went from 91 to 102 built-ins**, so a file written
+  earlier can shadow an id that did not exist when it was named. The new ids are
+  listed in `reference/pitfalls.md` under the collision entry. That release also
+  corrected nine built-ins and moved ten defaults, so an indicator that compares
+  itself against a built-in may need its expectations re-derived rather than
+  assumed unchanged.
+
 ## Workflow
 
 1. **Read the request.** If it is a study from another platform, read it fully
@@ -61,7 +134,7 @@ when the indicator loads. Do not silently skip validation.
    resets per day or per session.
 2. **Before writing a formula, check `reference/cookbook.md`.** Every
    author-facing call is demonstrated there, and the first section is the one
-   that saves the most work: the 91 built-ins are descriptors, so
+   that saves the most work: the 102 built-ins are descriptors, so
    `getIndicator('macd').calc(bars, settings, {})` gives you MACD's own columns
    rather than a reimplementation that can drift from the chart's.
 3. **Load the context you need.** `reference/contract.md` for the descriptor
@@ -165,7 +238,7 @@ export default function ({ registerIndicator, sourceValues, sma, nulls }) {
 A `bar` is `{ time, open, high, low, close, volume }` with `time` in **UTC
 seconds**.
 
-## What the library gives you (1.8.1)
+## What the library gives you
 
 The descriptor is much wider than the plot-plus-calc it started as. Before
 hand-rolling anything, check whether one of these already covers it:
@@ -181,6 +254,7 @@ hand-rolling anything, check whether one of these already covers it:
 | Candles or bars as a plot | `plot.ohlc: { open, high, low, close }` |
 | Know the bar state, symbol, interval, clock | the 4th `calc` argument |
 | The instrument's tick size | `ctx.tickSize`, never an input for it |
+| The decimals your plots print at | Nothing: it follows the pane, see below |
 | Parse a session window | `parseSessionSpec`, `inSessionAt`, `sessionFlags` |
 | Reason about the timeframe | `intervalParts`, `isIntradayInterval`, ... |
 | A colour ramp or alpha | `fromGradient`, `withAlpha` |
@@ -212,7 +286,16 @@ Full list in `reference/pitfalls.md`. These four account for most failures:
   plot's `style`. Your own width input becomes a second control that disagrees.
 - Reuse a built-in id unless overriding it is the actual intent. Custom modules
   register last, so they win. The validator warns on this.
-- Add an input for the tick size. `ctx.tickSize` carries it since 1.8.2, and an
+- Add a precision or decimals input. Precision follows the pane, not the
+  descriptor, so there is nothing to declare and an override would only let a
+  plot disagree with the axis it is drawn against. An `onchart` plot is a price
+  and prints at the instrument's tick (Supertrend on a 0.05 tick reads
+  `1339.70`); a plot on its own pane prints at that pane's own span with a floor
+  of two decimals (an RSI reads `70.00`, a percentage study `0.61`). A study pane
+  is not quoted in the instrument's tick, because an RSI is a dimensionless
+  0..100 band. If a plot of yours really is a price, put it on the candles with
+  `overlay: true` rather than reaching for a precision knob.
+- Add an input for the tick size. `ctx.tickSize` carries it, and an
   input is a second source of truth that disagrees with the axis. Point value is
   the exception: the chart does not know it, so that one is an input at 1.
 - Assume the browser's local time. Use `zonedDayIndex` /
@@ -224,9 +307,10 @@ Full list in `reference/pitfalls.md`. These four account for most failures:
 | --- | --- |
 | `strategies/indicators/*.js` | installed indicators, gitignored, never pushed |
 | `.claude/skills/chart-indicator/validate.mjs` | the gate |
-| `.claude/skills/chart-indicator/examples/` | three validated worked examples |
+| `.claude/skills/chart-indicator/examples/` | ten validated worked examples |
 | `.claude/skills/chart-indicator/reference/` | contract, API surface, pitfalls, cookbook |
 | `.claude/skills/chart-indicator/coverage.mjs` | fails if an API or capability is documented but never demonstrated |
+| `.claude/skills/chart-indicator/generate-api-index.mjs` | regenerates the export index in `reference/api.md`; `--check` fails when it is stale |
 | `docs/custom-indicators.md` | the user-facing guide |
 | `blueprints/custom_indicators.py` | serves the folder to the chart |
 | `frontend/src/lib/trading/customIndicators.ts` | the loader |
