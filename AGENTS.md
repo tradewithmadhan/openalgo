@@ -102,8 +102,25 @@ cp broker/zerodha/<file> broker/zerodhaenctoken/<file>
 (Get-Content "broker/zerodha/<file>" -Raw) -replace "broker\.zerodha\.", "broker.zerodhaenctoken." | Set-Content "broker/zerodhaenctoken/<file>"
 ```
 
-**Step 4: For Category 3 files (enctoken-specific) — DO NOT overwrite**
-These files have intentional changes. If upstream changed them, manually review and merge only the relevant parts while keeping enctoken-specific logic.
+**Step 4: For Category 3 files (enctoken-specific) — AI can handle with reasoning**
+
+These files have intentional differences. When upstream changes them, AI should:
+
+1. **Read the upstream diff** — understand what changed in `broker/zerodha/`
+2. **Check if the change is relevant to enctoken** — ask: "Does this affect auth, quotes, or streaming?"
+3. **Apply only relevant parts** — preserve enctoken-specific logic:
+
+| File | What to preserve during merge |
+|---|---|
+| `api/data.py` | Enctoken auth (`Authorization: enctoken {token}`), base URL `kite.zerodha.com/oms`, WS-based quotes via `ws_fetch.py`, retry logic, 5s timeframe |
+| `api/ws_fetch.py` | On-demand WS fetcher (Depth mode, TICK_TIMEOUT=5s, exchange mapping) — this file is unique to enctoken |
+| `streaming/__init__.py` | Class name `ZerodhaenctokenWebSocketAdapter` |
+| `streaming/zerodha_websocket.py` | `get_enctoken(user_id)` from DB, env var `ZERODHA_ENCTOKEN` fallback, `&user_id={user_id}` in WS URL |
+| `streaming/zerodhaenctoken_adapter.py` | `get_enctoken(user_id)`, user_id from Kite profile API, API key `"kitefront"` |
+| `plugin.json` | Plugin name `zerodhaenctoken`, author metadata |
+
+4. **If the upstream change is about paid API key logic** (e.g., `get_auth_token()`, `api_key:access_token` parsing, `api.kite.trade` URLs) → **skip it** (not relevant to enctoken)
+5. **If the upstream change is a bugfix** → apply the fix while keeping enctoken-specific logic intact
 
 **Step 5: Verify after sync**
 ```bash
