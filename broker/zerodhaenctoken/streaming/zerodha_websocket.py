@@ -79,15 +79,16 @@ class ZerodhaWebSocket:
         access_token: str,
         on_ticks: Callable[[list[dict]], None] = None,
         user_id: str | None = None,
+        openalgo_user_id: str | None = None,
     ):
         """Initialize the Zerodha WebSocket client"""
         self.api_key = api_key
         self.access_token = access_token
         self.on_ticks = on_ticks
-        # user_id is used on reconnect to re-read a fresh access token from the
-        # database. Indian broker tokens roll over daily at ~3 AM IST, so a
-        # reconnect after rollover must NOT reuse the construction-time token.
+        # user_id is the Zerodha user_id (e.g. "YW8287") used in the WS URL.
         self.user_id = user_id
+        # openalgo_user_id is the OpenAlgo username used for DB lookups on reconnect.
+        self.openalgo_user_id = openalgo_user_id or user_id
         self.ws: websocket.WebSocketApp | None = None
         self.connected = False
         self.running = False
@@ -189,28 +190,21 @@ class ZerodhaWebSocket:
     def _refresh_access_token(self) -> bool:
         """Re-read a fresh enctoken from database and rebuild ws_url.
 
-        For enctoken mode, re-reads from DB (feed_token column) on reconnect,
-        falling back to environment variable.
+        For enctoken mode, re-reads from DB (feed_token column) on reconnect.
 
         Returns:
             True if the access token changed (worth retrying the connection),
             False otherwise.
         """
-        if not self.user_id:
+        if not self.openalgo_user_id:
             return False
         try:
-            # Try DB first
             enctoken = None
             try:
                 from database.auth_db import get_enctoken
-                enctoken = get_enctoken(self.user_id, bypass_cache=True)
+                enctoken = get_enctoken(self.openalgo_user_id, bypass_cache=True)
             except Exception:
                 pass
-
-            # Fallback to env var
-            if not enctoken:
-                import os
-                enctoken = os.getenv("ZERODHA_ENCTOKEN", "")
 
             if not enctoken:
                 self.logger.warning(

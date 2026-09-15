@@ -542,7 +542,8 @@ def upsert_auth(name, auth_token, broker, feed_token=None, user_id=None, revoke=
 
     if auth_obj:
         auth_obj.auth = encrypted_token
-        auth_obj.feed_token = encrypted_feed_token
+        if feed_token is not None:
+            auth_obj.feed_token = encrypted_feed_token
         auth_obj.broker = broker
         auth_obj.user_id = user_id
         auth_obj.is_revoked = revoke
@@ -1376,6 +1377,7 @@ def get_enctoken(name, bypass_cache=False):
         The decrypted enctoken string, or None if not found.
     """
     if not name:
+        logger.debug("get_enctoken: name is empty, returning None")
         return None
 
     cache_key = f"feed-{name}"
@@ -1386,22 +1388,31 @@ def get_enctoken(name, bypass_cache=False):
         auth_obj = Auth.query.filter_by(name=name).first()
         if isinstance(auth_obj, Auth) and not auth_obj.is_revoked:
             feed_token_cache[cache_key] = auth_obj
-            return decrypt_token(auth_obj.feed_token) if auth_obj.feed_token else None
+            result = decrypt_token(auth_obj.feed_token) if auth_obj.feed_token else None
+            logger.debug(f"get_enctoken({name}, bypass_cache): found, has_token={bool(result)}")
+            return result
+        logger.debug(f"get_enctoken({name}, bypass_cache): no auth record found")
         return None
 
     # Normal cache-first lookup (reuse feed_token_cache)
     if cache_key in feed_token_cache:
         auth_obj = feed_token_cache[cache_key]
         if isinstance(auth_obj, Auth) and not auth_obj.is_revoked:
-            return decrypt_token(auth_obj.feed_token) if auth_obj.feed_token else None
+            result = decrypt_token(auth_obj.feed_token) if auth_obj.feed_token else None
+            logger.debug(f"get_enctoken({name}): cache hit, has_token={bool(result)}")
+            return result
         else:
             del feed_token_cache[cache_key]
+            logger.debug(f"get_enctoken({name}): cache hit but revoked, returning None")
             return None
     else:
         auth_obj = Auth.query.filter_by(name=name).first()
         if isinstance(auth_obj, Auth) and not auth_obj.is_revoked:
             feed_token_cache[cache_key] = auth_obj
-            return decrypt_token(auth_obj.feed_token) if auth_obj.feed_token else None
+            result = decrypt_token(auth_obj.feed_token) if auth_obj.feed_token else None
+            logger.debug(f"get_enctoken({name}): DB lookup, found, has_token={bool(result)}")
+            return result
+        logger.debug(f"get_enctoken({name}): DB lookup, no auth record found")
         return None
 
 

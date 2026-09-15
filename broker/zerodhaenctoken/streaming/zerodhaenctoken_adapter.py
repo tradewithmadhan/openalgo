@@ -7,7 +7,6 @@ Fixed Zerodha WebSocket adapter that properly handles NIFTY index data.
 The key fixes are in the _handle_ticks method for proper topic generation.
 """
 import json
-import os
 import sys
 import threading
 import time
@@ -82,9 +81,6 @@ class ZerodhaenctokenWebSocketAdapter(BaseBrokerWebSocketAdapter):
             from database.auth_db import get_enctoken
             enctoken = get_enctoken(user_id)
             if not enctoken:
-                # Fallback to environment variable
-                enctoken = os.getenv("ZERODHA_ENCTOKEN", "")
-            if not enctoken:
                 return {"status": "error", "message": "No enctoken found. Please add enctoken via broker settings."}
 
             self.api_key = "kitefront"
@@ -114,6 +110,7 @@ class ZerodhaenctokenWebSocketAdapter(BaseBrokerWebSocketAdapter):
                 access_token=self.access_token,
                 on_ticks=self._handle_ticks,
                 user_id=self.zerodha_user_id,
+                openalgo_user_id=user_id,
             )
 
             # Set up WebSocket callbacks

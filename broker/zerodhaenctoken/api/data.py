@@ -40,14 +40,8 @@ def _kite_quote_exchange(oa_exchange: str, brexchange: str | None) -> str:
     return _OA_INDEX_TO_KITE.get(oa_exchange, oa_exchange)
 
 
-ENCTOKEN = os.environ.get("ZERODHA_ENCTOKEN", "")
-
-
 def _get_enctoken_from_db(auth_token):
-    """Get enctoken from database using the auth_token (api_key:access_token).
-
-    First tries DB lookup, falls back to env var.
-    """
+    """Get enctoken from database using the auth_token (api_key:access_token)."""
     try:
         from database.auth_db import get_enctoken_by_auth_token
         enctoken, _username = get_enctoken_by_auth_token(auth_token)
@@ -55,8 +49,7 @@ def _get_enctoken_from_db(auth_token):
             return enctoken
     except Exception:
         pass
-    # Fallback to env var
-    return ENCTOKEN
+    return ""
 
 class ZerodhaPermissionError(Exception):
     """Custom exception for Zerodha API permission errors"""
