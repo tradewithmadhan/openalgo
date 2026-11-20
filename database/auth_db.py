@@ -1,4 +1,4 @@
-# database/auth_db.py
+﻿# database/auth_db.py
 
 import base64
 import os
@@ -210,7 +210,7 @@ def _invalidate(cache, key) -> bool:
 
 # Conditionally create engine based on DB type
 if DATABASE_URL and "sqlite" in DATABASE_URL:
-    # SQLite: Use NullPool — each checkout creates a fresh connection.
+    # SQLite: Use NullPool â€” each checkout creates a fresh connection.
     # Session cleanup is handled by app.py teardown_appcontext.
     # StaticPool must NOT be used: concurrent requests on a single shared
     # SQLite connection cause "bad parameter or other API misuse" errors.
@@ -486,7 +486,7 @@ def register_session(username, session_id, device_info=None, ip_address=None, br
         if ip_address:
             ActiveSession.query.filter_by(username=username, ip_address=ip_address).delete()
 
-        # Enforce per-user session cap — remove oldest if at limit
+        # Enforce per-user session cap â€” remove oldest if at limit
         current_count = ActiveSession.query.filter_by(username=username).count()
         if current_count >= MAX_SESSIONS_PER_USER:
             oldest = ActiveSession.query.filter_by(username=username).order_by(
@@ -762,7 +762,7 @@ def safe_decrypt_token(value):
     This is the read-path helper used by columns that transitioned from
     plaintext to ciphertext (totp_secret, samco secret_api_key, flow api_key,
     telegram bot token). Callers must pass values encrypted with the same
-    Fernet key (i.e. the auth_db one) — telegram_db and settings_db have
+    Fernet key (i.e. the auth_db one) â€” telegram_db and settings_db have
     their own derivations and use their own helpers.
     """
     if not value:
@@ -795,7 +795,7 @@ def decrypt_token(encrypted_token):
     try:
         return fernet.decrypt(encrypted_token.encode()).decode()
     except Exception as e:
-        # Hash the ciphertext (not the plaintext — there is no plaintext yet)
+        # Hash the ciphertext (not the plaintext â€” there is no plaintext yet)
         # so we don't keep the full token in memory just to dedupe log lines.
         import hashlib
 
@@ -817,7 +817,7 @@ def decrypt_token(encrypted_token):
                 _decrypt_failure_fingerprints[fp] = True
 
         if seen:
-            # Already reported the full traceback once — keep the signal
+            # Already reported the full traceback once â€” keep the signal
             # but at debug level so it doesn't spam ERROR logs.
             logger.debug(f"Repeat decrypt failure (fingerprint={fp})")
         else:
@@ -882,7 +882,7 @@ def _store_auth(name, auth_token, broker, feed_token, user_id, revoke):
 
     # Decide whether the broker session MATERIALLY changed. A multi-device /
     # multi-session login re-persists the SAME token (the login path resumes an
-    # existing valid broker session — see blueprints/auth._try_resume_broker_session),
+    # existing valid broker session â€” see blueprints/auth._try_resume_broker_session),
     # and OpenAlgo is single-user/single-broker per instance, so all devices share
     # ONE server-side broker WebSocket feed. Tearing that feed down on an unchanged
     # token kills the stream for the already-connected device until it refreshes
@@ -908,7 +908,8 @@ def _store_auth(name, auth_token, broker, feed_token, user_id, revoke):
 
     if auth_obj:
         auth_obj.auth = encrypted_token
-        auth_obj.feed_token = encrypted_feed_token
+        if feed_token is not None:
+            auth_obj.feed_token = encrypted_feed_token
         auth_obj.broker = broker
         auth_obj.user_id = user_id
         auth_obj.is_revoked = revoke
@@ -930,7 +931,7 @@ def _store_auth(name, auth_token, broker, feed_token, user_id, revoke):
     # Without clearing all entries, old cached tokens from get_auth_token_broker()
     # would persist and cause 401 Unauthorized errors after re-login.
     # See GitHub issue #851 for details on this cache key mismatch bug.
-    # This is cheap and always safe — do it unconditionally so reads stay correct.
+    # This is cheap and always safe â€” do it unconditionally so reads stay correct.
     # After the commit, never before: clear() also bumps each cache's
     # generation, so a read that loaded the previous token before this commit
     # cannot store it again afterwards.
@@ -958,7 +959,7 @@ def _store_auth(name, auth_token, broker, feed_token, user_id, revoke):
     auth_id = auth_obj.id
     if not (token_changed or revoke):
         logger.info(
-            f"Broker token unchanged for {name} (multi-session resume) — "
+            f"Broker token unchanged for {name} (multi-session resume) â€” "
             f"preserving live WebSocket feed, skipping pool teardown"
         )
         return auth_id, None
@@ -993,13 +994,13 @@ def _tear_down_feed(name, broker, revoke):
         from websocket_proxy.broker_factory import cleanup_pools_for_user
         cleanup_pools_for_user(name, broker_name=broker)
     except Exception as e:
-        # Don't fail auth on cleanup error — the user can still trade via
+        # Don't fail auth on cleanup error â€” the user can still trade via
         # HTTP endpoints; only the WS layer is affected.
         logger.warning(f"Failed to invalidate WS adapter pool for {name}/{broker}: {e}")
 
     # Order-update adapter lifecycle (services/order_update_service.py): the
     # always-on broker order-feed follows the same real-token-change gate as
-    # the teardown above — restart with fresh credentials on change, stop on
+    # the teardown above â€” restart with fresh credentials on change, stop on
     # revoke, and (by virtue of the early return above) stay untouched on a
     # multi-session resume.
     try:
@@ -1854,7 +1855,7 @@ def samco_has_secret_key(user_id):
 def samco_get_secret_key(user_id):
     """Get the stored secret API key for a Samco user (decrypted).
 
-    Falls back to the raw column value if Fernet decryption fails — that's
+    Falls back to the raw column value if Fernet decryption fails â€” that's
     a pre-migration plaintext row, which keeps working until the operator
     runs upgrade/rotate_pepper.py.
     """
