@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { BookOpen, Info, Loader2, Search, Settings } from 'lucide-react'
+import { BookOpen, Info, Loader2, Key, Search, Settings } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router'
 import {
@@ -16,6 +16,14 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import {
   BROKER_SETUP_PATH,
   brokerConfigPath,
@@ -114,6 +122,13 @@ export default function BrokerSelect() {
     setSearchParams({}, { replace: true })
   }, [searchParams, setSearchParams])
 
+  // Enctoken modal state
+  const [enctokenModalOpen, setEnctokenModalOpen] = useState(false)
+  const [enctokenValue, setEnctokenValue] = useState('')
+  const [enctokenSaving, setEnctokenSaving] = useState(false)
+  const [enctokenError, setEnctokenError] = useState<string | null>(null)
+  const [enctokenSuccess, setEnctokenSuccess] = useState<string | null>(null)
+
   useEffect(() => {
     if (list.error instanceof BrokerConfigError && list.error.status === 401) {
       navigate('/login', { replace: true })
@@ -205,6 +220,49 @@ export default function BrokerSelect() {
   // Read the broker list again (which broker is logged in, which are saved).
   const refresh = async () => {
     await queryClient.invalidateQueries({ queryKey: ['broker-list'] })
+  }
+
+  // Save the Kite personal enctoken for the zerodhaenctoken plugin broker.
+  const handleSaveEnctoken = async () => {
+    // Strip what a real enctoken cannot contain: spaces, arrows (←), curly
+    // quotes and other paste artifacts copied along with the token.
+    const cleaned = enctokenValue.replace(/[^\x21-\x7E]/g, '')
+    if (!cleaned) {
+      setEnctokenError('Enctoken cannot be empty')
+      return
+    }
+
+    setEnctokenSaving(true)
+    setEnctokenError(null)
+    setEnctokenSuccess(null)
+
+    try {
+      const csrfRes = await fetch('/auth/csrf-token', { credentials: 'include' })
+      const { csrf_token } = await csrfRes.json()
+
+      const response = await fetch('/zerodhaenctoken/enctoken', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRFToken': csrf_token,
+        },
+        credentials: 'include',
+        body: JSON.stringify({ enctoken: cleaned }),
+      })
+      const data = await response.json()
+
+      if (data.status === 'success') {
+        setEnctokenSuccess(data.message)
+        setEnctokenValue('')
+        setTimeout(() => setEnctokenModalOpen(false), 2000)
+      } else {
+        setEnctokenError(data.message || 'Failed to save enctoken')
+      }
+    } catch {
+      setEnctokenError('Failed to save enctoken')
+    } finally {
+      setEnctokenSaving(false)
+    }
   }
 
   if (list.isLoading) {
@@ -341,6 +399,22 @@ export default function BrokerSelect() {
                       <Link to={brokerConfigPath(broker.id)}>Configure</Link>
                     </Button>
                   )}
+                  {broker.id === 'zerodhaenctoken' && (
+                    <div className="text-center text-xs">
+                      <button
+                        type="button"
+                        className="text-muted-foreground underline underline-offset-4 hover:text-foreground"
+                        onClick={() => {
+                          setEnctokenModalOpen(true)
+                          setEnctokenError(null)
+                          setEnctokenSuccess(null)
+                        }}
+                      >
+                        <Key className="mr-1 inline h-3.5 w-3.5" />
+                        Add Enctoken
+                      </button>
+                    </div>
+                  )}
                   {broker.configured && (
                     <div className="text-center text-xs">
                       <Link
@@ -365,6 +439,68 @@ export default function BrokerSelect() {
         onCancel={() => setPendingLogin(null)}
         onConfirm={confirmLogin}
       />
+
+      {/* Enctoken modal (zerodhaenctoken plugin) */}
+      <Dialog open={enctokenModalOpen} onOpenChange={setEnctokenModalOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Add Kite Personal Enctoken</DialogTitle>
+            <DialogDescription>
+              Your enctoken enables market data (historical) and WebSocket streaming via Kite's personal API.
+              Orders and margins use the paid Kite Connect API key (handled automatically).
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <Input
+              type="password"
+              placeholder="Paste your enctoken here..."
+              value={enctokenValue}
+              onChange={(e) => setEnctokenValue(e.target.value)}
+              disabled={enctokenSaving}
+            />
+            <p className="text-xs text-muted-foreground">
+              Copy only the token itself. Extra characters copied along with it
+              (spaces, arrows, labels) are stripped automatically.
+            </p>
+
+            {enctokenError && (
+              <Alert variant="destructive">
+                <AlertDescription>{enctokenError}</AlertDescription>
+              </Alert>
+            )}
+
+            {enctokenSuccess && (
+              <Alert>
+                <AlertDescription>{enctokenSuccess}</AlertDescription>
+              </Alert>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setEnctokenModalOpen(false)}
+              disabled={enctokenSaving}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleSaveEnctoken}
+              disabled={enctokenSaving || !enctokenValue.trim()}
+            >
+              {enctokenSaving ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Validating...
+                </>
+              ) : (
+                'Save Enctoken'
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
